@@ -12,18 +12,19 @@ void setup() {
   Serial.println("Hello, Sunshine!");
 }
 
-void printChan(RCPWMReader chan) {
+void printChan(RCPWMReader chan, const char* name, const char* start) {
   float duty = chan.readDuty();
   float pulse = chan.readPulseWidth();
   // %, microseconds
-  Serial.printf("Duty:%.2f,Pulse:%.2f\n", duty * 100.0f, pulse);
+  Serial.printf("%sduty%s:%.2f,pulse%s:%.2f", start, name, duty * 100.0f, name,
+                pulse);
 }
 
 void loop() {
-  printChan(chanA);
-  printChan(chanB);
-  printChan(chanC);
-  printChan(chanD);
+  printChan(chanA, "A", "");
+  printChan(chanB, "B", ",");
+  printChan(chanC, "C", ",");
+  printChan(chanD, "D", ",");
   Serial.println();
   delay(100);
 }
