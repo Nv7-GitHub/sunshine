@@ -1,0 +1,183 @@
+(footprint "FingertechSwitch"
+	(version 20241229)
+	(generator "pcbnew")
+	(generator_version "9.0")
+	(layer "F.Cu")
+	(property "Reference" "REF**"
+		(at 3.302 -4.191 0)
+		(unlocked yes)
+		(layer "F.SilkS")
+		(uuid "84ea04c1-11cd-4308-a81c-a2660679b3f4")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.1)
+			)
+		)
+	)
+	(property "Value" "FingertechSwitch"
+		(at 0.635 -7.469 0)
+		(unlocked yes)
+		(layer "F.Fab")
+		(uuid "3e1485f6-69c7-4b6a-a89f-4e988262a6c9")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Datasheet" ""
+		(at 0 0 0)
+		(unlocked yes)
+		(layer "F.Fab")
+		(hide yes)
+		(uuid "7f13927d-3466-4fd6-9a72-a07b0adee880")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Description" ""
+		(at 0 0 0)
+		(unlocked yes)
+		(layer "F.Fab")
+		(hide yes)
+		(uuid "9df16a2d-d70f-4bff-84d6-a65dea189744")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(attr smd)
+	(fp_line
+		(start -6.35 2.921)
+		(end -6.35 -2.921)
+		(stroke
+			(width 0.1)
+			(type default)
+		)
+		(layer "Edge.Cuts")
+		(uuid "b77e5cac-2717-4131-a73a-9abe9211e377")
+	)
+	(fp_line
+		(start -6.096 -3.175)
+		(end 12.446 -3.175)
+		(stroke
+			(width 0.1)
+			(type default)
+		)
+		(layer "Edge.Cuts")
+		(uuid "be758c44-98aa-41d2-86ef-2f34a9ddd140")
+	)
+	(fp_line
+		(start 12.446 3.175)
+		(end -6.096 3.175)
+		(stroke
+			(width 0.1)
+			(type default)
+		)
+		(layer "Edge.Cuts")
+		(uuid "e67d4e7e-2d71-494b-919a-53ca4dc4bc12")
+	)
+	(fp_line
+		(start 12.7 -2.921)
+		(end 12.7 2.921)
+		(stroke
+			(width 0.1)
+			(type default)
+		)
+		(layer "Edge.Cuts")
+		(uuid "6e4cd8ed-c3ed-430b-8972-d42d212faf2f")
+	)
+	(fp_arc
+		(start -6.35 -2.921)
+		(mid -6.275605 -3.100605)
+		(end -6.096 -3.175)
+		(stroke
+			(width 0.1)
+			(type default)
+		)
+		(layer "Edge.Cuts")
+		(uuid "6358000d-c773-4a25-8054-0d2840015c12")
+	)
+	(fp_arc
+		(start -6.096 3.175)
+		(mid -6.275605 3.100605)
+		(end -6.35 2.921)
+		(stroke
+			(width 0.1)
+			(type default)
+		)
+		(layer "Edge.Cuts")
+		(uuid "070d4539-26a0-4451-8e14-83806e3b38d0")
+	)
+	(fp_arc
+		(start 12.446 -3.175)
+		(mid 12.625605 -3.100605)
+		(end 12.7 -2.921)
+		(stroke
+			(width 0.1)
+			(type default)
+		)
+		(layer "Edge.Cuts")
+		(uuid "4be9bd23-2cec-4a61-93f5-6091c0cf4de2")
+	)
+	(fp_arc
+		(start 12.7 2.921)
+		(mid 12.625605 3.100605)
+		(end 12.446 3.175)
+		(stroke
+			(width 0.1)
+			(type default)
+		)
+		(layer "Edge.Cuts")
+		(uuid "4a49b6a4-3710-42bd-95c4-692d7024d7e9")
+	)
+	(fp_text user "${REFERENCE}"
+		(at 0.635 -5.969 0)
+		(unlocked yes)
+		(layer "F.Fab")
+		(uuid "e42ba657-a421-4c20-baee-7d13ccdb3156")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(pad "1" smd roundrect
+		(at -10.287 0)
+		(size 8 4)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(roundrect_rratio 0.12)
+		(chamfer_ratio 0)
+		(chamfer top_right bottom_right)
+		(uuid "31218063-7047-472d-8638-e60af2a3fab3")
+	)
+	(pad "2" smd roundrect
+		(at -10.287 0 180)
+		(size 8 4)
+		(layers "B.Cu" "B.Mask" "B.Paste")
+		(roundrect_rratio 0.12)
+		(chamfer_ratio 0)
+		(chamfer top_left bottom_left)
+		(uuid "501cf1a3-480f-412a-878e-846f09ee04a3")
+	)
+	(embedded_fonts no)
+	(model "${KIPRJMOD}/custom/footprint/Fingertech Mini Power Switch.STEP"
+		(offset
+			(xyz 0 0 0.5)
+		)
+		(scale
+			(xyz 1 1 1)
+		)
+		(rotate
+			(xyz -90 -180 90)
+		)
+	)
+)

@@ -10,13 +10,14 @@ extern "C" {
 
 class RCPWMReader {
  public:
-  // Constructor: assign pin
+  // Constructor: assign pin (must be PWM Channel B:
+  // 1,3,5,7,9,11,13,15,17,19,21,23,25,27,29)
   RCPWMReader(uint8_t pin);
 
   // Initialize hardware
   void begin();
 
-  // Returns duty cycle percentage (0–100%)
+  // Returns duty cycle percentage (0–1.0)
   float readDuty();
 
   // Returns pulse width in microseconds
@@ -25,8 +26,6 @@ class RCPWMReader {
  private:
   uint8_t _pin;
   uint _slice;
-  bool _isChannelB;
-  pwm_config _cfg;
 };
 
 #endif
