@@ -3,6 +3,11 @@
 RCPWMReader::RCPWMReader(uint8_t pin) {
   _pin = pin;
   _slice = pwm_gpio_to_slice_num(pin);
+  _lastCount = 0;
+  _stableCount = 0;
+  _stableSamples = 0;
+  _cachedPulseWidth = 1500;
+  _initialized = false;
 }
 
 void RCPWMReader::begin() {
@@ -26,20 +31,13 @@ void RCPWMReader::begin() {
 
   // Clear the counter
   pwm_set_counter(_slice, 0);
+  _lastCount = 0;
+  _stableCount = 0;
+  _stableSamples = 0;
+  _cachedPulseWidth = 1500;
+  _initialized = true;
 }
 
-float RCPWMReader::readDuty() {
-  uint16_t count = pwm_get_counter(_slice);
-  // Duty = pulse_width / period (assuming 20ms period = 20000us)
-  return (float)count / 20000.0f;
-}
+float RCPWMReader::readDuty() { return (float)_cachedPulseWidth / 20000.0f; }
 
-float RCPWMReader::readPulseWidth() {
-  // Read the counter - it accumulates microseconds while Channel B is HIGH
-  uint16_t count = pwm_get_counter(_slice);
-
-  // Reset for next reading
-  pwm_set_counter(_slice, 0);
-
-  return (float)count;
-}
+float RCPWMReader::readPulseWidth() { return (float)_cachedPulseWidth; }

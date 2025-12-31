@@ -34,3 +34,11 @@ void loop() {
   Serial.println();
   delay(100);
 }
+
+void loop1() {
+  chanA.update();
+  chanB.update();
+  chanC.update();
+  chanD.update();
+  delayMicroseconds(500);
+}
