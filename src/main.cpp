@@ -32,7 +32,7 @@ void loop() {
   printChan(chanC, "C", ",");
   printChan(chanD, "D", ",");
   Serial.println();
-  delay(100);
+  delay(50);
 }
 
 void loop1() {

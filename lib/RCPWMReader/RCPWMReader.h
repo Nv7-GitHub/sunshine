@@ -18,35 +18,7 @@ class RCPWMReader {
   void begin();
 
   // MUST call this at ~2kHz for accurate readings
-  inline void update() {
-    if (!_initialized) return;
-
-    uint16_t count = pwm_hw->slice[_slice].ctr;
-
-    // If counter hasn't changed and is in valid range
-    if (count == _lastCount && count >= 800 && count <= 2200) {
-      _stableSamples++;
-      if (_stableSamples >= 2) {
-        // Stable for 1ms - capture it
-        _cachedPulseWidth = count;
-        // Reset for next period
-        pwm_set_counter(_slice, 0);
-        _lastCount = 0;
-        _stableSamples = 0;
-      }
-    } else if (count != _lastCount) {
-      // Counter changed - reset stability counter
-      _stableSamples = 0;
-      _lastCount = count;
-    }
-
-    // Safety: if counter gets too big, reset it
-    if (count > 3000) {
-      pwm_set_counter(_slice, 0);
-      _lastCount = 0;
-      _stableSamples = 0;
-    }
-  }
+  void update();
 
   // Returns duty cycle percentage (0–1.0)
   float readDuty();
