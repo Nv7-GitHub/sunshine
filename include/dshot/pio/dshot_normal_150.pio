@@ -1,0 +1,69 @@
+; Copyright 2023, Connor Douthat
+; Modified for this library by Joseph Duchesne
+
+.program dshot_normal_150
+
+.define public BIT_PERIOD 40
+
+.define ONE_HIGH 30
+.define ONE_LOW (BIT_PERIOD - ONE_HIGH)
+.define ONE_HIGH_DELAY (ONE_HIGH - 1)
+.define ONE_LOW_DELAY (ONE_LOW - 5)
+
+.define ZERO_HIGH 15
+.define ZERO_LOW (BIT_PERIOD - ZERO_HIGH)
+.define ZERO_HIGH_DELAY (ZERO_HIGH - 1)
+.define ZERO_LOW_DELAY (ZERO_LOW - 5)
+
+// 4kHz DShot150 -> 1500 frame period -> 1500 - (BIT_PERIOD * 16 + 1) = 859 delay
+.define FRAME_DELAY (32 - 2)
+.define FRAME_DELAY_COUNT 26
+.define FRAME_DELAY_REMAINDER (27 - 5)  // 27 = 859 - 32 * 26
+
+set pindirs, 1 [31] ; output
+
+start_frame:
+  pull block [31]
+  out y, 16 ; discard 16 most significant bits
+check_bit:
+  jmp !osre start_bit
+  jmp frame_delay
+start_bit:
+  out y, 1
+  jmp !y do_zero
+do_one:
+  set pins, 1 [ONE_HIGH_DELAY]
+  set pins, 0 [ONE_LOW_DELAY]
+  jmp check_bit
+do_zero:
+  set pins, 1 [ZERO_HIGH_DELAY]
+  set pins, 0 [ZERO_LOW_DELAY]
+  jmp check_bit
+  
+; delay a minimum amount before next frame (still not auto-run though)
+frame_delay:
+  set y, FRAME_DELAY_COUNT
+frame_delay_loop:
+  jmp y-- frame_delay_loop [FRAME_DELAY]
+  nop [FRAME_DELAY_REMAINDER]
+
+; Go back to the start (TODO: do this with wrap instead)
+  jmp start_frame
+
+% c-sdk {
+static inline void dshot_normal_150_program_init(PIO pio, uint sm, uint offset, uint pin) {
+    pio_sm_config c = dshot_normal_150_program_get_default_config(offset);
+
+    sm_config_set_set_pins(&c, pin, 1);
+    pio_gpio_init(pio, pin);
+    pio_sm_set_consecutive_pindirs(pio, sm, pin, 1, true);
+  
+    sm_config_set_out_shift(&c, false, false, 32);   // auto-pull disabled
+
+    double clocks_per_us = clock_get_hz(clk_sys) / 1000000;
+    // 6.666us per bit for dshot150
+    sm_config_set_clkdiv(&c, 6.666 / dshot_normal_150_BIT_PERIOD * clocks_per_us);
+
+    pio_sm_init(pio, sm, offset, &c);
+}
+%}

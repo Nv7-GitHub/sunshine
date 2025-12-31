@@ -1,12 +1,16 @@
 #include <Arduino.h>
 
 #include "RCPWMReader.h"
+#include "dshot/esc.h"
 
 // Use Channel B pins: 1, 3, 5, 7 (odd numbers)
 RCPWMReader chanA(1);
 RCPWMReader chanB(3);
 RCPWMReader chanC(5);
 RCPWMReader chanD(7);
+
+DShot::ESC dshot(6, pio0, DShot::Type::Bidir, DShot::Speed::DS600, 10);
+DShot::ESC dshot(8, pio0, DShot::Type::Bidir, DShot::Speed::DS600, 10);
 
 void setup() {
   Serial.begin(115200);
@@ -16,6 +20,7 @@ void setup() {
   chanB.begin();
   chanC.begin();
   chanD.begin();
+  dshot.init();
 }
 
 void printChan(RCPWMReader chan, const char* name, const char* start) {
