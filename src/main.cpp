@@ -9,8 +9,11 @@ RCPWMReader chanB(3);
 RCPWMReader chanC(5);
 RCPWMReader chanD(7);
 
-DShot::ESC dshot1(6, pio0, DShot::Type::Bidir, DShot::Speed::DS600, 10);
-DShot::ESC dshot2(8, pio0, DShot::Type::Bidir, DShot::Speed::DS600, 10);
+DShot::ESC dshot1(6, pio0, DShot::Type::Normal, DShot::Speed::DS600, 10);
+DShot::ESC dshot2(8, pio0, DShot::Type::Normal, DShot::Speed::DS600, 10);
+
+unsigned long lastDisarmTime = 0;
+bool wasStopped = false;
 
 void setup() {
   Serial.begin(115200);
@@ -45,29 +48,36 @@ void getTelemetry(DShot::ESC& esc, const char* name) {
   }
 }
 
+float mapf(float x, float in_min, float in_max, float out_min, float out_max) {
+  return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
+}
+
 void loop() {
-  // Init DShot
+  // Init DShot - send zero throttle for 3 seconds for ESC initialization
   if (millis() < 3000) {
-    dshot1.setCommand(0);  // 1046 is the example command
+    dshot1.setCommand(0);
     dshot2.setCommand(0);
-  } else if (millis() < 4000) {
-    dshot1.setCommand(13);  // extended telemetry enable
-    dshot2.setCommand(13);  // extended telemetry enable
   } else {
-    dshot1.setThrottle(
-        0.25);  // https://github.com/betaflight/betaflight/issues/2879
-    dshot2.setThrottle(
-        0.25);  // https://github.com/betaflight/betaflight/issues/2879
+    float throttle = mapf(chanA.readPulseWidth(), 1070.0f, 2125.0f, 0.0f, 1.0f);
+    throttle = constrain(throttle, 0.0f, 1.0f);
+
+    if (throttle < 0.05f) {
+      // Deadband - send a very small throttle value that keeps ESC armed but
+      // motor stopped
+      dshot1.setThrottle(0.001f);  // Tiny value above 0
+      dshot2.setThrottle(0.001f);
+      Serial.print("STOPPED;");
+    } else {
+      // Map throttle from [0.05, 1.0] input to [0.05, 1.0] output
+      dshot1.setThrottle(throttle);
+      dshot2.setThrottle(throttle);
+    }
   }
 
   printChan(chanA, "A", "");
   printChan(chanB, "B", ",");
   printChan(chanC, "C", ",");
   printChan(chanD, "D", ",");
-
-  // Check for telemetry
-  getTelemetry(dshot1, "esc1");
-  getTelemetry(dshot2, "esc2");
   Serial.println();
   delay(50);
 }
