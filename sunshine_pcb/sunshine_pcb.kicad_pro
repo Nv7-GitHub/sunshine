@@ -515,7 +515,7 @@
       "plot": "",
       "pos_files": "",
       "specctra_dsn": "",
-      "step": "",
+      "step": "sunshine_pcb.step",
       "svg": "",
       "vrml": ""
     },

@@ -8416,7 +8416,7 @@
 		)
 		(uuid "be2470cb-25c1-4ecc-9255-8d0ef0cd5458")
 	)
-	(label "S2"
+	(label "S1"
 		(at 50.8 35.56 180)
 		(effects
 			(font
@@ -8426,7 +8426,7 @@
 		)
 		(uuid "c7da3c59-d123-4410-a16e-675cc2428559")
 	)
-	(label "S2_C"
+	(label "S1_C"
 		(at 40.64 35.56 180)
 		(effects
 			(font
@@ -8456,7 +8456,7 @@
 		)
 		(uuid "cb951176-dd26-4f33-be24-b94d902dbba3")
 	)
-	(label "S1"
+	(label "S2"
 		(at 50.8 33.02 180)
 		(effects
 			(font
@@ -8496,7 +8496,7 @@
 		)
 		(uuid "d505ba8c-a79f-461a-b65c-e79294e4a854")
 	)
-	(label "S1_C"
+	(label "S2_C"
 		(at 40.64 33.02 180)
 		(effects
 			(font
@@ -11167,7 +11167,7 @@
 				)
 			)
 		)
-		(property "Footprint" "Connector_Molex:Molex_Micro-Fit_3.0_43045-0400_2x02_P3.00mm_Horizontal"
+		(property "Footprint" "custom:SolderConnector4P"
 			(at 31.75 35.56 0)
 			(effects
 				(font
