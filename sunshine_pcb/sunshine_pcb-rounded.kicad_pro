@@ -151,11 +151,11 @@
       },
       "rules": {
         "max_error": 0.005,
-        "min_clearance": 0.15,
+        "min_clearance": 0.14,
         "min_connection": 0.12,
         "min_copper_edge_clearance": 0.2,
         "min_groove_width": 0.0,
-        "min_hole_clearance": 0.35,
+        "min_hole_clearance": 0.339,
         "min_hole_to_hole": 0.2,
         "min_microvia_diameter": 0.45,
         "min_microvia_drill": 0.2,
@@ -520,14 +520,14 @@
     "pinned_symbol_libs": []
   },
   "meta": {
-    "filename": "sunshine_pcb.kicad_pro",
+    "filename": "sunshine_pcb-rounded.kicad_pro",
     "version": 3
   },
   "net_settings": {
     "classes": [
       {
         "bus_width": 12,
-        "clearance": 0.15,
+        "clearance": 0.14,
         "diff_pair_gap": 0.25,
         "diff_pair_via_gap": 0.25,
         "diff_pair_width": 0.2,
@@ -545,7 +545,7 @@
         "wire_width": 6
       },
       {
-        "clearance": 0.15,
+        "clearance": 0.14,
         "name": "PWR",
         "pcb_color": "rgba(0, 0, 0, 0.000)",
         "priority": 0,
