@@ -28,7 +28,7 @@ Replay is designed with AI assistance in mind. Develop Claude skills to aid with
 The robot brain has the two components mentioned before: below the IO layer, and above the IO layer. Everything above the IO layer has to be able to be run both on the host computer as well as the robot, so it should never interact with hardware directly and should be able to easily be compiled and run on a variety of host computer platforms. For below the IO layer, here is the hardware map:
 
 ## Hardware map
-IMU is an ADXL375, 11mm from the center of the robot (this is important for calculating ang vel from the centripetal accel)
+IMU is an ADXL375, 11mm from the center of the robot (this is important for calculating ang vel from the centripetal accel). The IMU is rotated 45 degrees so it saturates less.
 - IO8: IMU_INT1
 - IO9: IMU_INT2
 - IO10: IMU_CS
