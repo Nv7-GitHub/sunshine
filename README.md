@@ -105,7 +105,7 @@ The receiver is simply the other side of the link from the robot brain. It shoul
 The UI mockup has been made:
 
 ## UI Mockup
-Fetch this design file, read its readme, and implement the relevant aspects of the design. https://api.anthropic.com/v1/design/h/vzAL2Tl3jaeB_6xkxSfF0w?open_file=Sunshine+Dashboard.html
+Fetch this design file, read its readme, and implement the relevant aspects of the design. https://api.anthropic.com/v1/design/h/ER_Esv7z8Q_IkM8_wpP-5Q?open_file=Sunshine+Dashboard.html
 Implement: Sunshine Dashboard.html
 
 Note that this mockup has some unnecesary info plotted on top (e.g. CPU usage doesn't make sense, but seeing the bandwidth over the connection or the RSSI would be useful up there), and the variables are fully made up. Instead of ENABLE DISABLE there should be DISABLE, TANK, MELTY. In addition to x-y and throttle there is also the theta control. The current keybinds are:
