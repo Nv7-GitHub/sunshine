@@ -132,6 +132,15 @@ The variables are only present in the replayed values, as they are never sent fr
 
 The app has to call the actual C code to emulate the control and state estimation. This will require calling of C code from Rust. 
 
+## Simulation
+Use the basic electrical model of a brushed motor. (Back-EMF source, resistance, etc.). The KV of the motors is 1100KV (this should be an easily editable constant though). I don't know the exact resistance but lets say each phase is 75mohm. The battery is a 2S 650mah 120C LiPo. Don't model battery draining but model internal resistance using like the supply current derived from the stator current in the motor, pick a reasonable internal resistance for a battery with these specs. For the magnetomer, just do ideal earth's magnetic field, same for accelerometer. here are some more physical parameters you need:
+- Wheel Diameter: 44mm
+- The wheels are 81mm apart (so radius from center is 40.5mm). 
+- The MoI of the robot is 1213859.17531 g-mm^2
+Use metric for everything.
+
+I believe the max body RPM is somewhere around 4,000, you should double check this to ensure I gave you the right-specs.
+
 # General Notes
 Everything should be implemented robustly. If everything is connected and setup but then I unplug and replug the receiver, the host app should handle that gracefully and make a new log file. There also should be an easy way to disable logging from the host app. If the robot momentarily loses power or disconnects and then reconnects the host app and receiver should handle this gracefully. The disabled aspect is critical to safety. The code should be very well documented (in MD files) such that future AI sessions can read an info document and know what files to edit. There should be instructions for tuning meant for humans. Also make it easy to label log files (e.g. during comp it should be based on match, but always include date and stuff)
 
