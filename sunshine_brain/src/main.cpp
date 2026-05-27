@@ -52,34 +52,37 @@ void loop() {
     delay(10);
 
 #elif BRINGUP_LEVEL == 2
-    static char cmd[32];
-    static int  ci = 0;
+    static char     cmd[32];
+    static int      ci = 0;
+    static uint16_t cmd_left  = 0;   // start at 0 (disarm)
+    static uint16_t cmd_right = 0;
     while (Serial.available()) {
         char c = Serial.read();
         if (c == '\n' || c == '\r') {
-            cmd[ci] = '\0';
+            cmd[ci] = '\0'; ci = 0;
+            int v;
             if (cmd[0] == 'l') {
-                int v = atoi(cmd + 2);
-                dshot_send((uint16_t)v, 1048);
-                Serial.printf("Left -> %d\n", v);
+                v = atoi(cmd + 2);
+                v = v < 0 ? 0 : v > 2047 ? 2047 : v;
+                cmd_left = (uint16_t)v;
+                Serial.printf("Left → %d\n", cmd_left);
             } else if (cmd[0] == 'r') {
-                int v = atoi(cmd + 2);
-                dshot_send(1048, (uint16_t)v);
-                Serial.printf("Right -> %d\n", v);
+                v = atoi(cmd + 2);
+                v = v < 0 ? 0 : v > 2047 ? 2047 : v;
+                cmd_right = (uint16_t)v;
+                Serial.printf("Right → %d\n", cmd_right);
             } else if (cmd[0] == 's') {
-                dshot_send(0, 0);
-                Serial.println("Stop (disarm)");
+                cmd_left = cmd_right = 0;
+                Serial.println("Stop");
             } else if (cmd[0] == 't') {
                 Serial.printf("eRPM L=%.0f R=%.0f\n",
                               dshot_erpm_left(), dshot_erpm_right());
             }
-            ci = 0;
         } else if (ci < 31) {
             cmd[ci++] = c;
         }
     }
-    // Keep sending neutral (1048 = midpoint of 48-2047 in 3D mode) to prevent ESC timeout.
-    dshot_send(1048, 1048);
+    dshot_send(cmd_left, cmd_right);   // keepalive with stored values
     delay(1);
 
 #else

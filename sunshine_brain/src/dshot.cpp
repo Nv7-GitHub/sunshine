@@ -36,8 +36,8 @@ void dshot_send(uint16_t left, uint16_t right) {
     // Retrieve any pending telemetry before the next transmission window.
     dshot_result_t telem_l = dshot_left .getTelemetry();
     dshot_result_t telem_r = dshot_right.getTelemetry();
-    if (telem_l.success && telem_l.erpm > 0) erpm_left_val  = (float)telem_l.erpm;
-    if (telem_r.success && telem_r.erpm > 0) erpm_right_val = (float)telem_r.erpm;
+    if (telem_l.success) erpm_left_val  = (float)telem_l.erpm;
+    if (telem_r.success) erpm_right_val = (float)telem_r.erpm;
 
     dshot_left .sendThrottle(left);
     dshot_right.sendThrottle(right);
