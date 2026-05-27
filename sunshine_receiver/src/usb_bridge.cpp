@@ -37,21 +37,21 @@ static void build_ctrl_espnow(uint8_t *out8, const CtrlPayload *ctrl) {
 // ── 500 Hz timer callback (runs on timer task, not Core 1) ───────────────────
 static void timer_500hz_cb(void *arg) {
     CtrlPayload ctrl;
-    xSemaphoreTake(ctrl_mutex, 0);  // non-blocking: skip if contended (rare)
-    ctrl = latest_ctrl;
+    bool taken = (xSemaphoreTake(ctrl_mutex, 0) == pdTRUE);
+    ctrl = latest_ctrl; // stale read is acceptable if mutex was contended
 
     // Host watchdog: if host has been silent > 3 s, force DISABLED
     int64_t now_us = esp_timer_get_time();
     if (now_us - last_host_rx_us > (int64_t)HOST_WATCHDOG_US) {
-        ctrl.mode         = 0; // DISABLED
-        ctrl.ctrl_x       = 0;
-        ctrl.ctrl_y       = 0;
-        ctrl.ctrl_theta   = 0;
+        ctrl.mode          = 0; // DISABLED
+        ctrl.ctrl_x        = 0;
+        ctrl.ctrl_y        = 0;
+        ctrl.ctrl_theta    = 0;
         ctrl.ctrl_throttle = 0;
-        // Also update stored state so the watchdog stays triggered until host reconnects
-        latest_ctrl = ctrl;
+        // Only update stored state if we hold the lock
+        if (taken) latest_ctrl = ctrl;
     }
-    xSemaphoreGive(ctrl_mutex);
+    if (taken) xSemaphoreGive(ctrl_mutex);
 
     uint8_t pkt[8];
     build_ctrl_espnow(pkt, &ctrl);
@@ -118,15 +118,15 @@ void usb_bridge_init(void) {
     memcpy(brain_peer.peer_addr, BRAIN_MAC, 6);
     brain_peer.channel = ESPNOW_CHANNEL;
     brain_peer.encrypt = false;
-    esp_now_add_peer(&brain_peer);
+    ESP_ERROR_CHECK(esp_now_add_peer(&brain_peer));
 
     // Start 500 Hz timer
     esp_timer_create_args_t args = {};
     args.callback  = timer_500hz_cb;
     args.name      = "ctrl_tx";
-    esp_timer_handle_t timer;
-    esp_timer_create(&args, &timer);
-    esp_timer_start_periodic(timer, CTRL_TX_INTERVAL_US);
+    static esp_timer_handle_t timer;
+    ESP_ERROR_CHECK(esp_timer_create(&args, &timer));
+    ESP_ERROR_CHECK(esp_timer_start_periodic(timer, CTRL_TX_INTERVAL_US));
 }
 
 // Called from Core 1 bridge loop
