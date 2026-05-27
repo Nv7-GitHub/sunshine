@@ -24,7 +24,12 @@
 #define PIN_DSHOT_RIGHT  5   // S2
 
 // ── Battery ADC ───────────────────────────────────────────────────────────────
-#define PIN_BATT_ADC    39
+// PCB schematic routes the battery voltage divider (VSENSE net) to IO39 (ESP32
+// module pad 32). However, GPIO 39 is digital-only on the ESP32-S3 — ADC1
+// covers GPIO 1–10 and ADC2 covers GPIO 11–20 only. analogRead(39) returns 0.
+// TODO: hardware fix required — reroute VSENSE to an ADC-capable pin.
+// Using GPIO 7 (ADC1_CH6) as a stand-in until the PCB is revised.
+#define PIN_BATT_ADC     7   // TODO: confirm against PCB schematic (IO39 on current PCB is digital-only)
 // V = adc_raw * (3.3/4095) * (R_high+R_low)/R_low = adc_raw * (3.3/4095) * 3.0
 static constexpr float BATT_ADC_SCALE = (3.3f / 4095.0f) * 3.0f;
 

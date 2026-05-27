@@ -10,10 +10,14 @@ static Adafruit_LIS3MDL mag;
 bool lis3mdl_init(void) {
     hspi.begin(PIN_MAG_SCK, PIN_MAG_MISO, PIN_MAG_MOSI, PIN_MAG_CS);
     if (!mag.begin_SPI(PIN_MAG_CS, &hspi)) return false;
-    mag.setDataRate(LIS3MDL_DATARATE_1000_HZ);
+    // LIS3MDL_DATARATE_155_HZ internally sets UHP mode (per Adafruit library:
+    // setDataRate calls setPerformanceMode(UHP) before writing the ODR bits).
+    // Do NOT call setPerformanceMode separately — it would clobber the ODR
+    // FAST_ODR bit written by setDataRate, causing an undefined register state.
+    // 155 Hz / UHP is the maximum coherent ODR for ultra-high performance mode.
+    mag.setDataRate(LIS3MDL_DATARATE_155_HZ);
     mag.setRange(LIS3MDL_RANGE_16_GAUSS);
     mag.setOperationMode(LIS3MDL_CONTINUOUSMODE);
-    mag.setPerformanceMode(LIS3MDL_ULTRAHIGHMODE);
     return true;
 }
 
