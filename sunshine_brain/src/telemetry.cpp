@@ -58,9 +58,13 @@ static void on_espnow_recv(const esp_now_recv_info_t *info,
 
 CtrlInputs telemetry_get_ctrl(void) {
     CtrlInputs c;
-    xSemaphoreTake(ctrl_mutex, portMAX_DELAY);
-    c = latest_ctrl;
-    xSemaphoreGive(ctrl_mutex);
+    if (xSemaphoreTake(ctrl_mutex, pdMS_TO_TICKS(2)) == pdTRUE) {
+        c = latest_ctrl;
+        xSemaphoreGive(ctrl_mutex);
+    } else {
+        // Timed out — return stale data; watchdog will catch prolonged absence
+        c = latest_ctrl;  // read without lock (last-known value, safe to read)
+    }
     return c;
 }
 

@@ -26,12 +26,6 @@
 #  define FEATURE_TELEMETRY 0
 #endif
 
-#if BRINGUP_LEVEL == 0 || BRINGUP_LEVEL >= 4
-#  define FEATURE_NAVIGATION 1
-#else
-#  define FEATURE_NAVIGATION 0
-#endif
-
 // At levels 3-4 we always zero the dshot outputs for safety (no actual drive)
 #if BRINGUP_LEVEL >= 3 && BRINGUP_LEVEL <= 4
 #  define FORCE_DSHOT_ZERO 1
