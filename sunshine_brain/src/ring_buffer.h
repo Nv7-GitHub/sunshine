@@ -1,6 +1,5 @@
 #pragma once
 #include <stdint.h>
-#include <stdbool.h>
 #include <atomic>
 
 // Lock-free SPSC ring buffer.
@@ -10,6 +9,7 @@
 template <typename T, uint32_t N>
 class RingBuffer {
     static_assert((N & (N - 1)) == 0, "N must be a power of 2");
+    static_assert(std::is_trivially_copyable<T>::value, "RingBuffer<T>: T must be trivially copyable");
 
     T buf[N];
     std::atomic<uint32_t> head{0};  // written only by producer
@@ -17,17 +17,16 @@ class RingBuffer {
 
 public:
     // Push from producer (Core 1).
-    // If full, overwrites the slot the consumer would read next (oldest entry).
-    // The head is always advanced; tail is never touched by the producer.
-    // Returns false if the buffer was full (overwrite occurred).
+    // If full, drops the item (returns false) to avoid write/read race.
+    // Returns true if the item was enqueued, false if dropped due to full buffer.
     bool push(const T &item) {
-        uint32_t h    = head.load(std::memory_order_relaxed);
-        uint32_t t    = tail.load(std::memory_order_acquire);
-        bool     full = ((h - t) == N);
+        uint32_t h = head.load(std::memory_order_relaxed);
+        uint32_t t = tail.load(std::memory_order_acquire);
+        if ((h - t) == N) return false;   // full — drop, never overwrite
 
         buf[h & (N - 1)] = item;
         head.store(h + 1, std::memory_order_release);
-        return !full;
+        return true;
     }
 
     // Pop from consumer (Core 0). Returns false if empty.
