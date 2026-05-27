@@ -110,3 +110,11 @@ static inline bool frame_parser_feed(FrameParser *p, uint8_t byte,
     }
     return false;
 }
+
+// ── espnow_rx.cpp public API ──────────────────────────────────────────────────
+void  espnow_rx_init(void);
+bool  espnow_rx_get_frame(uint8_t *out_buf, uint32_t timeout_ms);
+void  espnow_rx_update_rssi(int8_t rssi); // call from sniffer task (IDF 4.x only)
+int8_t espnow_rx_get_rssi(void);
+bool  espnow_rx_brain_connected(void);
+void  espnow_rx_register_callback(void);
