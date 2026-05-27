@@ -703,7 +703,8 @@ Expected:
 - [ ] **Step 4: Validate RSSI**
 
 Walk receiver 5 meters away from brain.  
-Expected: `inputs.rssi` (brain-side) and `RX_RSSI` (receiver-side) both decrease. 
+Expected: `inputs.rssi` (brain-side) decreases.  
+> **Note:** `RX_RSSI` (receiver-side) will read `-127` on the current `espressif32@6.0.0` (IDF 4.4) build — the recv callback does not expose RSSI in IDF 4.x. Receiver-side RSSI will work once the pioarduino platform is fixed and both projects are on IDF 5.x. To enable it earlier, hook a promiscuous sniffer task to call `espnow_rx_update_rssi()`.
 
 - [ ] **Step 5: Commit BRINGUP notes**
 

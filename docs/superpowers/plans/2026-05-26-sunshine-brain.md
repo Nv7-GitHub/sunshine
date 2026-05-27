@@ -1165,6 +1165,8 @@ With receiver running, open host app → Live tab → Connect. Verify:
 5. Press W key → `inputs.ctrl_y` ramps up (LP filter visible in host app)
 6. `frame_id` increments without large gaps
 
+> **Note:** `RX_RSSI` (receiver → host) will read `-127` until the receiver is rebuilt on IDF 5.x (pioarduino platform currently broken — see platform note in Task 1). `inputs.rssi` (brain-side, received over ESP-NOW) should still work.
+
 - [ ] **Step 4: Commit**
 
 ```bash
