@@ -59,11 +59,15 @@ void setup() {
     // ── Level 3+ : init telemetry and start tasks ─────────────────────────────
 #if FEATURE_TELEMETRY
     telemetry_init();
-    xTaskCreatePinnedToCore(telemetry_task, "telemetry", 8192, nullptr, 5, nullptr, 0);
+    if (xTaskCreatePinnedToCore(telemetry_task, "telemetry", 8192, nullptr, 5, nullptr, 0) != pdPASS) {
+        error_halt(4, "telemetry task create failed");
+    }
 #endif
 
     nav_control_init();
-    xTaskCreatePinnedToCore(nav_control_task, "nav_ctrl", 8192, nullptr, 10, nullptr, 1);
+    if (xTaskCreatePinnedToCore(nav_control_task, "nav_ctrl", 8192, nullptr, 10, nullptr, 1) != pdPASS) {
+        error_halt(5, "nav_ctrl task create failed");
+    }
 
     Serial.printf("Brain ready (bringup=%d)\n", BRINGUP_LEVEL);
 }
