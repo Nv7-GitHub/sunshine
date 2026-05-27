@@ -1,0 +1,72 @@
+/* test/test_control.c */
+#include "test_runner.h"
+#include "sunshine_core.h"
+#include <math.h>
+#include <string.h>
+
+void control_step(const SunshineInput *in, SunshineState *s, SunshineVars *v);
+
+static SunshineInput make_input(uint8_t mode, uint8_t throttle,
+                                 int8_t x, int8_t y, int8_t theta) {
+    SunshineInput in; memset(&in, 0, sizeof(in));
+    in.mode = mode; in.ctrl_throttle = throttle;
+    in.ctrl_x = x; in.ctrl_y = y; in.ctrl_theta = theta;
+    return in;
+}
+
+int main(void) {
+    SunshineState s; SunshineVars v;
+    sunshine_state_init(&s);
+
+    /* DISABLED always zeroes outputs regardless of other inputs */
+    SunshineInput in = make_input(SUNSHINE_MODE_DISABLED, 200, 100, 100, 50);
+    control_step(&in, &s, &v);
+    ASSERT_NEAR(v.dshot_cmd_left,  0.0f, 1e-6f, "DISABLED: left = 0");
+    ASSERT_NEAR(v.dshot_cmd_right, 0.0f, 1e-6f, "DISABLED: right = 0");
+    ASSERT_EQ(v.led_on, false, "DISABLED: LED off");
+
+    /* TANK forward: throttle=255 → both wheels max forward */
+    in = make_input(SUNSHINE_MODE_TANK, 255, 0, 0, 0);
+    control_step(&in, &s, &v);
+    ASSERT(v.dshot_cmd_left  > DSHOT_NEUTRAL, "TANK fwd: left > neutral");
+    ASSERT(v.dshot_cmd_right > DSHOT_NEUTRAL, "TANK fwd: right > neutral");
+    ASSERT_NEAR(v.dshot_cmd_left, v.dshot_cmd_right, 1.0f, "TANK straight: left=right");
+
+    /* TANK reverse */
+    in = make_input(SUNSHINE_MODE_TANK, 0, 0, 0, 0);
+    control_step(&in, &s, &v);
+    ASSERT(v.dshot_cmd_left  < DSHOT_NEUTRAL, "TANK rev: left < neutral");
+
+    /* TANK turn right: ctrl_x > 0 → left faster than right */
+    in = make_input(SUNSHINE_MODE_TANK, 200, 100, 0, 0);
+    control_step(&in, &s, &v);
+    ASSERT(v.dshot_cmd_left > v.dshot_cmd_right, "TANK turn right: left > right");
+
+    /* MELTY: throttle>0, no translation → left≈right≈base */
+    sunshine_state_init(&s);
+    s.kf_theta = 0.0f;
+    in = make_input(SUNSHINE_MODE_MELTY, 200, 0, 0, 0);
+    control_step(&in, &s, &v);
+    ASSERT_NEAR(v.dshot_cmd_left, v.dshot_cmd_right, 1.0f, "MELTY no-translation: left≈right");
+    ASSERT(v.dshot_cmd_left > 0, "MELTY throttle: outputs > 0");
+
+    /* MELTY: theta_offset accumulates with ctrl_theta */
+    sunshine_state_init(&s);
+    float offset_before = s.theta_offset;
+    in = make_input(SUNSHINE_MODE_MELTY, 0, 0, 0, 127);
+    control_step(&in, &s, &v);
+    ASSERT(s.theta_offset != offset_before, "MELTY: theta_offset changes with ctrl_theta");
+
+    /* LED: on at angle 0 ± 3 deg */
+    sunshine_state_init(&s);
+    s.kf_theta = 0.0f; s.theta_offset = 0.0f;
+    in = make_input(SUNSHINE_MODE_MELTY, 100, 0, 0, 0);
+    control_step(&in, &s, &v);
+    ASSERT_EQ(v.led_on, true, "LED on at angle 0");
+
+    s.kf_theta = 0.1f;   /* 5.7°, outside ±3° */
+    control_step(&in, &s, &v);
+    ASSERT_EQ(v.led_on, false, "LED off at 5.7°");
+
+    TEST_RESULTS();
+}
