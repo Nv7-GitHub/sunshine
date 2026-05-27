@@ -55,6 +55,8 @@ static void on_espnow_recv(const uint8_t *mac_addr,
 void espnow_rx_init(void) {
     telem_sem  = xSemaphoreCreateBinary();
     rssi_mutex = xSemaphoreCreateMutex();
+    configASSERT(telem_sem  != NULL);
+    configASSERT(rssi_mutex != NULL);
 }
 
 // Returns true when a new frame is available; copies it into out_buf (643 B).
