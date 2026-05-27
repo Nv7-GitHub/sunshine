@@ -1,23 +1,32 @@
+// src/main.cpp
+// Sunshine Brain — main entry point
+// Initialises all subsystems in order, handles init failures with LED patterns.
+// Core 0: telemetry_task (FreeRTOS, priority 5)
+// Core 1: nav_control_task (FreeRTOS, priority 10, pinned)
+
 #include "bringup.h"
 #include "config.h"
 #include "sensors/adxl375.h"
 #include "sensors/lis3mdl.h"
-#if FEATURE_DSHOT
 #include "dshot.h"
-#endif
+#include "telemetry.h"
+#include "nav_control.h"
 #include <Arduino.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 
-static bool adxl_ok = false;
-static bool mag_ok  = false;
-
-static void blink_error(int n) {
+// ── Error LED patterns ────────────────────────────────────────────────────────
+// N fast blinks (50ms on/off) → 1s off → repeat
+// Also prints error continuously to USB serial.
+static void error_halt(int blink_count, const char *msg) {
+    Serial.printf("FATAL INIT ERROR: %s (blink=%d)\n", msg, blink_count);
     while (true) {
-        for (int i = 0; i < n; i++) {
+        for (int i = 0; i < blink_count; i++) {
             digitalWrite(PIN_LED, HIGH); delay(50);
             digitalWrite(PIN_LED, LOW);  delay(50);
         }
         delay(1000);
-        Serial.printf("INIT ERROR: sensor fault (blink count %d)\n", n);
+        Serial.printf("ERROR: %s\n", msg);  // repeat for late USB attach
     }
 }
 
@@ -26,23 +35,41 @@ void setup() {
     pinMode(PIN_LED, OUTPUT);
     analogReadResolution(12);
 
-    adxl_ok = adxl375_init();
-    mag_ok  = lis3mdl_init();
-
-    int err_code = (!adxl_ok ? 1 : 0) + (!mag_ok ? 2 : 0);
-    if (err_code) blink_error(err_code);
-
-#if FEATURE_DSHOT
-    if (!dshot_init()) blink_error(3);
-    Serial.println("DShot ready. Commands: l <0-2047>, r <0-2047>, s (stop), t (print eRPM)");
-#endif
+    // ── Level 1+ : init sensors ───────────────────────────────────────────────
+    if (!adxl375_init()) error_halt(1, "ADXL375 init failed");
+    if (!lis3mdl_init())  error_halt(2, "LIS3MDL init failed");
 
 #if BRINGUP_LEVEL == 1
-    Serial.println("accel_x,accel_y,accel_z,mag_x,mag_y,mag_z,batt_v");
+    // Bringup 1: CSV output only
+    Serial.println("BRINGUP 1: accel_x,accel_y,accel_z,mag_x,mag_y,mag_z,batt_v");
+    return;  // don't start tasks
 #endif
+
+    // ── Level 2+ : init DShot ─────────────────────────────────────────────────
+#if FEATURE_DSHOT
+    if (!dshot_init()) error_halt(3, "DShot arming failed");
+#endif
+
+#if BRINGUP_LEVEL == 2
+    // Bringup 2: interactive DShot test only
+    Serial.println("BRINGUP 2: DShot test. l <val>, r <val>, s, t");
+    return;
+#endif
+
+    // ── Level 3+ : init telemetry and start tasks ─────────────────────────────
+#if FEATURE_TELEMETRY
+    telemetry_init();
+    xTaskCreatePinnedToCore(telemetry_task, "telemetry", 8192, nullptr, 5, nullptr, 0);
+#endif
+
+    nav_control_init();
+    xTaskCreatePinnedToCore(nav_control_task, "nav_ctrl", 8192, nullptr, 10, nullptr, 1);
+
+    Serial.printf("Brain ready (bringup=%d)\n", BRINGUP_LEVEL);
 }
 
 void loop() {
+    // Bringup 1 and 2 use loop(); production uses FreeRTOS tasks.
 #if BRINGUP_LEVEL == 1
     Adxl375Sample a = adxl375_read();
     MagSample     m = lis3mdl_read();
@@ -54,7 +81,7 @@ void loop() {
 #elif BRINGUP_LEVEL == 2
     static char     cmd[32];
     static int      ci = 0;
-    static uint16_t cmd_left  = 0;   // start at 0 (disarm)
+    static uint16_t cmd_left  = 0;
     static uint16_t cmd_right = 0;
     while (Serial.available()) {
         char c = Serial.read();
@@ -65,12 +92,12 @@ void loop() {
                 v = atoi(cmd + 2);
                 v = v < 0 ? 0 : v > 2047 ? 2047 : v;
                 cmd_left = (uint16_t)v;
-                Serial.printf("Left → %d\n", cmd_left);
+                Serial.printf("L→%d\n", v);
             } else if (cmd[0] == 'r') {
                 v = atoi(cmd + 2);
                 v = v < 0 ? 0 : v > 2047 ? 2047 : v;
                 cmd_right = (uint16_t)v;
-                Serial.printf("Right → %d\n", cmd_right);
+                Serial.printf("R→%d\n", v);
             } else if (cmd[0] == 's') {
                 cmd_left = cmd_right = 0;
                 Serial.println("Stop");
@@ -78,14 +105,13 @@ void loop() {
                 Serial.printf("eRPM L=%.0f R=%.0f\n",
                               dshot_erpm_left(), dshot_erpm_right());
             }
-        } else if (ci < 31) {
-            cmd[ci++] = c;
-        }
+        } else if (ci < 31) { cmd[ci++] = c; }
     }
-    dshot_send(cmd_left, cmd_right);   // keepalive with stored values
+    dshot_send(cmd_left, cmd_right);
     delay(1);
 
 #else
-    delay(100);
+    // Levels 3-4 and production: FreeRTOS tasks do all work
+    vTaskDelay(portMAX_DELAY);
 #endif
 }

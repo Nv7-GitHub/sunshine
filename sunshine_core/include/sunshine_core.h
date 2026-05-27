@@ -121,6 +121,10 @@ typedef struct {
 } SunshineVars;
 
 /* ── Public API ────────────────────────────────────────────────────────── */
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 void     sunshine_state_init(SunshineState *state);
 void     sunshine_step(const SunshineInput *in, SunshineState *state, SunshineVars *vars_out);
 
@@ -136,3 +140,7 @@ float    sunshine_mag_to_ut   (int16_t raw);
 float    sunshine_batt_to_v   (int8_t  off);
 float    sunshine_f16_to_f32  (uint16_t half);
 uint16_t sunshine_f32_to_f16  (float f);
+
+#ifdef __cplusplus
+}
+#endif
