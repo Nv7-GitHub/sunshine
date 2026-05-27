@@ -22,6 +22,7 @@ void nav_control_task(void *) {
     uint32_t t_next = micros();
 
     for (;;) {
+        vars.loop_overrun = false;  // clear each tick
         uint32_t t_start = micros();
 
         // ── 1. Build SunshineInput ──────────────────────────────────────
@@ -43,7 +44,7 @@ void nav_control_task(void *) {
         // Battery voltage → batt_offset (see sunshine_core.h for scale)
         // batt_offset encodes (voltage - 7.6V) / 0.0205V per LSB
         float batt_offset_f = (v - BATT_OFFSET_REF_V) / BATT_SCALE_V;
-        in.batt_offset = (int8_t)(batt_offset_f < -127.0f ? -127 :
+        in.batt_offset = (int8_t)(batt_offset_f < -128.0f ? -128 :
                                   batt_offset_f >  127.0f ?  127 :
                                   (int8_t)batt_offset_f);
 
@@ -90,18 +91,18 @@ void nav_control_task(void *) {
         // ── 6. Push to telemetry ring buffer ──────────────────────────────
 #if FEATURE_TELEMETRY
         bool pushed = telemetry_push(&in, &kf_state);
-        if (!pushed) vars.loop_overrun = true;
+        if (!pushed) vars.loop_overrun = true;  // set if current tick overran OR telem ring full
 #endif
 
         // ── 7. Timing: busy-wait until next 1 kHz tick ───────────────────
         uint32_t elapsed = micros() - t_start;
         if (elapsed >= LOOP_INTERVAL_US) {
             overrun_count++;
-            vars.loop_overrun = true;
+            t_next = micros();  // re-sync BEFORE printf to exclude print latency
+            vars.loop_overrun = true;  // set if current tick overran OR telem ring full
             if (overrun_count <= 3 || (overrun_count % 100) == 0) {
                 Serial.printf("OVERRUN: %u µs (total=%u)\n", elapsed, overrun_count);
             }
-            t_next = micros();  // re-sync after overrun
         } else {
             overrun_count = 0;
             t_next += LOOP_INTERVAL_US;
