@@ -5,6 +5,7 @@
 #include <WiFi.h>
 #include <esp_now.h>
 #include <esp_wifi.h>
+#include <esp_err.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 #include <string.h>
@@ -48,9 +49,11 @@ static void on_espnow_recv(const esp_now_recv_info_t *info,
     c.rssi          = info->rx_ctrl->rssi;
     c.last_rx_ms    = (uint32_t)millis();
 
-    xSemaphoreTake(ctrl_mutex, portMAX_DELAY);
-    latest_ctrl = c;
-    xSemaphoreGive(ctrl_mutex);
+    if (xSemaphoreTake(ctrl_mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
+        latest_ctrl = c;
+        xSemaphoreGive(ctrl_mutex);
+    }
+    // else: drop this packet; next will arrive within ~2ms at 500Hz
 }
 
 CtrlInputs telemetry_get_ctrl(void) {
@@ -94,7 +97,10 @@ void telemetry_task(void *) {
         drain_count++;
 
         if (drain_count == INPUTS_PER_FRAME) {
-            esp_now_send(receiver_peer.peer_addr, tx_frame, FRAME_SIZE);
+            esp_err_t send_err = esp_now_send(receiver_peer.peer_addr, tx_frame, FRAME_SIZE);
+            if (send_err != ESP_OK) {
+                Serial.printf("TELEM TX drop: %s\n", esp_err_to_name(send_err));
+            }
             tx_frame_id++;
             drain_count = 0;
         }
@@ -102,7 +108,10 @@ void telemetry_task(void *) {
 }
 
 void telemetry_init(void) {
+    drain_count = 0;
+    tx_frame_id = 0;
     ctrl_mutex = xSemaphoreCreateMutex();
+    configASSERT(ctrl_mutex != NULL);
 
     WiFi.mode(WIFI_STA);
     WiFi.disconnect();

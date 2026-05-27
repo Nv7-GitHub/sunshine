@@ -38,7 +38,6 @@ static constexpr float BATT_ADC_SCALE = (3.3f / 4095.0f) * 3.0f;
 
 // ── Timing ────────────────────────────────────────────────────────────────────
 static constexpr uint32_t LOOP_INTERVAL_US   = 1000;  // 1 kHz
-static constexpr uint32_t TELEMETRY_FRAMES   = 20;    // inputs per 50 Hz frame
 static constexpr uint32_t CTRL_WATCHDOG_MS   = 500;   // no ctrl → DISABLED
 
 // ── ESP-NOW ───────────────────────────────────────────────────────────────────
