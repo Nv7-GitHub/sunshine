@@ -118,3 +118,7 @@ void  espnow_rx_update_rssi(int8_t rssi); // call from sniffer task (IDF 4.x onl
 int8_t espnow_rx_get_rssi(void);
 bool  espnow_rx_brain_connected(void);
 void  espnow_rx_register_callback(void);
+
+// ── usb_bridge.cpp public API ─────────────────────────────────────────────────
+void usb_bridge_init(void);
+void usb_bridge_tick(void);  // call from Core 1 main loop
