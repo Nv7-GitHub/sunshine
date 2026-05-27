@@ -466,6 +466,7 @@ The 500 Hz ESP-NOW TX rate is generated entirely by the receiver's `esp_timer` �
 - MAC addresses hardcoded in `config.h` on both devices
 - Fixed channel 1 (no auto-switching)
 - ESP-NOW v2.0 required — `platform = espressif32 @ >=6.0.0` in both `platformio.ini`
+  > **Platform status (2026-05-26):** The pioarduino `stable` URL currently fails to install (`MissingPackageManifestError` on `framework-arduinoespressif32-libs`). The receiver was built against `espressif32@6.0.0` (IDF 4.4) as a workaround; the brain's pioarduino URL needs the same fix. IDF 4.4 uses a different `esp_now_recv_cb_t` signature (no `esp_now_recv_info_t`), so receiver-side RSSI is unavailable from the callback — `espnow_rx_update_rssi()` is a hook for a promiscuous sniffer. Once pioarduino is fixed, both projects should switch to the URL for full IDF 5.x support.
 - Both brain and receiver are ESP32-S3 → v2.0 compatible, 1470-byte payload available
 - 643-byte telemetry packet is well under the 1470-byte v2.0 limit
 

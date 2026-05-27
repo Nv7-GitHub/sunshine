@@ -37,7 +37,7 @@ sunshine_receiver/
 
 ```ini
 [env:receiver]
-platform = espressif32 @ >=6.0.0
+platform = espressif32 @ 6.0.0
 board = esp32-s3-devkitc-1
 framework = arduino
 monitor_speed = 921600
@@ -48,6 +48,8 @@ build_flags =
 ```
 
 `ARDUINO_USB_CDC_ON_BOOT=1` routes `Serial` to the native USB CDC port so we get maximum bandwidth without UART overhead.
+
+> **Platform note:** The receiver uses `espressif32@6.0.0` (IDF 4.4) rather than the pioarduino URL, because the pioarduino `stable` URL currently fails with `MissingPackageManifestError` (the `framework-arduinoespressif32-libs` package can't be installed from the official arduino-esp32 release tarball). IDF 4.4's `esp_now_recv_cb_t` does not expose `esp_now_recv_info_t`, so receiver-side RSSI is not available from the callback — `espnow_rx_update_rssi(int8_t)` is a hook for a promiscuous sniffer task. When the pioarduino platform is fixed (both brain and receiver), switch the receiver to the same pioarduino URL to get IDF 5.x and remove the sniffer workaround.
 
 - [ ] **Step 2: Create include/config.h**
 

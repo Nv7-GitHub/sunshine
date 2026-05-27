@@ -49,7 +49,7 @@ sunshine_brain/
 
 ```ini
 [env_base]
-platform    = espressif32 @ >=6.0.0
+platform    = https://github.com/pioarduino/platform-espressif32/releases/download/stable/platform-espressif32.zip
 board       = esp32-s3-devkitc-1
 framework   = arduino
 monitor_speed  = 921600
@@ -82,6 +82,8 @@ build_flags = ${env_base.build_flags} -DBRINGUP_LEVEL=4
 extends    = env_base
 build_flags = ${env_base.build_flags} -DBRINGUP_LEVEL=0
 ```
+
+> **Platform note:** The pioarduino `stable` URL currently fails with `MissingPackageManifestError` when `framework-arduinoespressif32-libs` tries to install from the official arduino-esp32 release tarball. If the brain project fails to build, pin the platform to a known-good release or wait for pioarduino to fix the `stable` pointer. The receiver was temporarily built against `espressif32@6.0.0` (IDF 4.4) as a workaround; once pioarduino is fixed both projects should use the URL above.
 
 - [ ] **Step 2: Create include/bringup.h**
 
