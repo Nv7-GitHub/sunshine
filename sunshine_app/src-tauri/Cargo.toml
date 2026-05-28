@@ -18,6 +18,7 @@ serialport   = "4"
 byteorder    = "1"
 parking_lot  = "0.12"
 tokio        = { version = "1", features = ["full"] }
+dirs         = "5"
 
 [profile.release]
 panic = "abort"
