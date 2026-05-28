@@ -57,7 +57,7 @@ export default function VariableTree({ selected, onToggle, cursorUs }: Props) {
   const toggle = (g: string) => setCollapsed(c => ({ ...c, [g]: !c[g] }));
 
   const fmt = (v: number | undefined): string => {
-    if (v === undefined || isNaN(v)) return '—';
+    if (v == null || isNaN(v)) return '—';
     if (Math.abs(v) >= 1000)  return v.toFixed(0);
     if (Math.abs(v) >= 10)    return v.toFixed(2);
     return v.toFixed(4);

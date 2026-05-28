@@ -7,7 +7,10 @@ interface Props {
   channels:      string[];
   width:         number;
   height:        number;
+  headTimeUs:    number;
+  requestLive:   number;
   onCursorMove?: (us: number | null) => void;
+  onLiveChange?: (live: boolean) => void;
 }
 
 const COLORS = [
@@ -19,11 +22,19 @@ const COLORS = [
   'oklch(.85 .10 200)',
 ];
 
-const AXIS_COLOR  = 'rgba(236,236,238,.28)';
-const GRID_COLOR  = 'rgba(255,255,255,.05)';
-const TICK_COLOR  = 'rgba(255,255,255,.05)';
+const AXIS_COLOR = 'rgba(236,236,238,.28)';
+const GRID_COLOR = 'rgba(255,255,255,.05)';
+const TICK_COLOR = 'rgba(255,255,255,.05)';
 
-const WINDOW_US = 30 * 1_000_000; // 30 second default window
+const WINDOW_US = 30 * 1_000_000;
+
+function fmtElapsed(_u: uPlot, vals: (number | null | undefined)[]): string[] {
+  return vals.map(v => {
+    if (v == null) return '';
+    const s = v / 1_000_000;
+    return s < 60 ? s.toFixed(1) + 's' : (s / 60).toFixed(2) + 'm';
+  });
+}
 
 function buildOpts(
   channels:      string[],
@@ -34,14 +45,15 @@ function buildOpts(
   return {
     width:  Math.max(100, width),
     height: Math.max(80,  height),
-    cursor: { drag: { x: true, y: false } },
-    scales: { x: { time: true } },
+    cursor: { drag: { x: false, y: false } },
+    scales: { x: { time: false } },
     axes: [
       {
         stroke: AXIS_COLOR,
         grid:   { stroke: GRID_COLOR, width: 1 },
         ticks:  { stroke: TICK_COLOR },
         font:   '10px JetBrains Mono, monospace',
+        values: fmtElapsed,
       },
       {
         stroke: AXIS_COLOR,
@@ -65,7 +77,7 @@ function buildOpts(
           if (!onCursorMove) return;
           const idx = u.cursor.idx;
           if (idx !== null && idx !== undefined && u.data[0]?.[idx] !== undefined) {
-            onCursorMove(u.data[0][idx] * 1e6);
+            onCursorMove(u.data[0][idx]);
           }
         },
       ],
@@ -73,19 +85,30 @@ function buildOpts(
   };
 }
 
-export default function UPlotCanvas({ channels, width, height, onCursorMove }: Props) {
-  const divRef  = useRef<HTMLDivElement>(null);
-  const uRef    = useRef<uPlot | null>(null);
-  const viewRef = useRef({ startUs: Date.now() * 1000 - WINDOW_US, endUs: Date.now() * 1000, live: true });
-  const fetchRef = useRef<() => void>(() => {});
+export default function UPlotCanvas({ channels, width, height, headTimeUs, requestLive, onCursorMove, onLiveChange }: Props) {
+  const divRef      = useRef<HTMLDivElement>(null);
+  const uRef        = useRef<uPlot | null>(null);
+  const viewRef     = useRef({ startUs: 0, endUs: 0, live: true });
+  const fetchRef    = useRef<() => void>(() => {});
+  const headRef     = useRef(headTimeUs);
+  const liveChgRef  = useRef(onLiveChange);
+  headRef.current    = headTimeUs;
+  liveChgRef.current = onLiveChange;
+
+  const setLive = useCallback((live: boolean) => {
+    if (viewRef.current.live !== live) {
+      viewRef.current.live = live;
+      liveChgRef.current?.(live);
+    }
+  }, []);
 
   const fetchAndDraw = useCallback(async () => {
     if (!uRef.current) return;
 
-    const now = Date.now() * 1000;
-    if (viewRef.current.live) {
-      viewRef.current.endUs   = now;
-      viewRef.current.startUs = now - WINDOW_US;
+    const head = headRef.current;
+    if (viewRef.current.live && head > 0) {
+      viewRef.current.endUs   = head;
+      viewRef.current.startUs = Math.max(0, head - WINDOW_US);
     }
 
     const { startUs, endUs } = viewRef.current;
@@ -103,7 +126,7 @@ export default function UPlotCanvas({ channels, width, height, onCursorMove }: P
         const pts = await invoke<[number, number][]>('get_graph_data', {
           channel: channels[ci], startUs, endUs, maxPoints: maxPts,
         });
-        if (ci === 0) pts.forEach(([t]) => times.push(t / 1e6));
+        if (ci === 0) pts.forEach(([t]) => times.push(t));
         series.push(pts.map(([, v]) => v));
       } catch {
         series.push(times.map(() => NaN));
@@ -112,13 +135,15 @@ export default function UPlotCanvas({ channels, width, height, onCursorMove }: P
 
     if (uRef.current) {
       uRef.current.setData(series as uPlot.AlignedData);
+      if (startUs < endUs) {
+        uRef.current.setScale('x', { min: startUs, max: endUs });
+      }
     }
   }, [channels, width]);
 
-  // store fetchAndDraw in a ref so the interval always calls the latest version
   useEffect(() => { fetchRef.current = fetchAndDraw; }, [fetchAndDraw]);
 
-  // (re)create uPlot when channels or size changes
+  // (re)create uPlot when channels change
   useEffect(() => {
     if (!divRef.current) return;
     uRef.current?.destroy();
@@ -138,47 +163,57 @@ export default function UPlotCanvas({ channels, width, height, onCursorMove }: P
     }
   }, [width, height]);
 
-  // live data refresh at 10 Hz
+  // jump back to live when requestLive bumps
+  useEffect(() => {
+    if (requestLive === 0) return;
+    setLive(true);
+    fetchRef.current();
+  }, [requestLive, setLive]);
+
+  // live refresh at 10 Hz
   useEffect(() => {
     const id = setInterval(() => fetchRef.current(), 100);
     return () => clearInterval(id);
   }, []);
 
-  // scroll: zoom & pan
+  // scroll: plain scroll = zoom around cursor, ctrl/meta = pan
   useEffect(() => {
     const el = divRef.current;
     if (!el) return;
 
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
+      if (!uRef.current) return;
 
       const { startUs, endUs } = viewRef.current;
       const span = endUs - startUs;
-
-      // normalize delta — trackpads send small fractional values, wheels send ±100+
-      const raw = e.deltaY;
+      const raw  = e.deltaY;
       const norm = Math.sign(raw) * Math.min(Math.abs(raw), 80);
 
       if (e.ctrlKey || e.metaKey) {
-        // zoom centered on cursor
-        const factor = 1 + norm * 0.006;
-        const rect = el.getBoundingClientRect();
-        const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-        const anchor = startUs + ratio * span;
-        const newSpan = Math.max(2_000_000, Math.min(300_000_000, span * factor));
-        viewRef.current = {
-          startUs: anchor - ratio * newSpan,
-          endUs:   anchor + (1 - ratio) * newSpan,
-          live:    false,
-        };
-      } else {
-        // pan (horizontal scroll or plain scroll = time shift)
-        const shift = span * norm * 0.012;
-        const nowUs = Date.now() * 1000;
-        const newEnd   = Math.min(nowUs, endUs + shift);
+        // pan
+        const shift    = span * norm * 0.012;
+        const head     = headRef.current;
+        const newEnd   = head > 0 ? Math.min(head, endUs + shift) : endUs + shift;
         const newStart = newEnd - span;
-        const isLive   = newEnd >= nowUs - 500_000;
+        const isLive   = head > 0 && newEnd >= head - 500_000;
         viewRef.current = { startUs: newStart, endUs: newEnd, live: isLive };
+        setLive(isLive);
+      } else {
+        // zoom around cursor — use uPlot's posToVal for exact time at mouse
+        const rect   = el.getBoundingClientRect();
+        const px     = e.clientX - rect.left;
+        const anchor = uRef.current.posToVal(px, 'x');
+        const factor = 1 + norm * 0.006;
+        const newSpan = Math.max(2_000_000, Math.min(600_000_000, span * factor));
+        const ratio   = span > 0 ? (anchor - startUs) / span : 0.5;
+        const clamped = Math.max(0, Math.min(1, ratio));
+        const newStart = anchor - clamped * newSpan;
+        const newEnd   = anchor + (1 - clamped) * newSpan;
+        const head     = headRef.current;
+        const isLive   = head > 0 && newEnd >= head - 500_000;
+        viewRef.current = { startUs: newStart, endUs: newEnd, live: isLive };
+        setLive(isLive);
       }
 
       fetchRef.current();
@@ -186,7 +221,7 @@ export default function UPlotCanvas({ channels, width, height, onCursorMove }: P
 
     el.addEventListener('wheel', onWheel, { passive: false });
     return () => el.removeEventListener('wheel', onWheel);
-  }, []);
+  }, [setLive]);
 
   return (
     <div

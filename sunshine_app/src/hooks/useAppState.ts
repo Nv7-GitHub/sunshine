@@ -12,10 +12,14 @@ export function useAppState() {
   const [rxRssi,        setRxRssi]       = useState<number>(-127);
 
   useEffect(() => {
-    const unsub1 = listen<LiveUpdate>('live_update',    e => setLiveUpdate(e.payload));
-    const unsub2 = listen<SourceStatus>('source_status', e => setSourceStatus(e.payload));
-    const unsub3 = listen<number>('rx_rssi',            e => setRxRssi(e.payload));
-    return () => { unsub1.then(f=>f()); unsub2.then(f=>f()); unsub3.then(f=>f()); };
+    const unsub1 = listen<LiveUpdate>('live_update',    e => setLiveUpdate(e.payload)).catch(() => {});
+    const unsub2 = listen<SourceStatus>('source_status', e => setSourceStatus(e.payload)).catch(() => {});
+    const unsub3 = listen<number>('rx_rssi',            e => setRxRssi(e.payload)).catch(() => {});
+    return () => {
+      unsub1.then(f => typeof f === 'function' && f()).catch(() => {});
+      unsub2.then(f => typeof f === 'function' && f()).catch(() => {});
+      unsub3.then(f => typeof f === 'function' && f()).catch(() => {});
+    };
   }, []);
 
   const setMode = useCallback((m: Mode) => {

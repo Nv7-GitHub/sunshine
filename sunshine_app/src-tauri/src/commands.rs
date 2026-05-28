@@ -69,7 +69,7 @@ pub fn open_replay(path: String) -> Result<serde_json::Value, String> {
 }
 
 #[tauri::command]
-pub fn start_simulation(state: State<'_, AppState>, app: AppHandle) {
+pub async fn start_simulation(state: State<'_, AppState>, app: AppHandle) -> Result<(), ()> {
     let pipeline  = state.pipeline.clone();
     let controls  = state.controls.clone();
     let stop_flag = state.sim_stop.clone();
@@ -122,6 +122,7 @@ pub fn start_simulation(state: State<'_, AppState>, app: AppHandle) {
             "kind": "Disconnected", "detail": ""
         }));
     });
+    Ok(())
 }
 
 #[tauri::command]
@@ -174,7 +175,6 @@ pub fn get_graph_data(
 }
 
 fn build_live_update(telem: &TelemetryFrame) -> serde_json::Value {
-    // Copy packed fields to locals to avoid unaligned reference errors
     let frame_id    = telem.frame_id;
     let kf_theta    = telem.state.kf_theta;
     let kf_omega    = telem.state.kf_omega;
@@ -182,6 +182,7 @@ fn build_live_update(telem: &TelemetryFrame) -> serde_json::Value {
     let mode        = last.mode;
     let rssi        = last.rssi;
     let batt_offset = last.batt_offset;
+    let time_us     = last.time_us;
     serde_json::json!({
         "frame_id":    frame_id,
         "est_theta":   kf_theta,
@@ -189,6 +190,7 @@ fn build_live_update(telem: &TelemetryFrame) -> serde_json::Value {
         "mode":        mode,
         "rssi":        rssi,
         "batt_offset": batt_offset,
+        "time_us":     time_us,
     })
 }
 

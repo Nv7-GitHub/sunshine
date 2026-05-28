@@ -13,13 +13,15 @@ pub struct DataPoint {
 const RING_CAP: usize = 120_000;
 
 pub struct Pipeline {
-    ring:         Vec<DataPoint>,
-    ring_head:    usize,
-    ring_len:     usize,
-    replay_state: SunshineState,
-    pub logger:   Option<LogWriter>,
-    pub source:   SourceKind,
-    frame_count:  u32,
+    ring:          Vec<DataPoint>,
+    ring_head:     usize,
+    ring_len:      usize,
+    replay_state:  SunshineState,
+    pub logger:    Option<LogWriter>,
+    pub source:    SourceKind,
+    frame_count:   u32,
+    hw_epoch_us:   u64,
+    last_hw_us:    u32,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -37,21 +39,26 @@ impl Pipeline {
             logger: None,
             source: SourceKind::None,
             frame_count: 0,
+            hw_epoch_us: 0,
+            last_hw_us: 0,
         }
     }
 
-    pub fn ingest_frame(&mut self, frame: &TelemetryFrame, real_vars_snap: Option<&SunshineVars>) {
-        use std::time::{SystemTime, UNIX_EPOCH};
-        let now_us = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_micros() as u64;
+    fn expand_hw_time(&mut self, hw: u32) -> u64 {
+        if hw < self.last_hw_us && (self.last_hw_us - hw) > 0x8000_0000 {
+            self.hw_epoch_us += 0x1_0000_0000;
+        }
+        self.last_hw_us = hw;
+        self.hw_epoch_us + hw as u64
+    }
 
+    pub fn ingest_frame(&mut self, frame: &TelemetryFrame, real_vars_snap: Option<&SunshineVars>) {
         for input in frame.inputs.iter() {
+            let time_us  = self.expand_hw_time(input.time_us);
             let rep_vars = brain_step(input, &mut self.replay_state);
 
             let dp = DataPoint {
-                time_us: now_us,
+                time_us,
                 input:     *input,
                 real_vars: real_vars_snap.copied().unwrap_or_default(),
                 rep_vars,
@@ -183,25 +190,19 @@ mod tests {
     use super::*;
     use crate::protocol::TelemetryFrame;
     use crate::ffi::{SunshineInput, SunshineState};
-    use std::time::{SystemTime, UNIX_EPOCH};
 
     fn make_frame(inputs: [SunshineInput; 20]) -> TelemetryFrame {
         TelemetryFrame { frame_id: 0, state: SunshineState::default(), inputs }
     }
 
-    fn now_us() -> u64 {
-        SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_micros() as u64
-    }
-
     #[test]
-    fn ingest_uses_wall_clock_timestamp() {
+    fn ingest_uses_hardware_timestamp() {
         let mut p = Pipeline::new();
-        let before = now_us();
-        let input = SunshineInput { time_us: 999, ..SunshineInput::default() };
+        let hw_us: u32 = 5_000_000; // 5 seconds in µs
+        let input = SunshineInput { time_us: hw_us, ctrl_x: 7, ..SunshineInput::default() };
         p.ingest_frame(&make_frame([input; 20]), None);
-        let after = now_us();
-        let data = p.get_graph_data("input.ctrl_x", before - 1, after + 1, 100);
-        assert!(!data.is_empty(), "stored points must use wall-clock timestamp");
+        let data = p.get_graph_data("input.ctrl_x", hw_us as u64 - 1, hw_us as u64 + 1, 100);
+        assert!(!data.is_empty(), "stored points must use hardware timestamp");
     }
 
     #[test]
@@ -225,11 +226,11 @@ mod tests {
     #[test]
     fn snapshot_by_time_returns_closest() {
         let mut p = Pipeline::new();
-        let input = SunshineInput { ctrl_x: 7, ..SunshineInput::default() };
+        let hw_us: u32 = 10_000_000;
+        let input = SunshineInput { time_us: hw_us, ctrl_x: 7, ..SunshineInput::default() };
         p.ingest_frame(&make_frame([input; 20]), None);
-        let after = now_us() + 1_000_000; // 1 second in the future
-        // Only batch is in the past — it's still the closest point
-        let vals = p.get_channel_snapshot(&["input.ctrl_x".to_string()], Some(after));
+        let later = hw_us as u64 + 1_000_000;
+        let vals = p.get_channel_snapshot(&["input.ctrl_x".to_string()], Some(later));
         assert_eq!(vals[0], 7.0);
     }
 

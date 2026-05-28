@@ -224,10 +224,11 @@ export default function DriverStation({ mode, setMode, sourceStatus, liveUpdate,
                 {replayPath ? replayPath.split('/').pop() ?? replayPath : 'No file selected'}
               </span>
               <button className="conn-btn" onClick={async () => {
-                const selected = await openDialog({
-                  filters: [{ name: 'Sunshine Log', extensions: ['sun'] }],
-                });
-                if (!selected || typeof selected !== 'string') return;
+                let selected: string | null = null;
+                try {
+                  selected = await openDialog({ filters: [{ name: 'Sunshine Log', extensions: ['sun'] }] }) as string | null;
+                } catch { return; }
+                if (!selected) return;
                 setReplayPath(selected);
                 try {
                   const meta = await invoke<{ label?: string; frame_count: number; schema_version: number }>(
@@ -251,8 +252,11 @@ export default function DriverStation({ mode, setMode, sourceStatus, liveUpdate,
 
         {tab === 'sim' && (
           <>
-            <button className="conn-btn" onClick={() => invoke('start_simulation')}>Start Simulation</button>
-            <button className="conn-btn danger" onClick={() => invoke('stop_source')}>Stop</button>
+            {sourceStatus.kind === 'Sim' ? (
+              <button className="conn-btn danger" onClick={() => invoke('stop_source')}>Stop Simulation</button>
+            ) : (
+              <button className="conn-btn" onClick={() => { invoke('start_simulation'); setMode(1); }}>Start Simulation</button>
+            )}
             <div className="sim-info">
               <span>KV: 1100 RPM/V</span>
               <span>MoI: 1.214×10⁻³ kg·m²</span>

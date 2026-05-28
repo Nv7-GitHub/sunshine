@@ -126,6 +126,29 @@ input, select { font: inherit; color: inherit; }
 
 .top-spacer { flex: 1; }
 
+.live-btn {
+  display: flex; align-items: center; gap: 5px;
+  padding: 3px 10px; border-radius: 4px; border: 1px solid transparent;
+  font-family: 'JetBrains Mono', monospace; font-size: 10px; font-weight: 600;
+  letter-spacing: .08em; cursor: pointer; transition: opacity .15s;
+}
+.live-btn-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+}
+.live-btn-live {
+  background: color-mix(in oklch, var(--good) 15%, transparent);
+  border-color: color-mix(in oklch, var(--good) 40%, transparent);
+  color: var(--good); cursor: default;
+}
+.live-btn-live .live-btn-dot { background: var(--good); animation: pulse 1.6s infinite; }
+.live-btn-paused {
+  background: color-mix(in oklch, var(--warn) 15%, transparent);
+  border-color: color-mix(in oklch, var(--warn) 40%, transparent);
+  color: var(--warn);
+}
+.live-btn-paused .live-btn-dot { background: var(--warn); }
+.live-btn-paused:hover { opacity: .8; }
+
 .logging-bar {
   display: flex;
   align-items: center;

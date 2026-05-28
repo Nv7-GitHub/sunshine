@@ -19,10 +19,13 @@ const ALL_CHANNELS = Object.entries(CHANNELS).flatMap(
 interface Props {
   selected:     string[];
   onToggle:     (key: string) => void;
+  headTimeUs:   number;
+  requestLive:  number;
   onCursorMove: (us: number | null) => void;
+  onLiveChange: (live: boolean) => void;
 }
 
-export default function GraphPanel({ selected, onToggle, onCursorMove }: Props) {
+export default function GraphPanel({ selected, onToggle, headTimeUs, requestLive, onCursorMove, onLiveChange }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ w: 600, h: 400 });
 
@@ -43,12 +46,20 @@ export default function GraphPanel({ selected, onToggle, onCursorMove }: Props) 
           <span style={{ color: 'var(--text-3)' }}>{selected.length} series</span>
         </div>
         <div className="graph-tools">
-          <span style={{ fontSize: 10, color: 'var(--text-4)', letterSpacing: '.06em', marginRight: 2 }}>SCROLL TO ZOOM · DRAG TO PAN</span>
+          <span style={{ fontSize: 10, color: 'var(--text-4)', letterSpacing: '.06em', marginRight: 2 }}>SCROLL TO ZOOM · CTRL+SCROLL TO PAN</span>
         </div>
       </div>
 
       <div ref={wrapRef} className="uplot-wrap">
-        <UPlotCanvas channels={selected} width={size.w} height={size.h} onCursorMove={onCursorMove} />
+        <UPlotCanvas
+          channels={selected}
+          width={size.w}
+          height={size.h}
+          headTimeUs={headTimeUs}
+          requestLive={requestLive}
+          onCursorMove={onCursorMove}
+          onLiveChange={onLiveChange}
+        />
       </div>
 
       <div className="chips-strip">

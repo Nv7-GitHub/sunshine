@@ -12,11 +12,15 @@ const DEFAULT_CHANNELS = ['rep.est_theta', 'rep.est_omega'];
 export default function App() {
   const state    = useAppState();
   const inputRef = useKeyboard(state.mode);
-  const [selected,  setSelected]  = useState<string[]>(DEFAULT_CHANNELS);
-  const [cursorUs,  setCursorUs]  = useState<number | null>(null);
+  const [selected,    setSelected]    = useState<string[]>(DEFAULT_CHANNELS);
+  const [cursorUs,    setCursorUs]    = useState<number | null>(null);
+  const [isGraphLive, setIsGraphLive] = useState(true);
+  const [liveRequest, setLiveRequest] = useState(0);
 
   const toggle = (key: string) =>
     setSelected(prev => prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key]);
+
+  const headTimeUs = state.liveUpdate?.time_us ?? 0;
 
   return (
     <div className="app">
@@ -26,11 +30,20 @@ export default function App() {
         rxRssi={state.rxRssi}
         loggingActive={state.loggingActive}
         logPath={state.logPath}
+        isGraphLive={isGraphLive}
+        onGoLive={() => setLiveRequest(r => r + 1)}
         onEnableLogging={state.enableLogging}
         onDisableLogging={state.disableLogging}
       />
       <VariableTree selected={selected} onToggle={toggle} cursorUs={cursorUs} />
-      <GraphPanel   selected={selected} onToggle={toggle} onCursorMove={setCursorUs} />
+      <GraphPanel
+        selected={selected}
+        onToggle={toggle}
+        headTimeUs={headTimeUs}
+        requestLive={liveRequest}
+        onCursorMove={setCursorUs}
+        onLiveChange={setIsGraphLive}
+      />
       <DriverStation
         mode={state.mode}
         setMode={state.setMode}

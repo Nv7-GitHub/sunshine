@@ -9,6 +9,8 @@ interface Props {
   rxRssi:           number;
   loggingActive:    boolean;
   logPath:          string;
+  isGraphLive:      boolean;
+  onGoLive:         () => void;
   onEnableLogging:  (label: string) => void;
   onDisableLogging: () => void;
 }
@@ -17,7 +19,7 @@ function battVoltage(offset: number): number {
   return 7.6 + offset * 0.0205;
 }
 
-export default function TopBar({ mode, liveUpdate, rxRssi, loggingActive, logPath, onEnableLogging, onDisableLogging }: Props) {
+export default function TopBar({ mode, liveUpdate, rxRssi, loggingActive, logPath, isGraphLive, onGoLive, onEnableLogging, onDisableLogging }: Props) {
   const [label, setLabel] = useState('');
 
   const batt   = liveUpdate ? battVoltage(liveUpdate.batt_offset).toFixed(2) : '--';
@@ -55,6 +57,15 @@ export default function TopBar({ mode, liveUpdate, rxRssi, loggingActive, logPat
           <span className="v">{rxRssi} dBm</span>
         </span>
       </div>
+
+      <button
+        className={`live-btn ${isGraphLive ? 'live-btn-live' : 'live-btn-paused'}`}
+        onClick={onGoLive}
+        disabled={isGraphLive}
+      >
+        <span className="live-btn-dot" />
+        {isGraphLive ? 'LIVE' : 'PAUSED'}
+      </button>
 
       <div className="top-spacer" />
 

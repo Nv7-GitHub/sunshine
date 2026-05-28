@@ -1,4 +1,6 @@
 fn main() {
+    tauri_build::build();
+
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
     let core_dir = format!("{}/../../sunshine_core", manifest_dir);
 

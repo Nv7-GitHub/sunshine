@@ -3004,6 +3004,7 @@ dependencies = [
  "serde_json",
  "serialport",
  "tauri",
+ "tauri-build",
  "tauri-plugin-dialog",
  "tokio",
 ]
