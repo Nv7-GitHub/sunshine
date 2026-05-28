@@ -163,3 +163,12 @@ fn build_live_update(telem: &TelemetryFrame) -> serde_json::Value {
         "batt_offset": batt_offset,
     })
 }
+
+#[tauri::command]
+pub fn get_channel_snapshot(
+    channels: Vec<String>,
+    time_us:  Option<u64>,
+    state:    State<'_, AppState>,
+) -> Vec<f32> {
+    state.pipeline.lock().get_channel_snapshot(&channels, time_us)
+}
