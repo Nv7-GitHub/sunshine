@@ -10,6 +10,7 @@ use crate::{AppState,
             ffi::{brain_step, state_init, SunshineVars, SunshineState}};
 use tauri::{State, AppHandle, Emitter};
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use serde::{Serialize, Deserialize};
 
 #[tauri::command]
@@ -69,17 +70,38 @@ pub fn open_replay(path: String) -> Result<serde_json::Value, String> {
 
 #[tauri::command]
 pub fn start_simulation(state: State<'_, AppState>, app: AppHandle) {
-    let pipeline = state.pipeline.clone();
-    let mut sim  = Simulation::new();
-    let mut replay_state = SunshineState::default();
-    state_init(&mut replay_state);
-    let mut prev_vars = SunshineVars::default();
+    let pipeline  = state.pipeline.clone();
+    let controls  = state.controls.clone();
+    let stop_flag = state.sim_stop.clone();
+    stop_flag.store(false, Ordering::Relaxed);
 
-    std::thread::spawn(move || {
+    let _ = app.emit("source_status", serde_json::json!({
+        "kind": "Sim", "detail": "Running"
+    }));
+
+    tokio::spawn(async move {
+        let mut sim          = Simulation::new();
+        let mut replay_state = SunshineState::default();
+        state_init(&mut replay_state);
+        let mut prev_vars    = SunshineVars::default();
+
         loop {
-            let input  = sim.tick(&prev_vars);
-            let vars   = brain_step(&input, &mut replay_state);
-            prev_vars  = vars;
+            if stop_flag.load(Ordering::Relaxed) { break; }
+
+            let (cx, cy, ct, cth, cmode) = {
+                let ctrl = controls.lock();
+                (ctrl.ctrl_x, ctrl.ctrl_y, ctrl.ctrl_theta, ctrl.ctrl_throttle, ctrl.mode)
+            };
+
+            let mut input  = sim.tick(&prev_vars);
+            input.ctrl_x        = cx;
+            input.ctrl_y        = cy;
+            input.ctrl_theta    = ct;
+            input.ctrl_throttle = cth;
+            input.mode          = cmode;
+
+            let vars  = brain_step(&input, &mut replay_state);
+            prev_vars = vars;
 
             let telem = TelemetryFrame {
                 frame_id: 0,
@@ -92,14 +114,20 @@ pub fn start_simulation(state: State<'_, AppState>, app: AppHandle) {
             }
             let update = build_live_update(&telem);
             let _ = app.emit("live_update", update);
-            std::thread::sleep(std::time::Duration::from_millis(20));
+
+            tokio::time::sleep(tokio::time::Duration::from_millis(20)).await;
         }
+
+        let _ = app.emit("source_status", serde_json::json!({
+            "kind": "Disconnected", "detail": ""
+        }));
     });
 }
 
 #[tauri::command]
 pub fn stop_source(state: State<'_, AppState>) {
     state.pipeline.lock().source = SourceKind::None;
+    state.sim_stop.store(true, Ordering::Relaxed);
 }
 
 #[tauri::command]
