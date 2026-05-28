@@ -1,6 +1,5 @@
 #pragma once
 #include <stdint.h>
-#include <stdbool.h>
 #include <stddef.h>
 
 /* ── Schema version ────────────────────────────────────────────────────────
@@ -100,24 +99,25 @@ typedef struct __attribute__((packed)) {
 } SunshineState;
 /* static_assert(sizeof(SunshineState) == 60, ""); */
 
-/* SunshineVars: derived variables, never telemetered, 52 bytes. */
-typedef struct {
-    float  omega_from_accel;  /* rad/s, inflated during spinup            */
-    float  derot_I;           /* derotated+filtered mag I (µT)            */
-    float  derot_Q;           /* derotated+filtered mag Q (µT)            */
-    float  mag_angle;         /* atan2(Q,I) rad                           */
-    float  est_theta;         /* = kf_theta                               */
-    float  est_omega;         /* = kf_omega                               */
-    float  dshot_cmd_left;    /* [0, 2000], pre-quantisation              */
-    float  dshot_cmd_right;
-    float  batt_voltage;      /* actual voltage (V)                       */
-    float  erpm_left;         /* decoded from float16                     */
-    float  erpm_right;
-    float  centripetal_ms2;   /* sqrt(ax²+ay²)*ADXL_SCALE_MS2            */
-    bool   led_on;
-    bool   accel_saturated;   /* centripetal > 280g equivalent            */
-    bool   mag_valid;         /* est_omega > SUNSHINE_MAG_MIN_OMEGA       */
-    bool   loop_overrun;      /* hardware only                            */
+/* SunshineVars: derived variables, never telemetered, 52 bytes packed.
+ * APPEND-ONLY: never insert, reorder, or resize existing fields. */
+typedef struct __attribute__((packed)) {
+    float   omega_from_accel;  /* rad/s, inflated during spinup            */
+    float   derot_I;           /* derotated+filtered mag I (µT)            */
+    float   derot_Q;           /* derotated+filtered mag Q (µT)            */
+    float   mag_angle;         /* atan2(Q,I) rad                           */
+    float   est_theta;         /* = kf_theta                               */
+    float   est_omega;         /* = kf_omega                               */
+    float   dshot_cmd_left;    /* [0, 2047], pre-quantisation              */
+    float   dshot_cmd_right;
+    float   batt_voltage;      /* actual voltage (V)                       */
+    float   erpm_left;         /* decoded from float16                     */
+    float   erpm_right;
+    float   centripetal_ms2;   /* sqrt(ax²+ay²)*ADXL_SCALE_MS2            */
+    uint8_t led_on;            /* 1 when within ±3° of zero heading        */
+    uint8_t accel_saturated;   /* 1 when centripetal > 280g equivalent     */
+    uint8_t mag_valid;         /* 1 when est_omega > SUNSHINE_MAG_MIN_OMEGA*/
+    uint8_t loop_overrun;      /* 1 when 1kHz tick exceeded 1000µs (HW)   */
 } SunshineVars;
 
 /* ── Public API ────────────────────────────────────────────────────────── */

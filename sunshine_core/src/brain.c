@@ -52,7 +52,7 @@ void sunshine_step(const SunshineInput *in, SunshineState *state, SunshineVars *
     control_step(in, state, vars);
 
     /* loop_overrun is set by the hardware layer, not here */
-    vars->loop_overrun = false;
+    vars->loop_overrun = 0;
 }
 
 /* Serialisation: memcpy suffices because structs are __attribute__((packed))

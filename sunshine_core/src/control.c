@@ -37,7 +37,7 @@ void control_step(const SunshineInput *in, SunshineState *s, SunshineVars *v) {
     if (in->mode == SUNSHINE_MODE_DISABLED) {
         v->dshot_cmd_left  = 0.0f;
         v->dshot_cmd_right = 0.0f;
-        v->led_on = false;
+        v->led_on = 0;
         return;
     }
 
