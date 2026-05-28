@@ -716,6 +716,20 @@ input, select { font: inherit; color: inherit; }
   text-align: center;
 }
 
+.file-picker-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.file-picker-name {
+  flex: 1;
+  font: 9px 'JetBrains Mono', monospace;
+  color: var(--text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* ─── Animations ─── */
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
 @keyframes blink { 50% { opacity: 0; } }

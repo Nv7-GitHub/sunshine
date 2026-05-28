@@ -27,6 +27,7 @@ pub fn run() {
     let sim_stop = Arc::new(AtomicBool::new(false));
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .manage(AppState { pipeline, controls, sim_stop })
         .invoke_handler(tauri::generate_handler![
             commands::list_serial_ports,

@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, type RefObject } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import type { Mode, SourceStatus, LiveUpdate } from '../types/sunshine';
 import type { InputState } from '../hooks/useKeyboard';
 
@@ -218,19 +219,26 @@ export default function DriverStation({ mode, setMode, sourceStatus, liveUpdate,
 
         {tab === 'replay' && (
           <>
-            <input
-              className="conn-input"
-              placeholder="Path to .sun file…"
-              value={replayPath}
-              onChange={e => setReplayPath(e.target.value)}
-            />
-            <button className="conn-btn" onClick={async () => {
-              if (!replayPath) return;
-              const meta = await invoke<{ label?: string; frame_count: number; schema_version: number }>('open_replay', { path: replayPath });
-              setReplayMeta(meta);
-            }}>
-              Open
-            </button>
+            <div className="file-picker-row">
+              <span className="file-picker-name mono">
+                {replayPath ? replayPath.split('/').pop() ?? replayPath : 'No file selected'}
+              </span>
+              <button className="conn-btn" onClick={async () => {
+                const selected = await openDialog({
+                  filters: [{ name: 'Sunshine Log', extensions: ['sun'] }],
+                });
+                if (!selected || typeof selected !== 'string') return;
+                setReplayPath(selected);
+                try {
+                  const meta = await invoke<{ label?: string; frame_count: number; schema_version: number }>(
+                    'open_replay', { path: selected }
+                  );
+                  setReplayMeta(meta);
+                } catch (e) {
+                  setReplayMeta(null);
+                }
+              }}>Browse…</button>
+            </div>
             {replayMeta && (
               <div className="replay-info">
                 <span>Label: {replayMeta.label || '(none)'}</span>
