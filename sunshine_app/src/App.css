@@ -1,116 +1,455 @@
-.logo.vite:hover {
-  filter: drop-shadow(0 0 2em #747bff);
-}
-
-.logo.react:hover {
-  filter: drop-shadow(0 0 2em #61dafb);
-}
 :root {
-  font-family: Inter, Avenir, Helvetica, Arial, sans-serif;
-  font-size: 16px;
-  line-height: 24px;
-  font-weight: 400;
-
-  color: #0f0f0f;
-  background-color: #f6f6f6;
-
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  -webkit-text-size-adjust: 100%;
+  --bg-primary:    #0d0d0d;
+  --bg-secondary:  #141414;
+  --bg-card:       #1a1a1a;
+  --bg-elevated:   #222222;
+  --text-primary:  #e8e8e8;
+  --text-muted:    #888;
+  --accent-green:  #2ecc71;
+  --accent-red:    #e74c3c;
+  --accent-yellow: #f39c12;
+  --accent-blue:   #3498db;
+  --border:        #2a2a2a;
+  --border-bright: #3a3a3a;
 }
 
-.container {
+*, *::before, *::after {
+  box-sizing: border-box;
   margin: 0;
-  padding-top: 10vh;
+  padding: 0;
+}
+
+html, body, #root {
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'Consolas', monospace;
+  font-size: 13px;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── App shell ─────────────────────────────────────── */
+
+.app {
   display: flex;
   flex-direction: column;
-  justify-content: center;
-  text-align: center;
+  height: 100vh;
+  overflow: hidden;
+  background: var(--bg-primary);
 }
 
-.logo {
-  height: 6em;
-  padding: 1.5em;
-  will-change: filter;
-  transition: 0.75s;
-}
+/* ── Header ────────────────────────────────────────── */
 
-.logo.tauri:hover {
-  filter: drop-shadow(0 0 2em #24c8db);
-}
-
-.row {
+.header {
   display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 8px 16px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  min-height: 52px;
+}
+
+/* ── Mode Buttons ──────────────────────────────────── */
+
+.mode-buttons {
+  display: flex;
+  gap: 6px;
+}
+
+.mode-btn {
+  padding: 5px 16px;
+  border: 2px solid var(--btn-color, #555);
+  background: transparent;
+  color: var(--btn-color, #aaa);
+  border-radius: 4px;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 700;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  transition: background 0.1s, color 0.1s, opacity 0.1s;
+  white-space: nowrap;
+}
+
+.mode-btn.active {
+  background: var(--btn-color);
+  color: #000;
+  box-shadow: 0 0 8px color-mix(in srgb, var(--btn-color) 40%, transparent);
+}
+
+.mode-btn:hover:not(.active) {
+  background: color-mix(in srgb, var(--btn-color) 15%, transparent);
+}
+
+/* ── Status Bar ────────────────────────────────────── */
+
+.status-bar {
+  display: flex;
+  gap: 24px;
+  flex: 1;
   justify-content: center;
 }
 
-a {
+.status-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+}
+
+.status-label {
+  font-size: 9px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
   font-weight: 500;
-  color: #646cff;
-  text-decoration: inherit;
 }
 
-a:hover {
-  color: #535bf2;
+.status-value {
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  font-variant-numeric: tabular-nums;
 }
 
-h1 {
-  text-align: center;
+/* ── Logging Control ───────────────────────────────── */
+
+.logging-control {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
 }
 
-input,
-button {
-  border-radius: 8px;
-  border: 1px solid transparent;
-  padding: 0.6em 1.2em;
-  font-size: 1em;
-  font-weight: 500;
-  font-family: inherit;
-  color: #0f0f0f;
-  background-color: #ffffff;
-  transition: border-color 0.25s;
-  box-shadow: 0 2px 2px rgba(0, 0, 0, 0.2);
+.log-label-input {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-bright);
+  color: var(--text-primary);
+  padding: 4px 8px;
+  border-radius: 3px;
+  font: inherit;
+  font-size: 12px;
+  width: 140px;
+  outline: none;
+  transition: border-color 0.15s;
 }
 
-button {
+.log-label-input:focus {
+  border-color: var(--accent-blue);
+}
+
+.btn-start-log,
+.btn-stop-log {
+  padding: 4px 10px;
+  border-radius: 3px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
   cursor: pointer;
+  border: none;
+  transition: opacity 0.1s;
 }
 
-button:hover {
-  border-color: #396cd8;
-}
-button:active {
-  border-color: #396cd8;
-  background-color: #e8e8e8;
+.btn-start-log { background: var(--accent-green); color: #000; }
+.btn-stop-log  { background: var(--accent-red);   color: #fff; }
+
+.btn-start-log:hover,
+.btn-stop-log:hover { opacity: 0.85; }
+
+.log-indicator.active {
+  color: var(--accent-red);
+  font-weight: 700;
+  font-size: 12px;
+  animation: blink 1s step-end infinite;
 }
 
-input,
-button {
+.log-path {
+  color: var(--text-muted);
+  font-size: 11px;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@keyframes blink {
+  50% { opacity: 0; }
+}
+
+/* ── Main Layout ───────────────────────────────────── */
+
+.main-layout {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+  min-height: 0;
+}
+
+/* ── Connection Panel ──────────────────────────────── */
+
+.connection-panel {
+  width: 240px;
+  min-width: 240px;
+  background: var(--bg-secondary);
+  border-right: 1px solid var(--border);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow-y: auto;
+}
+
+.tab-bar {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 4px;
+}
+
+.tab {
+  flex: 1;
+  padding: 5px 4px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 3px;
+  letter-spacing: 0.05em;
+  transition: background 0.1s, color 0.1s;
+}
+
+.tab.active {
+  background: var(--accent-blue);
+  color: #fff;
+  border-color: var(--accent-blue);
+}
+
+.tab:hover:not(.active) {
+  color: var(--text-primary);
+  border-color: var(--border-bright);
+}
+
+.tab-content {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.port-select {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-bright);
+  color: var(--text-primary);
+  padding: 5px 8px;
+  border-radius: 3px;
+  font: inherit;
+  font-size: 12px;
+  width: 100%;
   outline: none;
 }
 
-#greet-input {
-  margin-right: 5px;
+.btn-connect {
+  background: var(--accent-blue);
+  color: #fff;
+  border: none;
+  padding: 6px 8px;
+  border-radius: 3px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  transition: opacity 0.1s;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    color: #f6f6f6;
-    background-color: #2f2f2f;
-  }
+.btn-connect:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
 
-  a:hover {
-    color: #24c8db;
-  }
+.btn-connect:not(:disabled):hover { opacity: 0.85; }
 
-  input,
-  button {
-    color: #ffffff;
-    background-color: #0f0f0f98;
-  }
-  button:active {
-    background-color: #0f0f0f69;
-  }
+.btn-stop {
+  background: var(--accent-red);
+  color: #fff;
+  border: none;
+  padding: 6px 8px;
+  border-radius: 3px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  transition: opacity 0.1s;
+}
+
+.btn-stop:hover { opacity: 0.85; }
+
+.conn-status {
+  padding: 5px 8px;
+  border-radius: 3px;
+  font-size: 11px;
+  text-align: center;
+  border: 1px solid transparent;
+}
+
+.conn-status.connected {
+  background: rgba(46, 204, 113, 0.12);
+  color: var(--accent-green);
+  border-color: rgba(46, 204, 113, 0.25);
+}
+
+.conn-status.disconnected {
+  background: rgba(231, 76, 60, 0.10);
+  color: #a05050;
+  border-color: rgba(231, 76, 60, 0.20);
+}
+
+.replay-meta {
+  font-size: 11px;
+  color: var(--text-muted);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 6px 8px;
+  background: var(--bg-elevated);
+  border-radius: 3px;
+  border: 1px solid var(--border);
+}
+
+.btn-file-pick {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-bright);
+  color: var(--text-primary);
+  padding: 6px;
+  border-radius: 3px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  transition: border-color 0.1s;
+}
+
+.btn-file-pick:hover { border-color: var(--accent-blue); }
+
+.sim-params {
+  font-size: 11px;
+  color: var(--text-muted);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 6px 8px;
+  background: var(--bg-elevated);
+  border-radius: 3px;
+  border: 1px solid var(--border);
+}
+
+/* ── Graph Panel ───────────────────────────────────── */
+
+.graph-panel {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+  min-width: 0;
+}
+
+/* ── Channel Selector ──────────────────────────────── */
+
+.channel-selector {
+  width: 180px;
+  min-width: 180px;
+  overflow-y: auto;
+  padding: 8px;
+  background: var(--bg-secondary);
+  border-right: 1px solid var(--border);
+}
+
+.channel-selector details {
+  margin-bottom: 4px;
+}
+
+.channel-group {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 4px 2px;
+  font-weight: 600;
+  user-select: none;
+}
+
+.channel-group:hover { color: var(--text-primary); }
+
+.channel-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 4px;
+  cursor: pointer;
+  font-size: 11px;
+  border-radius: 2px;
+  transition: background 0.1s;
+}
+
+.channel-item:hover { background: var(--bg-elevated); }
+
+.channel-item input {
+  accent-color: var(--accent-blue);
+  flex-shrink: 0;
+}
+
+.unit {
+  color: var(--text-muted);
+  font-size: 10px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+/* ── uPlot canvas ──────────────────────────────────── */
+
+.uplot-wrap {
+  flex: 1;
+  padding: 8px;
+  background: var(--bg-primary);
+  overflow: hidden;
+  min-width: 0;
+}
+
+/* Override uPlot default white background */
+.uplot-wrap .u-wrap,
+.uplot-wrap .u-over,
+.uplot-wrap canvas {
+  background: var(--bg-primary) !important;
+}
+
+.uplot-wrap .u-legend {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-family: inherit;
+}
+
+/* ── Scrollbar styling ─────────────────────────────── */
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--bg-secondary);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-bright);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #555;
 }
