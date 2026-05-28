@@ -1,9 +1,10 @@
-#![allow(dead_code, unused_variables, unused_imports)]
+use serde::{Deserialize, Serialize};
 
-#[derive(Default)]
+#[derive(Clone, Default, Debug, Serialize, Deserialize)]
 pub struct ControlState {
-    pub x:        f32,
-    pub y:        f32,
-    pub theta:    f32,
-    pub throttle: f32,
+    pub mode:          u8,
+    pub ctrl_x:        i8,
+    pub ctrl_y:        i8,
+    pub ctrl_theta:    i8,
+    pub ctrl_throttle: u8,
 }
