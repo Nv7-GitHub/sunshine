@@ -41,11 +41,17 @@ impl Pipeline {
     }
 
     pub fn ingest_frame(&mut self, frame: &TelemetryFrame, real_vars_snap: Option<&SunshineVars>) {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let now_us = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_micros() as u64;
+
         for input in frame.inputs.iter() {
             let rep_vars = brain_step(input, &mut self.replay_state);
 
             let dp = DataPoint {
-                time_us:   input.time_us as u64,
+                time_us: now_us,
                 input:     *input,
                 real_vars: real_vars_snap.copied().unwrap_or_default(),
                 rep_vars,
@@ -139,5 +145,32 @@ fn channel_accessor(channel: &str) -> fn(&DataPoint) -> f32 {
         "input.rssi"            => |dp| dp.input.rssi as f32,
         "input.batt_offset"     => |dp| dp.input.batt_offset as f32,
         _                       => |_| 0.0,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::protocol::TelemetryFrame;
+    use crate::ffi::{SunshineInput, SunshineState};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn make_frame(inputs: [SunshineInput; 20]) -> TelemetryFrame {
+        TelemetryFrame { frame_id: 0, state: SunshineState::default(), inputs }
+    }
+
+    fn now_us() -> u64 {
+        SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_micros() as u64
+    }
+
+    #[test]
+    fn ingest_uses_wall_clock_timestamp() {
+        let mut p = Pipeline::new();
+        let before = now_us();
+        let input = SunshineInput { time_us: 999, ..SunshineInput::default() };
+        p.ingest_frame(&make_frame([input; 20]), None);
+        let after = now_us();
+        let data = p.get_graph_data("input.ctrl_x", before - 1, after + 1, 100);
+        assert!(!data.is_empty(), "stored points must use wall-clock timestamp");
     }
 }
