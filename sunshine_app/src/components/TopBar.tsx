@@ -43,11 +43,11 @@ export default function TopBar({ mode, liveUpdate, rxRssi, loggingActive, logPat
           <span className="v">{batt} V</span>
         </span>
         <span className="top-stat">
-          <span className="k">ω</span>
+          <span className="k">SPIN</span>
           <span className="v">{omega} RPM</span>
         </span>
         <span className="top-stat">
-          <span className="k">RSSI·B</span>
+          <span className="k">RSSI·BOT</span>
           <span className="v">{rssiB} dBm</span>
         </span>
         <span className="top-stat">
