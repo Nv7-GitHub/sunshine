@@ -12,7 +12,8 @@ const DEFAULT_CHANNELS = ['rep.est_theta', 'rep.est_omega'];
 export default function App() {
   const state    = useAppState();
   const inputRef = useKeyboard(state.mode);
-  const [selected, setSelected] = useState<string[]>(DEFAULT_CHANNELS);
+  const [selected,  setSelected]  = useState<string[]>(DEFAULT_CHANNELS);
+  const [cursorUs,  setCursorUs]  = useState<number | null>(null);
 
   const toggle = (key: string) =>
     setSelected(prev => prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key]);
@@ -28,8 +29,8 @@ export default function App() {
         onEnableLogging={state.enableLogging}
         onDisableLogging={state.disableLogging}
       />
-      <VariableTree selected={selected} onToggle={toggle} />
-      <GraphPanel   selected={selected} onToggle={toggle} />
+      <VariableTree selected={selected} onToggle={toggle} cursorUs={cursorUs} />
+      <GraphPanel   selected={selected} onToggle={toggle} onCursorMove={setCursorUs} />
       <DriverStation
         mode={state.mode}
         setMode={state.setMode}

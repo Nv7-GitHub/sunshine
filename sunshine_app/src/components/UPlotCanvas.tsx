@@ -4,9 +4,10 @@ import 'uplot/dist/uPlot.min.css';
 import { invoke } from '@tauri-apps/api/core';
 
 interface Props {
-  channels: string[];
-  width:    number;
-  height:   number;
+  channels:      string[];
+  width:         number;
+  height:        number;
+  onCursorMove?: (us: number | null) => void;
 }
 
 const COLORS = [
@@ -24,7 +25,12 @@ const TICK_COLOR  = 'rgba(255,255,255,.05)';
 
 const WINDOW_US = 30 * 1_000_000; // 30 second default window
 
-function buildOpts(channels: string[], width: number, height: number): uPlot.Options {
+function buildOpts(
+  channels:      string[],
+  width:         number,
+  height:        number,
+  onCursorMove?: (us: number | null) => void,
+): uPlot.Options {
   return {
     width:  Math.max(100, width),
     height: Math.max(80,  height),
@@ -53,10 +59,21 @@ function buildOpts(channels: string[], width: number, height: number): uPlot.Opt
         width:  1.5,
       })),
     ],
+    hooks: {
+      setCursor: [
+        (u: uPlot) => {
+          if (!onCursorMove) return;
+          const idx = u.cursor.idx;
+          if (idx !== null && idx !== undefined && u.data[0]?.[idx] !== undefined) {
+            onCursorMove(u.data[0][idx] * 1e6);
+          }
+        },
+      ],
+    },
   };
 }
 
-export default function UPlotCanvas({ channels, width, height }: Props) {
+export default function UPlotCanvas({ channels, width, height, onCursorMove }: Props) {
   const divRef  = useRef<HTMLDivElement>(null);
   const uRef    = useRef<uPlot | null>(null);
   const viewRef = useRef({ startUs: Date.now() * 1000 - WINDOW_US, endUs: Date.now() * 1000, live: true });
@@ -106,7 +123,7 @@ export default function UPlotCanvas({ channels, width, height }: Props) {
     if (!divRef.current) return;
     uRef.current?.destroy();
 
-    const opts = buildOpts(channels, width, height);
+    const opts = buildOpts(channels, width, height, onCursorMove);
     const data = [[], ...channels.map(() => [])] as uPlot.AlignedData;
     uRef.current = new uPlot(opts, data, divRef.current!);
     fetchAndDraw();
@@ -175,6 +192,7 @@ export default function UPlotCanvas({ channels, width, height }: Props) {
     <div
       ref={divRef}
       style={{ width: '100%', height: '100%', background: 'transparent' }}
+      onMouseLeave={() => onCursorMove?.(null)}
     />
   );
 }

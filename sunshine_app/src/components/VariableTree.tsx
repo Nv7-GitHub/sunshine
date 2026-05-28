@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
+import { invoke } from '@tauri-apps/api/core';
 import { CHANNELS } from '../types/sunshine';
 
 const SERIES_COLORS = [
@@ -12,18 +13,55 @@ const SERIES_COLORS = [
 
 type ChanEntry = { key: string; label: string; unit: string };
 const TOTAL = Object.values(CHANNELS).reduce((n, g) => n + g.length, 0);
+const ALL_KEYS: string[] = Object.values(CHANNELS).flatMap(g =>
+  (g as readonly ChanEntry[]).map(ch => ch.key)
+);
 
 interface Props {
-  selected: string[];
-  onToggle: (key: string) => void;
+  selected:  string[];
+  onToggle:  (key: string) => void;
+  cursorUs:  number | null;
 }
 
-export default function VariableTree({ selected, onToggle }: Props) {
-  const [query, setQuery] = useState('');
+export default function VariableTree({ selected, onToggle, cursorUs }: Props) {
+  const [query, setQuery]       = useState('');
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  const [values, setValues]     = useState<Map<string, number>>(new Map());
+  const cursorUsRef             = useRef(cursorUs);
+  cursorUsRef.current           = cursorUs;
 
-  const q = query.toLowerCase();
+  const fetchSnapshot = async (timeUs: number | null) => {
+    try {
+      const result = await invoke<number[]>('get_channel_snapshot', {
+        channels: ALL_KEYS,
+        timeUs,
+      });
+      setValues(new Map(ALL_KEYS.map((k, i) => [k, result[i]])));
+    } catch { /* backend not ready */ }
+  };
+
+  // 10 Hz poll when cursor is not active
+  useEffect(() => {
+    const id = setInterval(() => {
+      if (cursorUsRef.current === null) fetchSnapshot(null);
+    }, 100);
+    return () => clearInterval(id);
+  }, []);
+
+  // Immediate fetch whenever cursor changes
+  useEffect(() => {
+    fetchSnapshot(cursorUs);
+  }, [cursorUs]);
+
+  const q      = query.toLowerCase();
   const toggle = (g: string) => setCollapsed(c => ({ ...c, [g]: !c[g] }));
+
+  const fmt = (v: number | undefined): string => {
+    if (v === undefined || isNaN(v)) return '—';
+    if (Math.abs(v) >= 1000)  return v.toFixed(0);
+    if (Math.abs(v) >= 10)    return v.toFixed(2);
+    return v.toFixed(4);
+  };
 
   return (
     <div className="left-rail">
@@ -65,6 +103,7 @@ export default function VariableTree({ selected, onToggle }: Props) {
                 const isSel  = selected.includes(ch.key);
                 const selIdx = selected.indexOf(ch.key);
                 const color  = isSel ? SERIES_COLORS[selIdx % SERIES_COLORS.length] : undefined;
+                const val    = values.get(ch.key);
                 return (
                   <div
                     key={ch.key}
@@ -74,7 +113,7 @@ export default function VariableTree({ selected, onToggle }: Props) {
                     <span className="var-swatch" style={color ? { background: color } : {}} />
                     <span className="var-name">{ch.label}</span>
                     <span className="var-val">
-                      —{ch.unit && <span className="var-unit">{ch.unit}</span>}
+                      {fmt(val)}{ch.unit && <span className="var-unit">{ch.unit}</span>}
                     </span>
                   </div>
                 );
