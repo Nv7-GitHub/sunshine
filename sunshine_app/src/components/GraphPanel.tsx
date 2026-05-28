@@ -17,11 +17,12 @@ const ALL_CHANNELS = Object.entries(CHANNELS).flatMap(
 );
 
 interface Props {
-  selected: string[];
-  onToggle: (key: string) => void;
+  selected:     string[];
+  onToggle:     (key: string) => void;
+  onCursorMove: (us: number | null) => void;
 }
 
-export default function GraphPanel({ selected, onToggle }: Props) {
+export default function GraphPanel({ selected, onToggle, onCursorMove }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ w: 600, h: 400 });
 
@@ -47,7 +48,7 @@ export default function GraphPanel({ selected, onToggle }: Props) {
       </div>
 
       <div ref={wrapRef} className="uplot-wrap">
-        <UPlotCanvas channels={selected} width={size.w} height={size.h} />
+        <UPlotCanvas channels={selected} width={size.w} height={size.h} onCursorMove={onCursorMove} />
       </div>
 
       <div className="chips-strip">
