@@ -1,4 +1,4 @@
-import { useState, useEffect, type RefObject } from 'react';
+import { useState, useEffect, useRef, type RefObject } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import type { Mode, SourceStatus, LiveUpdate } from '../types/sunshine';
 import type { InputState } from '../hooks/useKeyboard';
@@ -25,11 +25,19 @@ function battLabel(v: number): string {
 /* ── Controls visualization ── */
 function ControlsViz({ inputRef }: { inputRef: RefObject<InputState> }) {
   const [st, setSt] = useState<InputState>({ x: 0, y: 0, theta: 0, throttle: 0 });
+  const trailRef    = useRef<{ x: number; y: number }[]>([]);
 
   useEffect(() => {
     let raf: number;
     const tick = () => {
       const { x, y, theta, throttle } = inputRef.current;
+      const nx = x / 127;
+      const ny = y / 127;
+      const jx = 50 + nx * 40;
+      const jy = 50 - ny * 40;
+      const trail = trailRef.current;
+      trail.push({ x: jx, y: jy });
+      if (trail.length > 30) trail.shift();
       setSt({ x, y, theta, throttle });
       raf = requestAnimationFrame(tick);
     };
@@ -45,55 +53,67 @@ function ControlsViz({ inputRef }: { inputRef: RefObject<InputState> }) {
   const jx = 50 + nx * 40;
   const jy = 50 - ny * 40;
 
-  const thetaBarH = Math.abs(nt) * 50;
-  const thetaBase = nt >= 0 ? 50 : 50 - thetaBarH;
+  const thetaFillPct  = Math.abs(nt) * 50;
+  const thetaFillSide = nt >= 0 ? 'right' : 'left';
 
   return (
-    <div className="controls-grid">
-      {/* X/Y joystick */}
-      <div className="joy-pad">
-        <svg className="joy-grid" viewBox="0 0 100 100" preserveAspectRatio="none">
-          <line className="axis" x1="50" y1="5" x2="50" y2="95" />
-          <line className="axis" x1="5" y1="50" x2="95" y2="50" />
-          <line x1="25" y1="5" x2="25" y2="95" />
-          <line x1="75" y1="5" x2="75" y2="95" />
-          <line x1="5" y1="25" x2="95" y2="25" />
-          <line x1="5" y1="75" x2="95" y2="75" />
-        </svg>
-        <div className="joy-ring" />
-        <div className="joy-dot" style={{ left: `${jx}%`, top: `${jy}%` }} />
-        <div className="joy-labels">
-          <span className="jt">+Y</span>
-          <span className="jb">−Y</span>
-          <span className="jl">−X</span>
-          <span className="jr">+X</span>
+    <>
+      <div className="controls-grid">
+        {/* X/Y joystick */}
+        <div className="joy-pad">
+          <svg className="joy-grid" viewBox="0 0 100 100" preserveAspectRatio="none">
+            <line className="axis" x1="50" y1="5" x2="50" y2="95" />
+            <line className="axis" x1="5" y1="50" x2="95" y2="50" />
+            <line x1="25" y1="5" x2="25" y2="95" />
+            <line x1="75" y1="5" x2="75" y2="95" />
+            <line x1="5" y1="25" x2="95" y2="25" />
+            <line x1="5" y1="75" x2="95" y2="75" />
+            {trailRef.current.map((pt, i) => {
+              const count   = trailRef.current.length;
+              const age     = count - 1 - i;
+              const opacity = 0.5 - age * (0.45 / 29);
+              const radius  = 4 - age * (2 / 29);
+              return (
+                <circle key={i} cx={pt.x} cy={pt.y} r={Math.max(2, radius)} fill="var(--accent)" opacity={Math.max(0.05, opacity)} />
+              );
+            })}
+          </svg>
+          <div className="joy-ring" />
+          <div className="joy-dot" style={{ left: `${jx}%`, top: `${jy}%` }} />
+          <div className="joy-labels">
+            <span className="jt">+Y</span>
+            <span className="jb">−Y</span>
+            <span className="jl">−X</span>
+            <span className="jr">+X</span>
+          </div>
+          <div className="joy-readout mono">
+            x<span className="v"> {nx.toFixed(2)}</span>{' '}y<span className="v"> {ny.toFixed(2)}</span>
+          </div>
         </div>
-        <div className="joy-readout mono">
-          x<span className="v"> {nx.toFixed(2)}</span>{' '}y<span className="v"> {ny.toFixed(2)}</span>
+
+        {/* Throttle */}
+        <div className="vbar">
+          <span className="vbar-label">THR</span>
+          <div className="vbar-track">
+            <div className="vbar-fill" style={{ height: `${throttlePct}%` }} />
+          </div>
+          <span className="vbar-val mono">{Math.round(throttlePct)}<span style={{ color: 'var(--text-4)', fontSize: '8px' }}>%</span></span>
         </div>
       </div>
 
-      {/* Throttle */}
-      <div className="vbar">
-        <span className="vbar-label">THR</span>
-        <div className="vbar-track">
-          <div className="vbar-fill" style={{ height: `${throttlePct}%` }} />
-        </div>
-        <span className="vbar-val mono">{Math.round(throttlePct)}<span style={{ color: 'var(--text-4)', fontSize: '8px' }}>%</span></span>
-      </div>
-
-      {/* Theta */}
-      <div className="vbar">
-        <span className="vbar-label">θ</span>
-        <div className="vbar-track">
+      {/* Theta horizontal slider */}
+      <div className="hslider">
+        <span className="hslider-label">θ</span>
+        <div className="hslider-track">
+          <div className="hslider-center-dot" />
           <div
-            className="vbar-fill theta-fill"
-            style={{ height: `${thetaBarH}%`, bottom: `${thetaBase}%` }}
+            className={`hslider-fill hslider-fill-${thetaFillSide}`}
+            style={{ width: `${thetaFillPct}%` }}
           />
         </div>
-        <span className="vbar-val mono">{nt >= 0 ? '+' : ''}{nt.toFixed(2)}</span>
+        <span className="hslider-val mono">{nt >= 0 ? '+' : ''}{nt.toFixed(2)}</span>
       </div>
-    </div>
+    </>
   );
 }
 
