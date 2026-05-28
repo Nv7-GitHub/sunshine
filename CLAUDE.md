@@ -1,1 +1,1 @@
-Use .venv for all python tasks that need libraries and feel free to install to it
+Use .venv for all python tasks that need libraries and feel free to install to it. Use pnpm instead of npm
