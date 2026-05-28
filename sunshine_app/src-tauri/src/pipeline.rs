@@ -114,6 +114,36 @@ impl Pipeline {
         }
         out
     }
+
+    pub fn get_channel_snapshot(&self, channels: &[String], time_us: Option<u64>) -> Vec<f32> {
+        if self.ring_len == 0 {
+            return channels.iter().map(|_| f32::NAN).collect();
+        }
+
+        let start_idx = (self.ring_head + RING_CAP - self.ring_len) % RING_CAP;
+
+        let dp = match time_us {
+            None => {
+                let idx = (self.ring_head + RING_CAP - 1) % RING_CAP;
+                &self.ring[idx]
+            }
+            Some(t) => {
+                let mut best_idx = start_idx;
+                let mut best_diff = u64::MAX;
+                for i in 0..self.ring_len {
+                    let idx = (start_idx + i) % RING_CAP;
+                    let diff = self.ring[idx].time_us.abs_diff(t);
+                    if diff < best_diff {
+                        best_diff = diff;
+                        best_idx = idx;
+                    }
+                }
+                &self.ring[best_idx]
+            }
+        };
+
+        channels.iter().map(|ch| channel_accessor(ch)(dp)).collect()
+    }
 }
 
 fn channel_accessor(channel: &str) -> fn(&DataPoint) -> f32 {
@@ -172,5 +202,43 @@ mod tests {
         let after = now_us();
         let data = p.get_graph_data("input.ctrl_x", before - 1, after + 1, 100);
         assert!(!data.is_empty(), "stored points must use wall-clock timestamp");
+    }
+
+    #[test]
+    fn snapshot_empty_ring_returns_nan() {
+        let p = Pipeline::new();
+        let vals = p.get_channel_snapshot(&["rep.est_theta".to_string()], None);
+        assert_eq!(vals.len(), 1);
+        assert!(vals[0].is_nan(), "empty ring must return NaN");
+    }
+
+    #[test]
+    fn snapshot_latest() {
+        let mut p = Pipeline::new();
+        let input = SunshineInput { ctrl_x: 42, ..SunshineInput::default() };
+        p.ingest_frame(&make_frame([input; 20]), None);
+        let vals = p.get_channel_snapshot(&["input.ctrl_x".to_string()], None);
+        assert_eq!(vals.len(), 1);
+        assert_eq!(vals[0], 42.0);
+    }
+
+    #[test]
+    fn snapshot_by_time_returns_closest() {
+        let mut p = Pipeline::new();
+        let input = SunshineInput { ctrl_x: 7, ..SunshineInput::default() };
+        p.ingest_frame(&make_frame([input; 20]), None);
+        let after = now_us() + 1_000_000; // 1 second in the future
+        // Only batch is in the past — it's still the closest point
+        let vals = p.get_channel_snapshot(&["input.ctrl_x".to_string()], Some(after));
+        assert_eq!(vals[0], 7.0);
+    }
+
+    #[test]
+    fn snapshot_unknown_channel_returns_zero() {
+        let mut p = Pipeline::new();
+        let input = SunshineInput::default();
+        p.ingest_frame(&make_frame([input; 20]), None);
+        let vals = p.get_channel_snapshot(&["not.a.channel".to_string()], None);
+        assert_eq!(vals[0], 0.0);
     }
 }
