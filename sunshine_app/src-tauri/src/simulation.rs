@@ -8,8 +8,9 @@ const V_NOMINAL:    f64 = 8.4;
 const R_INTERNAL:   f64 = 0.008;
 const WHEEL_RADIUS: f64 = 0.022;
 const WHEEL_CENTER: f64 = 0.0405;
+const MASS:         f64 = 0.454;
 const MOI:          f64 = 1.214e-3;
-const WHEEL_INERTIA:f64 = 1.0e-6;
+const WHEEL_INERTIA:f64 = 6.407_440_19e-6;
 const IMU_RADIUS:   f64 = 0.011;
 const EARTH_FIELD:  f64 = 50.0;
 const EARTH_ANGLE:  f64 = 0.0;
@@ -24,6 +25,8 @@ const POLE_PAIRS:   f64 = 7.0;             // 14-pole motor → 7 pole pairs
 pub struct Simulation {
     body_omega:  f64,
     body_angle:  f64,
+    vel_x:       f64,
+    vel_y:       f64,
     omega_left:  f64,
     omega_right: f64,
     time_us:     u64,
@@ -33,8 +36,10 @@ const DSHOT_NEUTRAL:  f64 = 1048.0;
 const DSHOT_MAX:      f64 = 2047.0;
 const DSHOT_MIN:      f64 = 48.0;
 const BODY_DRAG:      f64 = 0.05;  // lumped body spin drag (1/s)
-const ROLLING_RATIO:  f64 = WHEEL_CENTER / WHEEL_RADIUS;
-const EFFECTIVE_MOI:  f64 = MOI + 2.0 * WHEEL_INERTIA * ROLLING_RATIO * ROLLING_RATIO;
+const TRANSLATION_DRAG:f64 = 2.0;   // lumped rolling/carpet loss (1/s)
+const TIRE_DAMPING:   f64 = 10.0;  // N per (m/s) of longitudinal slip
+const MAX_TIRE_FORCE: f64 = 25.0;  // crude traction limit per wheel
+const WHEEL_DRAG:     f64 = 2.0e-6;
 
 fn dshot_to_throttle(dshot: f32) -> f64 {
     let d = dshot as f64;
@@ -48,7 +53,7 @@ fn dshot_to_throttle(dshot: f32) -> f64 {
 
 impl Simulation {
     pub fn new() -> Self {
-        Simulation { body_omega: 0.0, body_angle: 0.0,
+        Simulation { body_omega: 0.0, body_angle: 0.0, vel_x: 0.0, vel_y: 0.0,
                      omega_left: 0.0, omega_right: 0.0, time_us: 0 }
     }
 
@@ -56,23 +61,47 @@ impl Simulation {
         let dt = 1e-3f64;
         self.time_us += 1000;
 
-        self.sync_wheels_to_body();
-
         let v_term = self.terminal_voltage(last_vars.dshot_cmd_left, last_vars.dshot_cmd_right);
         let torque_l = self.motor_torque(dshot_to_throttle(last_vars.dshot_cmd_left),  self.omega_left,  v_term);
         let torque_r = self.motor_torque(dshot_to_throttle(last_vars.dshot_cmd_right), self.omega_right, v_term);
 
-        let torque_body = (torque_l + torque_r) * ROLLING_RATIO;
-        let alpha = torque_body / EFFECTIVE_MOI;
+        let (_radial_x, _radial_y, tangent_x, tangent_y) = self.body_axes();
+        let v_tangent = self.vel_x * tangent_x + self.vel_y * tangent_y;
+        let spin_surface = self.body_omega * WHEEL_CENTER;
+
+        let contact_l = spin_surface + v_tangent;
+        let contact_r = spin_surface - v_tangent;
+        let slip_l = self.omega_left * WHEEL_RADIUS - contact_l;
+        let slip_r = self.omega_right * WHEEL_RADIUS - contact_r;
+        let force_l = (slip_l * TIRE_DAMPING).clamp(-MAX_TIRE_FORCE, MAX_TIRE_FORCE);
+        let force_r = (slip_r * TIRE_DAMPING).clamp(-MAX_TIRE_FORCE, MAX_TIRE_FORCE);
+
+        let alpha_l = (torque_l - force_l * WHEEL_RADIUS - WHEEL_DRAG * self.omega_left) / WHEEL_INERTIA;
+        let alpha_r = (torque_r - force_r * WHEEL_RADIUS - WHEEL_DRAG * self.omega_right) / WHEEL_INERTIA;
+        self.omega_left += alpha_l * dt;
+        self.omega_right += alpha_r * dt;
+
+        let torque_body = (force_l + force_r) * WHEEL_CENTER;
+        let alpha = torque_body / MOI;
         self.body_omega += alpha * dt;
         self.body_omega *= 1.0 - BODY_DRAG * dt;
         self.body_angle += self.body_omega * dt;
-        self.sync_wheels_to_body();
+
+        let force_translation = force_l - force_r;
+        let accel_world_x = (force_translation / MASS) * tangent_x - TRANSLATION_DRAG * self.vel_x;
+        let accel_world_y = (force_translation / MASS) * tangent_y - TRANSLATION_DRAG * self.vel_y;
+        self.vel_x += accel_world_x * dt;
+        self.vel_y += accel_world_y * dt;
 
         let a_centripetal = self.body_omega.powi(2) * IMU_RADIUS;
         let a_tangential  = alpha * IMU_RADIUS;
-        let ax = (a_centripetal - a_tangential) / 2.0f64.sqrt();
-        let ay = (a_centripetal + a_tangential) / 2.0f64.sqrt();
+        let (radial_x, radial_y, tangent_x, tangent_y) = self.body_axes();
+        let accel_radial = accel_world_x * radial_x + accel_world_y * radial_y;
+        let accel_tangent = accel_world_x * tangent_x + accel_world_y * tangent_y;
+        let body_x = a_centripetal + accel_radial;
+        let body_y = a_tangential + accel_tangent;
+        let ax = (body_x - body_y) / 2.0f64.sqrt();
+        let ay = (body_x + body_y) / 2.0f64.sqrt();
         let az = 9.81f64;
 
         let mx = EARTH_FIELD * (EARTH_ANGLE - self.body_angle).cos();
@@ -118,10 +147,12 @@ impl Simulation {
         KT * self.motor_current(throttle, omega, v_term)
     }
 
-    fn sync_wheels_to_body(&mut self) {
-        let wheel_omega = self.body_omega * ROLLING_RATIO;
-        self.omega_left = wheel_omega;
-        self.omega_right = wheel_omega;
+    fn body_axes(&self) -> (f64, f64, f64, f64) {
+        let radial_x = self.body_angle.cos();
+        let radial_y = self.body_angle.sin();
+        let tangent_x = -radial_y;
+        let tangent_y = radial_x;
+        (radial_x, radial_y, tangent_x, tangent_y)
     }
 }
 
@@ -153,5 +184,44 @@ mod tests {
         assert!(centripetal > 280.0 * 9.81);
         assert!(input.accel_x.abs() >= ADXL_MAX_CNT as i16 ||
                 input.accel_y.abs() >= ADXL_MAX_CNT as i16);
+    }
+
+    #[test]
+    fn tank_differential_commands_create_linear_accel() {
+        let mut sim = Simulation::new();
+        let cmd = SunshineVars {
+            dshot_cmd_left: DSHOT_MAX as f32,
+            dshot_cmd_right: DSHOT_MIN as f32,
+            ..SunshineVars::default()
+        };
+
+        let mut input = SunshineInput::default();
+        for _ in 0..200 {
+            input = sim.tick(&cmd);
+        }
+
+        let ax = input.accel_x as f64 * ADXL_SCALE;
+        let ay = input.accel_y as f64 * ADXL_SCALE;
+        assert!((ax * ax + ay * ay).sqrt() > 2.0);
+        assert!(sim.vel_x.abs() > 0.01 || sim.vel_y.abs() > 0.01);
+    }
+
+    #[test]
+    fn melty_differential_commands_change_wheel_erpms_independently() {
+        let mut sim = Simulation::new();
+        let cmd = SunshineVars {
+            dshot_cmd_left: DSHOT_MAX as f32,
+            dshot_cmd_right: DSHOT_NEUTRAL as f32,
+            ..SunshineVars::default()
+        };
+
+        let mut input = SunshineInput::default();
+        for _ in 0..200 {
+            input = sim.tick(&cmd);
+        }
+
+        let erpm_left = f16_to_f32(input.erpm_left);
+        let erpm_right = f16_to_f32(input.erpm_right);
+        assert!((erpm_left - erpm_right).abs() > 100.0);
     }
 }
