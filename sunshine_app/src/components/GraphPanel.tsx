@@ -53,6 +53,7 @@ export default function GraphPanel({ selected, onToggle, headTimeUs, requestLive
       <div ref={wrapRef} className="uplot-wrap">
         <UPlotCanvas
           channels={selected}
+          channelUnits={selected.map(key => ALL_CHANNELS.find(c => c.key === key)?.unit ?? '')}
           width={size.w}
           height={size.h}
           headTimeUs={headTimeUs}

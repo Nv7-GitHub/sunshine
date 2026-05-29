@@ -13,8 +13,8 @@ static float wrap_to_pi(float a) {
 
 void sunshine_state_init(SunshineState *s) {
     memset(s, 0, sizeof(*s));
-    s->kf_P[0] = 100.0f;   /* high initial angle uncertainty   */
-    s->kf_P[3] = 100.0f;   /* high initial omega uncertainty   */
+    s->kf_P[0] = 100.0f;   /* high initial angle uncertainty           */
+    s->kf_P[3] = 1.0f;    /* prior: std dev ≈ 1 rad/s (~9.5 RPM)      */
 }
 
 /* Predict step: F = [[1,dt],[0,1]] */

@@ -42,10 +42,11 @@ void control_step(const SunshineInput *in, SunshineState *s, SunshineVars *v) {
     }
 
     if (in->mode == SUNSHINE_MODE_TANK) {
-        float fwd  = ((float)in->ctrl_throttle / 127.5f) - 1.0f;
-        float turn = (float)in->ctrl_x / 127.0f;
-        v->dshot_cmd_left  = map_to_dshot(clampf(fwd + turn, -1.0f, 1.0f));
-        v->dshot_cmd_right = map_to_dshot(clampf(fwd - turn, -1.0f, 1.0f));
+        float fwd  = (float)in->ctrl_y     / 127.0f;
+        float turn = (float)in->ctrl_theta / 127.0f;
+        /* fwd drives motors opposite (→ translation), turn drives them same (→ spin) */
+        v->dshot_cmd_left  = map_to_dshot(clampf(turn + fwd, -1.0f, 1.0f));
+        v->dshot_cmd_right = map_to_dshot(clampf(turn - fwd, -1.0f, 1.0f));
         return;
     }
 

@@ -20,6 +20,12 @@ pub struct SerialConnection {
     running: Arc<AtomicBool>,
 }
 
+impl Drop for SerialConnection {
+    fn drop(&mut self) {
+        self.running.store(false, Ordering::Relaxed);
+    }
+}
+
 impl SerialConnection {
     pub fn open(port_name: &str, on_frame: FrameCallback) -> Result<Self, String> {
         let port = serialport::new(port_name, 921600)

@@ -122,9 +122,9 @@ impl Pipeline {
         out
     }
 
-    pub fn get_channel_snapshot(&self, channels: &[String], time_us: Option<u64>) -> Vec<f32> {
+    pub fn get_channel_snapshot(&self, channels: &[String], time_us: Option<u64>) -> Vec<Option<f32>> {
         if self.ring_len == 0 {
-            return channels.iter().map(|_| f32::NAN).collect();
+            return channels.iter().map(|_| None).collect();
         }
 
         let start_idx = (self.ring_head + RING_CAP - self.ring_len) % RING_CAP;
@@ -149,9 +149,15 @@ impl Pipeline {
             }
         };
 
-        channels.iter().map(|ch| channel_accessor(ch)(dp)).collect()
+        channels.iter().map(|ch| {
+            let v = channel_accessor(ch)(dp);
+            if v.is_finite() { Some(v) } else { None }
+        }).collect()
     }
 }
+
+const ADXL_SCALE_MS2: f32 = 49e-3 * 9.81;
+const MAG_SCALE_UT:   f32 = 0.058;
 
 fn channel_accessor(channel: &str) -> fn(&DataPoint) -> f32 {
     match channel {
@@ -174,8 +180,19 @@ fn channel_accessor(channel: &str) -> fn(&DataPoint) -> f32 {
         "input.accel_x"         => |dp| dp.input.accel_x as f32,
         "input.accel_y"         => |dp| dp.input.accel_y as f32,
         "input.accel_z"         => |dp| dp.input.accel_z as f32,
+        "input.accel_x_ms2"     => |dp| dp.input.accel_x as f32 * ADXL_SCALE_MS2,
+        "input.accel_y_ms2"     => |dp| dp.input.accel_y as f32 * ADXL_SCALE_MS2,
+        "input.accel_z_ms2"     => |dp| dp.input.accel_z as f32 * ADXL_SCALE_MS2,
         "input.mag_x"           => |dp| dp.input.mag_x as f32,
         "input.mag_y"           => |dp| dp.input.mag_y as f32,
+        "input.mag_magnitude"   => |dp| {
+            let x = dp.input.mag_x as f32;
+            let y = dp.input.mag_y as f32;
+            let z = dp.input.mag_z as f32;
+            (x*x + y*y + z*z).sqrt() * MAG_SCALE_UT
+        },
+        "input.erpm_left"       => |dp| dp.input.erpm_left as f32,
+        "input.erpm_right"      => |dp| dp.input.erpm_right as f32,
         "input.ctrl_x"          => |dp| dp.input.ctrl_x as f32,
         "input.ctrl_y"          => |dp| dp.input.ctrl_y as f32,
         "input.ctrl_throttle"   => |dp| dp.input.ctrl_throttle as f32,
@@ -206,11 +223,11 @@ mod tests {
     }
 
     #[test]
-    fn snapshot_empty_ring_returns_nan() {
+    fn snapshot_empty_ring_returns_none() {
         let p = Pipeline::new();
         let vals = p.get_channel_snapshot(&["rep.est_theta".to_string()], None);
         assert_eq!(vals.len(), 1);
-        assert!(vals[0].is_nan(), "empty ring must return NaN");
+        assert!(vals[0].is_none(), "empty ring must return None");
     }
 
     #[test]
@@ -220,7 +237,7 @@ mod tests {
         p.ingest_frame(&make_frame([input; 20]), None);
         let vals = p.get_channel_snapshot(&["input.ctrl_x".to_string()], None);
         assert_eq!(vals.len(), 1);
-        assert_eq!(vals[0], 42.0);
+        assert_eq!(vals[0], Some(42.0));
     }
 
     #[test]
@@ -231,7 +248,7 @@ mod tests {
         p.ingest_frame(&make_frame([input; 20]), None);
         let later = hw_us as u64 + 1_000_000;
         let vals = p.get_channel_snapshot(&["input.ctrl_x".to_string()], Some(later));
-        assert_eq!(vals[0], 7.0);
+        assert_eq!(vals[0], Some(7.0));
     }
 
     #[test]
@@ -240,6 +257,6 @@ mod tests {
         let input = SunshineInput::default();
         p.ingest_frame(&make_frame([input; 20]), None);
         let vals = p.get_channel_snapshot(&["not.a.channel".to_string()], None);
-        assert_eq!(vals[0], 0.0);
+        assert_eq!(vals[0], Some(0.0));
     }
 }

@@ -5,6 +5,7 @@ import { invoke } from '@tauri-apps/api/core';
 
 interface Props {
   channels:      string[];
+  channelUnits:  string[];
   width:         number;
   height:        number;
   headTimeUs:    number;
@@ -36,17 +37,42 @@ function fmtElapsed(_u: uPlot, vals: (number | null | undefined)[]): string[] {
   });
 }
 
+function scaleKey(unit: string): string {
+  return unit ? `u_${unit.replace(/[^a-zA-Z0-9]/g, '_')}` : 'u_dim';
+}
+
 function buildOpts(
   channels:      string[],
+  channelUnits:  string[],
   width:         number,
   height:        number,
   onCursorMove?: (us: number | null) => void,
 ): uPlot.Options {
+  // Collect unique units in first-seen order
+  const unitOrder: string[] = [];
+  for (const u of channelUnits) {
+    if (!unitOrder.includes(u)) unitOrder.push(u);
+  }
+
+  const scales: uPlot.Options['scales'] = { x: { time: false } };
+  for (const u of unitOrder) scales[scaleKey(u)] = {};
+
+  const yAxes: uPlot.Axis[] = unitOrder.map((u, i) => ({
+    scale:  scaleKey(u),
+    side:   i % 2 === 0 ? 3 : 1,   // alternate left / right
+    stroke: AXIS_COLOR,
+    grid:   i === 0 ? { stroke: GRID_COLOR, width: 1 } : { show: false },
+    ticks:  { stroke: TICK_COLOR },
+    font:   '10px JetBrains Mono, monospace',
+    size:   54,
+    label:  u || undefined,
+  }));
+
   return {
     width:  Math.max(100, width),
     height: Math.max(80,  height),
-    cursor: { drag: { x: false, y: false } },
-    scales: { x: { time: false } },
+    cursor: { drag: { x: false, y: false }, sync: { key: '' } },
+    scales,
     axes: [
       {
         stroke: AXIS_COLOR,
@@ -55,13 +81,7 @@ function buildOpts(
         font:   '10px JetBrains Mono, monospace',
         values: fmtElapsed,
       },
-      {
-        stroke: AXIS_COLOR,
-        grid:   { stroke: GRID_COLOR, width: 1 },
-        ticks:  { stroke: TICK_COLOR },
-        font:   '10px JetBrains Mono, monospace',
-        size:   54,
-      },
+      ...yAxes,
     ],
     series: [
       {},
@@ -69,6 +89,7 @@ function buildOpts(
         label:  ch.split('.').pop() ?? ch,
         stroke: COLORS[i % COLORS.length],
         width:  1.5,
+        scale:  scaleKey(channelUnits[i] ?? ''),
       })),
     ],
     hooks: {
@@ -85,35 +106,47 @@ function buildOpts(
   };
 }
 
-export default function UPlotCanvas({ channels, width, height, headTimeUs, requestLive, onCursorMove, onLiveChange }: Props) {
-  const divRef      = useRef<HTMLDivElement>(null);
-  const uRef        = useRef<uPlot | null>(null);
-  const viewRef     = useRef({ startUs: 0, endUs: 0, live: true });
-  const fetchRef    = useRef<() => void>(() => {});
-  const headRef     = useRef(headTimeUs);
-  const liveChgRef  = useRef(onLiveChange);
+// Clamp to valid u64 range and round to integer
+function toUs(v: number): number {
+  return Math.max(0, Math.round(v));
+}
+
+export default function UPlotCanvas({ channels, channelUnits, width, height, headTimeUs, requestLive, onCursorMove, onLiveChange }: Props) {
+  const divRef     = useRef<HTMLDivElement>(null);
+  const uRef       = useRef<uPlot | null>(null);
+  const viewRef    = useRef({ startUs: 0, endUs: 0, live: true });
+  const fetchRef   = useRef<() => void>(() => {});
+  const headRef    = useRef(headTimeUs);
+  const liveChgRef = useRef(onLiveChange);
   headRef.current    = headTimeUs;
   liveChgRef.current = onLiveChange;
 
-  const setLive = useCallback((live: boolean) => {
-    if (viewRef.current.live !== live) {
-      viewRef.current.live = live;
+  const prevLiveRef = useRef(true);
+  const notifyLive = useCallback((live: boolean) => {
+    viewRef.current.live = live;
+    if (prevLiveRef.current !== live) {
+      prevLiveRef.current = live;
       liveChgRef.current?.(live);
     }
   }, []);
 
   const fetchAndDraw = useCallback(async () => {
-    if (!uRef.current) return;
+    const u = uRef.current;
+    if (!u) return;
 
     const head = headRef.current;
     if (viewRef.current.live && head > 0) {
+      const currentSpan = viewRef.current.endUs - viewRef.current.startUs;
+      const span = currentSpan > 0 ? currentSpan : WINDOW_US;
       viewRef.current.endUs   = head;
-      viewRef.current.startUs = Math.max(0, head - WINDOW_US);
+      viewRef.current.startUs = Math.max(0, head - span);
     }
 
-    const { startUs, endUs } = viewRef.current;
+    const startUs = toUs(viewRef.current.startUs);
+    const endUs   = toUs(viewRef.current.endUs);
+
     if (channels.length === 0) {
-      uRef.current.setData([[], ...channels.map(() => [])] as uPlot.AlignedData);
+      u.setData([[], ...channels.map(() => [])] as uPlot.AlignedData);
       return;
     }
 
@@ -133,11 +166,10 @@ export default function UPlotCanvas({ channels, width, height, headTimeUs, reque
       }
     }
 
-    if (uRef.current) {
-      uRef.current.setData(series as uPlot.AlignedData);
-      if (startUs < endUs) {
-        uRef.current.setScale('x', { min: startUs, max: endUs });
-      }
+    if (!uRef.current) return;
+    uRef.current.setData(series as uPlot.AlignedData);
+    if (startUs < endUs) {
+      uRef.current.setScale('x', { min: startUs, max: endUs });
     }
   }, [channels, width]);
 
@@ -148,9 +180,8 @@ export default function UPlotCanvas({ channels, width, height, headTimeUs, reque
     if (!divRef.current) return;
     uRef.current?.destroy();
 
-    const opts = buildOpts(channels, width, height, onCursorMove);
-    const data = [[], ...channels.map(() => [])] as uPlot.AlignedData;
-    uRef.current = new uPlot(opts, data, divRef.current!);
+    const opts = buildOpts(channels, channelUnits, width, height, onCursorMove);
+    uRef.current = new uPlot(opts, [[], ...channels.map(() => [])] as uPlot.AlignedData, divRef.current);
     fetchAndDraw();
 
     return () => { uRef.current?.destroy(); uRef.current = null; };
@@ -166,9 +197,11 @@ export default function UPlotCanvas({ channels, width, height, headTimeUs, reque
   // jump back to live when requestLive bumps
   useEffect(() => {
     if (requestLive === 0) return;
-    setLive(true);
+    prevLiveRef.current = true;
+    viewRef.current.live = true;
+    liveChgRef.current?.(true);
     fetchRef.current();
-  }, [requestLive, setLive]);
+  }, [requestLive]);
 
   // live refresh at 10 Hz
   useEffect(() => {
@@ -176,44 +209,51 @@ export default function UPlotCanvas({ channels, width, height, headTimeUs, reque
     return () => clearInterval(id);
   }, []);
 
-  // scroll: plain scroll = zoom around cursor, ctrl/meta = pan
+  // scroll: attach imperatively to the div so { passive: false } is effective
   useEffect(() => {
     const el = divRef.current;
     if (!el) return;
 
     const onWheel = (e: WheelEvent) => {
-      e.preventDefault();
       if (!uRef.current) return;
+      e.preventDefault();
+
+      const head = headRef.current;
+      // Bootstrap view if empty
+      if (viewRef.current.startUs === 0 && viewRef.current.endUs === 0) {
+        const end = head > 0 ? head : WINDOW_US;
+        viewRef.current = { startUs: Math.max(0, end - WINDOW_US), endUs: end, live: head > 0 };
+      }
 
       const { startUs, endUs } = viewRef.current;
-      const span = endUs - startUs;
-      const raw  = e.deltaY;
-      const norm = Math.sign(raw) * Math.min(Math.abs(raw), 80);
+      const span = Math.max(endUs - startUs, 1);
+      const norm = Math.sign(e.deltaY) * Math.min(Math.abs(e.deltaY), 80);
 
       if (e.ctrlKey || e.metaKey) {
         // pan
-        const shift    = span * norm * 0.012;
-        const head     = headRef.current;
+        const shift    = span * norm * 0.015;
         const newEnd   = head > 0 ? Math.min(head, endUs + shift) : endUs + shift;
-        const newStart = newEnd - span;
-        const isLive   = head > 0 && newEnd >= head - 500_000;
+        const newStart = Math.max(0, newEnd - span);
+        const isLive   = head > 0 && toUs(newEnd) >= head - 500_000;
         viewRef.current = { startUs: newStart, endUs: newEnd, live: isLive };
-        setLive(isLive);
+        notifyLive(isLive);
       } else {
-        // zoom around cursor — use uPlot's posToVal for exact time at mouse
-        const rect   = el.getBoundingClientRect();
-        const px     = e.clientX - rect.left;
-        const anchor = uRef.current.posToVal(px, 'x');
-        const factor = 1 + norm * 0.006;
-        const newSpan = Math.max(2_000_000, Math.min(600_000_000, span * factor));
-        const ratio   = span > 0 ? (anchor - startUs) / span : 0.5;
-        const clamped = Math.max(0, Math.min(1, ratio));
-        const newStart = anchor - clamped * newSpan;
-        const newEnd   = anchor + (1 - clamped) * newSpan;
-        const head     = headRef.current;
-        const isLive   = head > 0 && newEnd >= head - 500_000;
-        viewRef.current = { startUs: newStart, endUs: newEnd, live: isLive };
-        setLive(isLive);
+        // zoom around cursor — use u.over rect so the axis gutter doesn't skew frac
+        const overRect = uRef.current.over.getBoundingClientRect();
+        const frac   = Math.max(0, Math.min(1, (e.clientX - overRect.left) / overRect.width));
+        const anchor = startUs + frac * span;
+        const factor = 1 + norm * 0.008;
+        const newSpan  = Math.max(1_000, span * factor);
+        const newStart = Math.max(0, anchor - frac * newSpan);
+        const newEnd   = anchor + (1 - frac) * newSpan;
+        // re-enter live when zooming out to the live head
+        if (head > 0 && newEnd >= head) {
+          viewRef.current = { startUs: Math.max(0, head - WINDOW_US), endUs: head, live: true };
+          notifyLive(true);
+        } else {
+          viewRef.current = { startUs: newStart, endUs: newEnd, live: false };
+          notifyLive(false);
+        }
       }
 
       fetchRef.current();
@@ -221,7 +261,7 @@ export default function UPlotCanvas({ channels, width, height, headTimeUs, reque
 
     el.addEventListener('wheel', onWheel, { passive: false });
     return () => el.removeEventListener('wheel', onWheel);
-  }, [setLive]);
+  }, [notifyLive]);
 
   return (
     <div

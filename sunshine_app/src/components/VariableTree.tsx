@@ -26,13 +26,13 @@ interface Props {
 export default function VariableTree({ selected, onToggle, cursorUs }: Props) {
   const [query, setQuery]       = useState('');
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
-  const [values, setValues]     = useState<Map<string, number>>(new Map());
+  const [values, setValues]     = useState<Map<string, number | null>>(new Map());
   const cursorUsRef             = useRef(cursorUs);
   cursorUsRef.current           = cursorUs;
 
   const fetchSnapshot = async (timeUs: number | null) => {
     try {
-      const result = await invoke<number[]>('get_channel_snapshot', {
+      const result = await invoke<(number | null)[]>('get_channel_snapshot', {
         channels: ALL_KEYS,
         timeUs,
       });
@@ -56,7 +56,7 @@ export default function VariableTree({ selected, onToggle, cursorUs }: Props) {
   const q      = query.toLowerCase();
   const toggle = (g: string) => setCollapsed(c => ({ ...c, [g]: !c[g] }));
 
-  const fmt = (v: number | undefined): string => {
+  const fmt = (v: number | null | undefined): string => {
     if (v == null || isNaN(v)) return '—';
     if (Math.abs(v) >= 1000)  return v.toFixed(0);
     if (Math.abs(v) >= 10)    return v.toFixed(2);

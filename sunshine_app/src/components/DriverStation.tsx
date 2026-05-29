@@ -241,11 +241,18 @@ export default function DriverStation({ mode, setMode, sourceStatus, liveUpdate,
               }}>Browse…</button>
             </div>
             {replayMeta && (
-              <div className="replay-info">
-                <span>Label: {replayMeta.label || '(none)'}</span>
-                <span>Frames: {replayMeta.frame_count}</span>
-                <span>Schema v{replayMeta.schema_version}</span>
-              </div>
+              <>
+                <div className="replay-info">
+                  <span>Label: {replayMeta.label || '(none)'}</span>
+                  <span>Frames: {replayMeta.frame_count}</span>
+                  <span>Schema v{replayMeta.schema_version}</span>
+                </div>
+                {sourceStatus.kind === 'Replay' ? (
+                  <button className="conn-btn danger" onClick={() => invoke('stop_source')}>Stop</button>
+                ) : (
+                  <button className="conn-btn" onClick={() => invoke('start_replay', { path: replayPath })}>Play</button>
+                )}
+              </>
             )}
           </>
         )}

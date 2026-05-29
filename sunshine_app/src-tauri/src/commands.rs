@@ -7,7 +7,7 @@ use crate::{AppState,
             replay::{read_metadata, read_frame},
             simulation::Simulation,
             logging::{LogWriter, make_log_path},
-            ffi::{brain_step, state_init, SunshineVars, SunshineState}};
+            ffi::{brain_step, state_init, SunshineInput, SunshineVars, SunshineState}};
 use tauri::{State, AppHandle, Emitter};
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
@@ -27,7 +27,7 @@ pub async fn connect_serial(
     let pipeline = state.pipeline.clone();
     let app2     = app.clone();
 
-    let _conn = SerialConnection::open(&port, Arc::new(move |frame| {
+    let conn = SerialConnection::open(&port, Arc::new(move |frame| {
         match frame {
             ReceiverFrame::Telemetry(telem) => {
                 let mut pipe = pipeline.lock();
@@ -48,12 +48,13 @@ pub async fn connect_serial(
         }
     })).map_err(|e| e)?;
 
+    *state.serial_conn.lock() = Some(conn);
     Ok(())
 }
 
 #[tauri::command]
-pub fn disconnect_serial(_state: State<'_, AppState>) {
-    // Connection dropped when SerialConnection is not stored; extend AppState if needed
+pub fn disconnect_serial(state: State<'_, AppState>) {
+    *state.serial_conn.lock() = None;
 }
 
 #[tauri::command]
@@ -93,20 +94,23 @@ pub async fn start_simulation(state: State<'_, AppState>, app: AppHandle) -> Res
                 (ctrl.ctrl_x, ctrl.ctrl_y, ctrl.ctrl_theta, ctrl.ctrl_throttle, ctrl.mode)
             };
 
-            let mut input  = sim.tick(&prev_vars);
-            input.ctrl_x        = cx;
-            input.ctrl_y        = cy;
-            input.ctrl_theta    = ct;
-            input.ctrl_throttle = cth;
-            input.mode          = cmode;
-
-            let vars  = brain_step(&input, &mut replay_state);
-            prev_vars = vars;
+            let mut inputs = [SunshineInput::default(); 20];
+            for slot in inputs.iter_mut() {
+                let mut input = sim.tick(&prev_vars);
+                input.ctrl_x        = cx;
+                input.ctrl_y        = cy;
+                input.ctrl_theta    = ct;
+                input.ctrl_throttle = cth;
+                input.mode          = cmode;
+                let vars = brain_step(&input, &mut replay_state);
+                prev_vars = vars;
+                *slot = input;
+            }
 
             let telem = TelemetryFrame {
                 frame_id: 0,
                 state:    replay_state,
-                inputs:   [input; 20],
+                inputs,
             };
             {
                 let mut pipe = pipeline.lock();
@@ -122,6 +126,56 @@ pub async fn start_simulation(state: State<'_, AppState>, app: AppHandle) -> Res
             "kind": "Disconnected", "detail": ""
         }));
     });
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn start_replay(path: String, state: State<'_, AppState>, app: AppHandle) -> Result<(), String> {
+    use crate::replay::{read_metadata, read_frame};
+    use std::fs::File;
+    use std::io::{Seek, SeekFrom};
+
+    let path_buf = std::path::PathBuf::from(&path);
+    let meta     = read_metadata(&path_buf).map_err(|e| e.to_string())?;
+
+    let pipeline  = state.pipeline.clone();
+    let stop_flag = state.sim_stop.clone();
+    stop_flag.store(false, Ordering::Relaxed);
+
+    let _ = app.emit("source_status", serde_json::json!({
+        "kind": "Replay", "detail": "Playing"
+    }));
+
+    tokio::spawn(async move {
+        let mut f = match File::open(&meta.path) {
+            Ok(f) => f,
+            Err(_) => return,
+        };
+        let _ = f.seek(SeekFrom::Start(93)); // skip fixed-size header
+
+        for _ in 0..meta.frame_count {
+            if stop_flag.load(Ordering::Relaxed) { break; }
+
+            match read_frame(&mut f, &meta) {
+                Ok((telem, vars)) => {
+                    let update = {
+                        let mut pipe = pipeline.lock();
+                        pipe.ingest_frame(&telem, Some(&vars));
+                        build_live_update(&telem)
+                    };
+                    let _ = app.emit("live_update", update);
+                }
+                Err(_) => break,
+            }
+
+            tokio::time::sleep(tokio::time::Duration::from_millis(20)).await;
+        }
+
+        let _ = app.emit("source_status", serde_json::json!({
+            "kind": "Disconnected", "detail": ""
+        }));
+    });
+
     Ok(())
 }
 
@@ -160,7 +214,9 @@ pub fn enable_logging(label: String, state: State<'_, AppState>) -> Result<Strin
 
 #[tauri::command]
 pub fn disable_logging(state: State<'_, AppState>) {
-    state.pipeline.lock().logger = None;
+    if let Some(logger) = state.pipeline.lock().logger.take() {
+        let _ = logger.close();
+    }
 }
 
 #[tauri::command]
@@ -199,6 +255,6 @@ pub fn get_channel_snapshot(
     channels: Vec<String>,
     time_us:  Option<u64>,
     state:    State<'_, AppState>,
-) -> Vec<f32> {
+) -> Vec<Option<f32>> {
     state.pipeline.lock().get_channel_snapshot(&channels, time_us)
 }
