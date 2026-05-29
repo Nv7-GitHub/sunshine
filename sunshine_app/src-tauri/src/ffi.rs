@@ -34,7 +34,7 @@ pub struct SunshineState {
     pub derot_lp_q:    [f32; 4],
 }
 
-/// SunshineVars: 12 floats + 4 u8 flags = 48 + 4 = 52 bytes packed
+/// SunshineVars: 12 floats + 4 u8 flags + 1 float = 48 + 4 + 4 = 56 bytes packed
 #[repr(C, packed)]
 #[derive(Clone, Copy, Default, Debug)]
 pub struct SunshineVars {
@@ -54,12 +54,13 @@ pub struct SunshineVars {
     pub accel_saturated:   u8,
     pub mag_valid:         u8,
     pub loop_overrun:      u8,
+    pub heading_deg:       f32,
 }
 
 const _: () = {
     assert!(size_of::<SunshineInput>() == 29, "SunshineInput size mismatch");
     assert!(size_of::<SunshineState>() == 60, "SunshineState size mismatch");
-    assert!(size_of::<SunshineVars>()  == 52, "SunshineVars size mismatch");
+    assert!(size_of::<SunshineVars>()  == 56, "SunshineVars size mismatch");
 };
 
 extern "C" {

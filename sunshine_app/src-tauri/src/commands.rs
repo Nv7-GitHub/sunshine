@@ -31,7 +31,7 @@ pub async fn connect_serial(
         match frame {
             ReceiverFrame::Telemetry(telem) => {
                 let mut pipe = pipeline.lock();
-                pipe.ingest_frame(&telem, None);
+                pipe.ingest_frame(&telem);
                 let update = build_live_update(&telem);
                 drop(pipe);
                 let _ = app2.emit("live_update", update);
@@ -114,7 +114,7 @@ pub async fn start_simulation(state: State<'_, AppState>, app: AppHandle) -> Res
             };
             {
                 let mut pipe = pipeline.lock();
-                pipe.ingest_frame(&telem, None);
+                pipe.ingest_frame(&telem);
             }
             let update = build_live_update(&telem);
             let _ = app.emit("live_update", update);
@@ -157,10 +157,10 @@ pub async fn start_replay(path: String, state: State<'_, AppState>, app: AppHand
             if stop_flag.load(Ordering::Relaxed) { break; }
 
             match read_frame(&mut f, &meta) {
-                Ok((telem, vars)) => {
+                Ok((telem, _vars)) => {
                     let update = {
                         let mut pipe = pipeline.lock();
-                        pipe.ingest_frame(&telem, Some(&vars));
+                        pipe.ingest_frame(&telem);
                         build_live_update(&telem)
                     };
                     let _ = app.emit("live_update", update);

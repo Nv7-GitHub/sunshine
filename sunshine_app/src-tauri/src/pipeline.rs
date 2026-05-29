@@ -4,10 +4,10 @@ use crate::protocol::TelemetryFrame;
 
 #[derive(Clone, Default)]
 pub struct DataPoint {
-    pub time_us:   u64,
-    pub input:     SunshineInput,
-    pub real_vars: SunshineVars,
-    pub rep_vars:  SunshineVars,
+    pub time_us:  u64,
+    pub input:    SunshineInput,
+    pub hw_state: SunshineState,  // received from hardware/sim/log at 50 Hz
+    pub vars:     SunshineVars,   // always host-computed via brain_step
 }
 
 const RING_CAP: usize = 120_000;
@@ -52,16 +52,16 @@ impl Pipeline {
         self.hw_epoch_us + hw as u64
     }
 
-    pub fn ingest_frame(&mut self, frame: &TelemetryFrame, real_vars_snap: Option<&SunshineVars>) {
+    pub fn ingest_frame(&mut self, frame: &TelemetryFrame) {
         for input in frame.inputs.iter() {
-            let time_us  = self.expand_hw_time(input.time_us);
-            let rep_vars = brain_step(input, &mut self.replay_state);
+            let time_us = self.expand_hw_time(input.time_us);
+            let vars    = brain_step(input, &mut self.replay_state);
 
             let dp = DataPoint {
                 time_us,
-                input:     *input,
-                real_vars: real_vars_snap.copied().unwrap_or_default(),
-                rep_vars,
+                input:    *input,
+                hw_state: frame.state,
+                vars,
             };
 
             let idx = self.ring_head;
@@ -71,12 +71,11 @@ impl Pipeline {
         }
 
         if let Some(logger) = self.logger.as_mut() {
-            let vars_snap = real_vars_snap.copied().unwrap_or_default();
             let _ = logger.write_frame(
                 self.frame_count,
                 &frame.state,
                 &frame.inputs,
-                &vars_snap,
+                &SunshineVars::default(),
             );
         }
         self.frame_count += 1;
@@ -161,22 +160,25 @@ const MAG_SCALE_UT:   f32 = 0.058;
 
 fn channel_accessor(channel: &str) -> fn(&DataPoint) -> f32 {
     match channel {
-        "rep.est_theta"         => |dp: &DataPoint| dp.rep_vars.est_theta,
-        "rep.est_omega"         => |dp| dp.rep_vars.est_omega,
-        "rep.dshot_left"        => |dp| dp.rep_vars.dshot_cmd_left,
-        "rep.dshot_right"       => |dp| dp.rep_vars.dshot_cmd_right,
-        "rep.batt_voltage"      => |dp| dp.rep_vars.batt_voltage,
-        "rep.erpm_left"         => |dp| dp.rep_vars.erpm_left,
-        "rep.erpm_right"        => |dp| dp.rep_vars.erpm_right,
-        "rep.mag_angle"         => |dp| dp.rep_vars.mag_angle,
-        "rep.derot_i"           => |dp| dp.rep_vars.derot_i,
-        "rep.derot_q"           => |dp| dp.rep_vars.derot_q,
-        "rep.omega_from_accel"  => |dp| dp.rep_vars.omega_from_accel,
-        "rep.centripetal_ms2"   => |dp| dp.rep_vars.centripetal_ms2,
-        "real.est_theta"        => |dp| dp.real_vars.est_theta,
-        "real.est_omega"        => |dp| dp.real_vars.est_omega,
-        "real.dshot_left"       => |dp| dp.real_vars.dshot_cmd_left,
-        "real.dshot_right"      => |dp| dp.real_vars.dshot_cmd_right,
+        /* Hardware state — received from brain at 50 Hz */
+        "hw.kf_theta"           => |dp: &DataPoint| dp.hw_state.kf_theta,
+        "hw.kf_omega"           => |dp| dp.hw_state.kf_omega,
+        "hw.theta_offset"       => |dp| dp.hw_state.theta_offset,
+        /* Variables — always host-computed via brain_step */
+        "rep.est_theta"         => |dp| dp.vars.est_theta,
+        "rep.est_omega"         => |dp| dp.vars.est_omega,
+        "rep.heading_deg"       => |dp| dp.vars.heading_deg,
+        "rep.dshot_left"        => |dp| dp.vars.dshot_cmd_left,
+        "rep.dshot_right"       => |dp| dp.vars.dshot_cmd_right,
+        "rep.batt_voltage"      => |dp| dp.vars.batt_voltage,
+        "rep.erpm_left"         => |dp| dp.vars.erpm_left,
+        "rep.erpm_right"        => |dp| dp.vars.erpm_right,
+        "rep.mag_angle"         => |dp| dp.vars.mag_angle,
+        "rep.derot_i"           => |dp| dp.vars.derot_i,
+        "rep.derot_q"           => |dp| dp.vars.derot_q,
+        "rep.omega_from_accel"  => |dp| dp.vars.omega_from_accel,
+        "rep.centripetal_ms2"   => |dp| dp.vars.centripetal_ms2,
+        /* Raw sensor inputs */
         "input.accel_x"         => |dp| dp.input.accel_x as f32,
         "input.accel_y"         => |dp| dp.input.accel_y as f32,
         "input.accel_z"         => |dp| dp.input.accel_z as f32,
@@ -217,7 +219,7 @@ mod tests {
         let mut p = Pipeline::new();
         let hw_us: u32 = 5_000_000; // 5 seconds in µs
         let input = SunshineInput { time_us: hw_us, ctrl_x: 7, ..SunshineInput::default() };
-        p.ingest_frame(&make_frame([input; 20]), None);
+        p.ingest_frame(&make_frame([input; 20]));
         let data = p.get_graph_data("input.ctrl_x", hw_us as u64 - 1, hw_us as u64 + 1, 100);
         assert!(!data.is_empty(), "stored points must use hardware timestamp");
     }
@@ -234,7 +236,7 @@ mod tests {
     fn snapshot_latest() {
         let mut p = Pipeline::new();
         let input = SunshineInput { ctrl_x: 42, ..SunshineInput::default() };
-        p.ingest_frame(&make_frame([input; 20]), None);
+        p.ingest_frame(&make_frame([input; 20]));
         let vals = p.get_channel_snapshot(&["input.ctrl_x".to_string()], None);
         assert_eq!(vals.len(), 1);
         assert_eq!(vals[0], Some(42.0));
@@ -245,7 +247,7 @@ mod tests {
         let mut p = Pipeline::new();
         let hw_us: u32 = 10_000_000;
         let input = SunshineInput { time_us: hw_us, ctrl_x: 7, ..SunshineInput::default() };
-        p.ingest_frame(&make_frame([input; 20]), None);
+        p.ingest_frame(&make_frame([input; 20]));
         let later = hw_us as u64 + 1_000_000;
         let vals = p.get_channel_snapshot(&["input.ctrl_x".to_string()], Some(later));
         assert_eq!(vals[0], Some(7.0));
@@ -255,7 +257,7 @@ mod tests {
     fn snapshot_unknown_channel_returns_zero() {
         let mut p = Pipeline::new();
         let input = SunshineInput::default();
-        p.ingest_frame(&make_frame([input; 20]), None);
+        p.ingest_frame(&make_frame([input; 20]));
         let vals = p.get_channel_snapshot(&["not.a.channel".to_string()], None);
         assert_eq!(vals[0], Some(0.0));
     }

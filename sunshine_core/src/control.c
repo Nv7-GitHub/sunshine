@@ -32,7 +32,10 @@ static float map_to_dshot(float v) {
 
 void control_step(const SunshineInput *in, SunshineState *s, SunshineVars *v) {
     float robot_angle = s->kf_theta + s->theta_offset;
-    v->led_on = fabsf(wrap_to_pi(robot_angle)) < (3.0f * M_PI_F / 180.0f);
+    float wrapped     = wrap_to_pi(robot_angle);
+    float hd          = wrapped * (180.0f / M_PI_F);
+    v->heading_deg    = hd < 0.0f ? hd + 360.0f : hd;
+    v->led_on         = fabsf(wrapped) < (3.0f * M_PI_F / 180.0f);
 
     if (in->mode == SUNSHINE_MODE_DISABLED) {
         v->dshot_cmd_left  = 0.0f;

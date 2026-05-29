@@ -13,9 +13,12 @@ const IMU_RADIUS:   f64 = 0.011;
 const EARTH_FIELD:  f64 = 50.0;
 const EARTH_ANGLE:  f64 = 0.0;
 const ADXL_SCALE:   f64 = 49e-3 * 9.81;
+const ADXL_MAX_G:   f64 = 200.0;           // ADXL375 physical ±200g range
+const ADXL_MAX_CNT: f64 = ADXL_MAX_G / (49e-3);  // ≈ 4082 counts
 const MAG_SCALE:    f64 = 0.058;
 const BATT_REF_V:   f64 = 7.6;
 const BATT_SCALE:   f64 = 0.0205;
+const POLE_PAIRS:   f64 = 7.0;             // 14-pole motor → 7 pole pairs
 
 pub struct Simulation {
     body_omega:  f64,
@@ -78,14 +81,14 @@ impl Simulation {
 
         SunshineInput {
             time_us:       self.time_us as u32,
-            accel_x:       (ax / ADXL_SCALE).round().clamp(-32768.0, 32767.0) as i16,
-            accel_y:       (ay / ADXL_SCALE).round().clamp(-32768.0, 32767.0) as i16,
+            accel_x:       (ax / ADXL_SCALE).round().clamp(-ADXL_MAX_CNT, ADXL_MAX_CNT) as i16,
+            accel_y:       (ay / ADXL_SCALE).round().clamp(-ADXL_MAX_CNT, ADXL_MAX_CNT) as i16,
             accel_z:       (az / ADXL_SCALE).round().clamp(-32768.0, 32767.0) as i16,
             mag_x:         (mx / MAG_SCALE).round().clamp(-32768.0, 32767.0) as i16,
             mag_y:         (my / MAG_SCALE).round().clamp(-32768.0, 32767.0) as i16,
             mag_z:         0,
-            erpm_left:     f32_to_f16((self.omega_left  * 60.0 / (2.0 * PI)) as f32),
-            erpm_right:    f32_to_f16((self.omega_right * 60.0 / (2.0 * PI)) as f32),
+            erpm_left:     f32_to_f16((self.omega_left  * 60.0 / (2.0 * PI) * POLE_PAIRS) as f32),
+            erpm_right:    f32_to_f16((self.omega_right * 60.0 / (2.0 * PI) * POLE_PAIRS) as f32),
             batt_offset,
             ..SunshineInput::default()
         }

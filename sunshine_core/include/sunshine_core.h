@@ -6,7 +6,7 @@
  * Bump whenever ANY field is added, removed, reordered, or resized in
  * SunshineInput, SunshineState, or SunshineVars.
  * New fields MUST be appended at the END of the struct — never insert. */
-#define SUNSHINE_SCHEMA_VERSION  1U
+#define SUNSHINE_SCHEMA_VERSION  2U
 
 /* ── Control modes ─────────────────────────────────────────────────────── */
 #define SUNSHINE_MODE_DISABLED  0U
@@ -118,6 +118,7 @@ typedef struct __attribute__((packed)) {
     uint8_t accel_saturated;   /* 1 when centripetal > 280g equivalent     */
     uint8_t mag_valid;         /* 1 when est_omega > SUNSHINE_MAG_MIN_OMEGA*/
     uint8_t loop_overrun;      /* 1 when 1kHz tick exceeded 1000µs (HW)   */
+    float   heading_deg;       /* robot heading [0, 360), matches LED zero */
 } SunshineVars;
 
 /* ── Public API ────────────────────────────────────────────────────────── */

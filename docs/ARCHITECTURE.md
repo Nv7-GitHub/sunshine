@@ -135,7 +135,7 @@ Nothing crosses the core/platform boundary except through these three structs. A
 |--------|------|-----------|-------------|
 | `SunshineInput` | 29 B | Hardware → core | 1 kHz sensor frame |
 | `SunshineState` | 60 B | Core ↔ core | Filter history (Kalman + LP states) |
-| `SunshineVars` | 52 B | Core → hardware | Derived variables, computed each step |
+| `SunshineVars` | 56 B | Core → hardware | Derived variables, computed each step |
 
 `SunshineVars` is never telemetered — it is always recomputed from `SunshineInput` + `SunshineState` via `sunshine_step()`. The log file stores the 50 Hz snapshot for display, but replay always recomputes at 1 kHz.
 
@@ -145,7 +145,7 @@ Nothing crosses the core/platform boundary except through these three structs. A
 
 **Fields may only be added to the END of `SunshineInput`, `SunshineState`, or `SunshineVars`. Never insert, reorder, or resize existing fields.**
 
-`SUNSHINE_SCHEMA_VERSION` (currently 1) must be bumped with a comment on every struct change. Log files store `sizeof_input`, `sizeof_state`, `sizeof_vars` in the header; readers handle mismatches:
+`SUNSHINE_SCHEMA_VERSION` (currently 2) must be bumped with a comment on every struct change. Log files store `sizeof_input`, `sizeof_state`, `sizeof_vars` in the header; readers handle mismatches:
 - Reader's `sizeof < file's sizeof`: truncated read, extra bytes skipped
 - Reader's `sizeof > file's sizeof`: missing trailing fields default to zero
 
