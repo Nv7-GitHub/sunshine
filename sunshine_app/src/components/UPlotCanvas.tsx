@@ -114,7 +114,8 @@ function toUs(v: number): number {
 export default function UPlotCanvas({ channels, channelUnits, width, height, headTimeUs, requestLive, onCursorMove, onLiveChange }: Props) {
   const divRef     = useRef<HTMLDivElement>(null);
   const uRef       = useRef<uPlot | null>(null);
-  const viewRef    = useRef({ startUs: 0, endUs: 0, live: true });
+  const viewRef        = useRef({ startUs: 0, endUs: 0, live: true });
+  const liveSpanRef    = useRef(WINDOW_US); // user-chosen span while live; only wheel handler writes this
   const fetchRef   = useRef<() => void>(() => {});
   const headRef    = useRef(headTimeUs);
   const headWallRef = useRef(performance.now()); // wall time (ms) when headTimeUs last changed
@@ -242,7 +243,7 @@ export default function UPlotCanvas({ channels, channelUnits, width, height, hea
           const elapsed  = nowMs - headWallRef.current;
           const estHead  = head + elapsed * 1000; // ms → µs
           viewRef.current.endUs   = estHead;
-          viewRef.current.startUs = Math.max(0, estHead - WINDOW_US);
+          viewRef.current.startUs = Math.max(0, estHead - liveSpanRef.current);
           uRef.current.setScale('x', {
             min: toUs(viewRef.current.startUs),
             max: toUs(viewRef.current.endUs),
@@ -299,9 +300,13 @@ export default function UPlotCanvas({ channels, channelUnits, width, height, hea
         const newSpan  = Math.max(1_000, span * factor);
         const newStart = Math.max(0, anchor - frac * newSpan);
         const newEnd   = anchor + (1 - frac) * newSpan;
-        // re-enter live when zooming out to the live head
-        if (head > 0 && newEnd >= head) {
-          viewRef.current = { startUs: Math.max(0, head - WINDOW_US), endUs: head, live: true };
+        // zooming while live: stay live with new span
+        if (viewRef.current.live) {
+          liveSpanRef.current = newSpan;
+        // re-enter live when zooming out past the live head
+        } else if (head > 0 && newEnd >= head) {
+          liveSpanRef.current = newSpan;
+          viewRef.current = { startUs: Math.max(0, head - newSpan), endUs: head, live: true };
           notifyLive(true);
         } else {
           viewRef.current = { startUs: newStart, endUs: newEnd, live: false };
