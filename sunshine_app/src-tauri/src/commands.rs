@@ -13,6 +13,28 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use serde::{Serialize, Deserialize};
 
+fn send_current_controls(state: &AppState) {
+    let (mode, x, y, theta, throttle) = {
+        let ctrl = state.controls.lock();
+        (ctrl.mode, ctrl.ctrl_x, ctrl.ctrl_y, ctrl.ctrl_theta, ctrl.ctrl_throttle)
+    };
+    if let Some(conn) = state.serial_conn.lock().as_ref() {
+        conn.send(&encode_ctrl(mode, x, y, theta, throttle));
+    }
+}
+
+fn force_disabled(state: &AppState) {
+    {
+        let mut ctrl = state.controls.lock();
+        ctrl.mode = 0;
+        ctrl.ctrl_x = 0;
+        ctrl.ctrl_y = 0;
+        ctrl.ctrl_theta = 0;
+        ctrl.ctrl_throttle = 0;
+    }
+    send_current_controls(state);
+}
+
 #[tauri::command]
 pub fn list_serial_ports() -> Vec<String> {
     serial_list()
@@ -54,11 +76,13 @@ pub async fn connect_serial(
         pipe.set_history_log(None);
     }
     *state.serial_conn.lock() = Some(conn);
+    force_disabled(&state);
     Ok(())
 }
 
 #[tauri::command]
 pub fn disconnect_serial(state: State<'_, AppState>) {
+    force_disabled(&state);
     *state.serial_conn.lock() = None;
 }
 
@@ -201,11 +225,22 @@ pub async fn start_replay(path: String, state: State<'_, AppState>, app: AppHand
 pub fn stop_source(state: State<'_, AppState>) {
     state.pipeline.lock().source = SourceKind::None;
     state.sim_stop.store(true, Ordering::Relaxed);
+    force_disabled(&state);
 }
 
 #[tauri::command]
 pub fn set_mode(mode: u8, state: State<'_, AppState>) {
-    state.controls.lock().mode = mode;
+    {
+        let mut ctrl = state.controls.lock();
+        ctrl.mode = mode;
+        if mode == 0 {
+            ctrl.ctrl_x = 0;
+            ctrl.ctrl_y = 0;
+            ctrl.ctrl_theta = 0;
+            ctrl.ctrl_throttle = 0;
+        }
+    }
+    send_current_controls(&state);
 }
 
 #[tauri::command]
@@ -218,6 +253,8 @@ pub fn set_controls(
     ctrl.ctrl_y        = y;
     ctrl.ctrl_theta    = theta;
     ctrl.ctrl_throttle = throttle;
+    drop(ctrl);
+    send_current_controls(&state);
 }
 
 #[tauri::command]

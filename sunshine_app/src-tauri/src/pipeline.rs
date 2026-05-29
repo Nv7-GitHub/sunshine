@@ -60,9 +60,11 @@ impl Pipeline {
     }
 
     pub fn ingest_frame(&mut self, frame: &TelemetryFrame) {
+        let mut last_vars = SunshineVars::default();
         for input in frame.inputs.iter() {
             let time_us = self.expand_hw_time(input.time_us);
             let vars    = brain_step(input, &mut self.replay_state);
+            last_vars = vars;
 
             let dp = DataPoint {
                 time_us,
@@ -83,7 +85,7 @@ impl Pipeline {
                 self.frame_count,
                 &frame.state,
                 &frame.inputs,
-                &SunshineVars::default(),
+                &last_vars,
             );
         }
         self.frame_count += 1;

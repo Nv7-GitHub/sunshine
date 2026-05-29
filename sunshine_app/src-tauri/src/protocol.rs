@@ -15,6 +15,7 @@ pub const STATUS_BRAIN_DISCONNECTED: u8 = 0x02;
 // 2 (frame_id) + 1 (type) + 60 (SunshineState) + 6×29 (SunshineInput) = 237
 pub const ESPNOW_TELEM_SIZE: usize = 237;
 pub const INPUTS_PER_FRAME:  usize = 6;
+const MAX_USB_PAYLOAD_SIZE: usize = ESPNOW_TELEM_SIZE;
 
 #[derive(Debug, Clone)]
 pub struct TelemetryFrame {
@@ -70,8 +71,13 @@ impl FrameParser {
                 self.expected_len |= (byte as u16) << 8;
                 self.buf.clear();
                 self.computed_cs = 0;
-                self.state = if self.expected_len == 0 { ParserState::Checksum }
-                             else { ParserState::Payload };
+                self.state = if self.expected_len == 0 {
+                    ParserState::Checksum
+                } else if self.expected_len as usize <= MAX_USB_PAYLOAD_SIZE {
+                    ParserState::Payload
+                } else {
+                    ParserState::Idle
+                };
             }
             ParserState::Payload => {
                 self.buf.push(byte);

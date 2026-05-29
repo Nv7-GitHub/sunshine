@@ -10,7 +10,7 @@
 static constexpr uint8_t FRAME_START = 0xAA;
 
 // ── Type codes ───────────────────────────────────────────────────────────────
-static constexpr uint8_t TYPE_TELEM_FRAME = 0x01; // Receiver→Host, 643 B payload
+static constexpr uint8_t TYPE_TELEM_FRAME = 0x01; // Receiver→Host, 237 B payload
 static constexpr uint8_t TYPE_CTRL_PACKET = 0x02; // Host→Receiver, 5 B payload
 static constexpr uint8_t TYPE_STATUS      = 0x03; // Both,          1+≤32 B
 static constexpr uint8_t TYPE_HEARTBEAT   = 0x04; // Both,          4 B
