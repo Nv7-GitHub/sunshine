@@ -83,8 +83,13 @@ void nav_control_task(void *) {
 
         // ── 5. Apply outputs ──────────────────────────────────────────────
 #if FEATURE_DSHOT
-        dshot_send((uint16_t)(vars.dshot_cmd_left  + 0.5f),
-                   (uint16_t)(vars.dshot_cmd_right + 0.5f));
+        auto motor_cmd = [](float cmd, bool invert) -> uint16_t {
+            if (cmd == 0.0f) return 0;  // preserve disarm
+            float c = invert ? (2.0f * DSHOT_NEUTRAL - cmd) : cmd;
+            return (uint16_t)(c + 0.5f);
+        };
+        dshot_send(motor_cmd(vars.dshot_cmd_left,  MOTOR_LEFT_INVERT),
+                   motor_cmd(vars.dshot_cmd_right, MOTOR_RIGHT_INVERT));
 #endif
         digitalWrite(PIN_LED, vars.led_on ? HIGH : LOW);
 

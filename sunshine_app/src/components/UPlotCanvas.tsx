@@ -117,9 +117,20 @@ export default function UPlotCanvas({ channels, channelUnits, width, height, hea
   const viewRef    = useRef({ startUs: 0, endUs: 0, live: true });
   const fetchRef   = useRef<() => void>(() => {});
   const headRef    = useRef(headTimeUs);
+  const headWallRef = useRef(performance.now()); // wall time (ms) when headTimeUs last changed
   const liveChgRef = useRef(onLiveChange);
-  headRef.current    = headTimeUs;
+
+  // Capture wall time whenever the hardware head advances
+  if (headRef.current !== headTimeUs) {
+    headWallRef.current = performance.now();
+    headRef.current     = headTimeUs;
+  }
   liveChgRef.current = onLiveChange;
+
+  // Concurrency guard: if a fetch is in flight when another is requested,
+  // mark it pending and re-run immediately after the current one finishes.
+  const fetchingRef = useRef(false);
+  const pendingRef  = useRef(false);
 
   const prevLiveRef = useRef(true);
   const notifyLive = useCallback((live: boolean) => {
@@ -130,46 +141,57 @@ export default function UPlotCanvas({ channels, channelUnits, width, height, hea
     }
   }, []);
 
+  // Fetch data for the current view window and paint it.
+  // In live mode the RAF loop owns the x-scale; here we only push new data.
+  // In non-live mode we update both data and scale atomically.
   const fetchAndDraw = useCallback(async () => {
-    const u = uRef.current;
-    if (!u) return;
+    if (fetchingRef.current) { pendingRef.current = true; return; }
+    fetchingRef.current = true;
+    pendingRef.current  = false;
 
-    const head = headRef.current;
-    if (viewRef.current.live && head > 0) {
-      const currentSpan = viewRef.current.endUs - viewRef.current.startUs;
-      const span = currentSpan > 0 ? currentSpan : WINDOW_US;
-      viewRef.current.endUs   = head;
-      viewRef.current.startUs = Math.max(0, head - span);
-    }
+    try {
+      const u = uRef.current;
+      if (!u) return;
 
-    const startUs = toUs(viewRef.current.startUs);
-    const endUs   = toUs(viewRef.current.endUs);
+      const startUs = toUs(viewRef.current.startUs);
+      const endUs   = toUs(viewRef.current.endUs);
 
-    if (channels.length === 0) {
-      u.setData([[], ...channels.map(() => [])] as uPlot.AlignedData);
-      return;
-    }
-
-    const maxPts = Math.round(Math.max(100, width));
-    const times: number[] = [];
-    const series: number[][] = [times];
-
-    for (let ci = 0; ci < channels.length; ci++) {
-      try {
-        const pts = await invoke<[number, number][]>('get_graph_data', {
-          channel: channels[ci], startUs, endUs, maxPoints: maxPts,
-        });
-        if (ci === 0) pts.forEach(([t]) => times.push(t));
-        series.push(pts.map(([, v]) => v));
-      } catch {
-        series.push(times.map(() => NaN));
+      if (channels.length === 0) {
+        u.setData([[], ...channels.map(() => [])] as uPlot.AlignedData, false);
+        return;
       }
-    }
 
-    if (!uRef.current) return;
-    uRef.current.setData(series as uPlot.AlignedData);
-    if (startUs < endUs) {
-      uRef.current.setScale('x', { min: startUs, max: endUs });
+      const maxPts = Math.round(Math.max(100, width));
+      const allPts = await Promise.all(channels.map(ch =>
+        invoke<[number, number][]>('get_graph_data', {
+          channel: ch, startUs, endUs, maxPoints: maxPts,
+        }).catch(() => [] as [number, number][])
+      ));
+
+      if (!uRef.current) return;
+
+      const times = allPts[0]?.map(([t]) => t) ?? [];
+      const series: number[][] = [
+        times,
+        ...allPts.map(pts => pts.slice(0, times.length).map(([, v]) => v)),
+      ];
+
+      if (viewRef.current.live) {
+        // Scale is driven by the RAF loop for smooth 60 Hz scrolling.
+        uRef.current.setData(series as uPlot.AlignedData, false);
+      } else {
+        // Non-live: update data and scale together in one paint.
+        uRef.current.batch(() => {
+          uRef.current!.setData(series as uPlot.AlignedData, false);
+          if (startUs < endUs) uRef.current!.setScale('x', { min: startUs, max: endUs });
+        });
+      }
+    } finally {
+      fetchingRef.current = false;
+      if (pendingRef.current) {
+        pendingRef.current = false;
+        fetchAndDraw();
+      }
     }
   }, [channels, width]);
 
@@ -203,11 +225,42 @@ export default function UPlotCanvas({ channels, channelUnits, width, height, hea
     fetchRef.current();
   }, [requestLive]);
 
-  // live refresh at 10 Hz
+  // RAF loop: drives smooth live scrolling at display frame rate (60 Hz) and
+  // triggers a data fetch at ~10 Hz. Replaces setInterval so the scroll
+  // rate is tied to wall-clock time rather than an imprecise timer.
   useEffect(() => {
-    const id = setInterval(() => fetchRef.current(), 100);
-    return () => clearInterval(id);
-  }, []);
+    let rafId: number;
+    let lastFetchMs = 0;
+
+    const loop = (nowMs: DOMHighResTimeStamp) => {
+      if (uRef.current && viewRef.current.live) {
+        const head = headRef.current;
+        if (head > 0) {
+          // The hardware timestamp advances at 1 µs per real µs.
+          // Extrapolate past the last received head using wall-clock elapsed time
+          // so the x-axis scrolls continuously instead of jumping every 100 ms.
+          const elapsed  = nowMs - headWallRef.current;
+          const estHead  = head + elapsed * 1000; // ms → µs
+          viewRef.current.endUs   = estHead;
+          viewRef.current.startUs = Math.max(0, estHead - WINDOW_US);
+          uRef.current.setScale('x', {
+            min: toUs(viewRef.current.startUs),
+            max: toUs(viewRef.current.endUs),
+          });
+        }
+      }
+
+      if (nowMs - lastFetchMs >= 100) {
+        lastFetchMs = nowMs;
+        fetchRef.current();
+      }
+
+      rafId = requestAnimationFrame(loop);
+    };
+
+    rafId = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(rafId);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // scroll: attach imperatively to the div so { passive: false } is effective
   useEffect(() => {

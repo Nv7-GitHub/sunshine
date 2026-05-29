@@ -4,10 +4,11 @@ use crate::protocol::TelemetryFrame;
 
 #[derive(Clone, Default)]
 pub struct DataPoint {
-    pub time_us:  u64,
-    pub input:    SunshineInput,
-    pub hw_state: SunshineState,  // received from hardware/sim/log at 50 Hz
-    pub vars:     SunshineVars,   // always host-computed via brain_step
+    pub time_us:         u64,
+    pub input:           SunshineInput,
+    pub hw_state:        SunshineState,  // received from hardware/sim/log at 50 Hz
+    pub vars:            SunshineVars,   // always host-computed via brain_step
+    pub rep_theta_offset: f32,           // theta_offset from replay_state after brain_step
 }
 
 const RING_CAP: usize = 120_000;
@@ -62,6 +63,7 @@ impl Pipeline {
                 input:    *input,
                 hw_state: frame.state,
                 vars,
+                rep_theta_offset: self.replay_state.theta_offset,
             };
 
             let idx = self.ring_head;
@@ -164,9 +166,12 @@ fn channel_accessor(channel: &str) -> fn(&DataPoint) -> f32 {
         "hw.kf_theta"           => |dp: &DataPoint| dp.hw_state.kf_theta,
         "hw.kf_omega"           => |dp| dp.hw_state.kf_omega,
         "hw.theta_offset"       => |dp| dp.hw_state.theta_offset,
+        "hw.dshot_left"         => |dp| dp.input.dshot_left_q as f32,
+        "hw.dshot_right"        => |dp| dp.input.dshot_right_q as f32,
         /* Variables — always host-computed via brain_step */
         "rep.est_theta"         => |dp| dp.vars.est_theta,
         "rep.est_omega"         => |dp| dp.vars.est_omega,
+        "rep.theta_offset"      => |dp| dp.rep_theta_offset,
         "rep.heading_deg"       => |dp| dp.vars.heading_deg,
         "rep.dshot_left"        => |dp| dp.vars.dshot_cmd_left,
         "rep.dshot_right"       => |dp| dp.vars.dshot_cmd_right,
@@ -197,6 +202,7 @@ fn channel_accessor(channel: &str) -> fn(&DataPoint) -> f32 {
         "input.erpm_right"      => |dp| dp.input.erpm_right as f32,
         "input.ctrl_x"          => |dp| dp.input.ctrl_x as f32,
         "input.ctrl_y"          => |dp| dp.input.ctrl_y as f32,
+        "input.ctrl_theta"      => |dp| dp.input.ctrl_theta as f32,
         "input.ctrl_throttle"   => |dp| dp.input.ctrl_throttle as f32,
         "input.rssi"            => |dp| dp.input.rssi as f32,
         "input.batt_offset"     => |dp| dp.input.batt_offset as f32,

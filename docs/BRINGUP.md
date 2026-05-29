@@ -137,12 +137,51 @@ AM32 3D mode DShot mapping:
 3. Repeat several times — success rate should be > 90% (occasional 0 reads are acceptable)
 4. Calculate expected eRPM: `KV × V_battery × pole_pairs`. For 1100 KV motor at 8V with 14 pole pairs: 1100 × 8 × 7 ≈ 61,600 eRPM at full throttle.
 
+### Step 5: Set motor directions for CCW spin
+
+**Goal:** In MELTY mode both motors spin "forward" (DShot > 1048) and the robot body rotates **counter-clockwise viewed from above**. This is the single correct spin direction.
+
+The wheels are tangentially mounted, so both motors spinning "forward" produces body rotation. Which direction depends on physical motor mounting. Determine and fix it now.
+
+#### 5a — Identify the correct direction per motor
+
+With props off, secure the robot so it can't move (hand or clamp). Send equal forward commands to both motors and observe which way the body wants to rotate:
+
+```
+s          (neutral both)
+l 1300
+r 1300
+```
+
+- If the body torques **CCW** (viewed from above): correct, no inversion needed.
+- If the body torques **CW**: both motors are backwards. You can either:
+  - Swap motor leads on both ESCs (or swap any two of the three motor phases), **or**
+  - Set `MOTOR_LEFT_INVERT = true` and `MOTOR_RIGHT_INVERT = true` in `sunshine_brain/include/config.h`.
+
+If one motor spins the wrong way relative to the other, invert only that motor's flag.
+
+#### 5b — Verify TANK mode translation
+
+While still in bringup level 2 (or reflash level 3 and use the host app), command both motors for "TANK forward" — left forward + right reverse:
+
+```
+l 1300
+r 800
+```
+
+The robot should push forward in the LED-defined direction. If it goes backward, your Y-axis is inverted — set `MOTOR_LEFT_INVERT` / `MOTOR_RIGHT_INVERT` accordingly so that the motion matches the control intent.
+
+#### 5c — Software inversion vs AM32 configuration
+
+Prefer AM32 motor direction (via the AM32 configurator) over the software flags — AM32 changes are persistent and work across all bringup levels without reflashing. Use the `MOTOR_LEFT_INVERT` / `MOTOR_RIGHT_INVERT` flags in `config.h` only when rewiring or AM32 reconfiguration isn't convenient.
+
 ### Pass criteria
 
 - ESCs arm without beeping an error sequence
 - Both directions spin when commanded
 - eRPM telemetry success rate > 90% (`t` command rarely returns 0 while motor is spinning)
 - Values are plausible given battery voltage
+- Both motors commanded "forward" torques the body CCW (viewed from above)
 
 ---
 

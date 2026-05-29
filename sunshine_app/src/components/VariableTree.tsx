@@ -66,7 +66,7 @@ export default function VariableTree({ selected, onToggle, cursorUs }: Props) {
   return (
     <div className="left-rail">
       <div className="rail-head">
-        <span className="rail-title">Variables</span>
+        <span className="rail-title">Channels</span>
         <span className="rail-count mono">{selected.length}/{TOTAL}</span>
       </div>
 

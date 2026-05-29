@@ -40,6 +40,16 @@ static constexpr float BATT_ADC_SCALE = (3.3f / 4095.0f) * 3.0f;
 static constexpr uint32_t LOOP_INTERVAL_US   = 1000;  // 1 kHz
 static constexpr uint32_t CTRL_WATCHDOG_MS   = 500;   // no ctrl → DISABLED
 
+// ── Motor direction ───────────────────────────────────────────────────────────
+// Set to true to invert a motor's DShot output (mirrors forward↔reverse around
+// DSHOT_NEUTRAL). Use this when wiring or AM32 direction can't be changed.
+// In MELTY mode with no translation input, both motors spinning "forward"
+// should produce CCW body rotation (viewed from above). If the robot spins CW,
+// flip both. If only one motor spins the wrong way, flip that one.
+// See BRINGUP.md Level 2 for the verification procedure.
+static constexpr bool MOTOR_LEFT_INVERT  = false;
+static constexpr bool MOTOR_RIGHT_INVERT = false;
+
 // ── ESP-NOW ───────────────────────────────────────────────────────────────────
 static constexpr uint8_t ESPNOW_CHANNEL      = 1;
 // Receiver MAC — fill in after running receiver and noting its WiFi STA MAC

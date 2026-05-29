@@ -45,9 +45,9 @@ void control_step(const SunshineInput *in, SunshineState *s, SunshineVars *v) {
     }
 
     if (in->mode == SUNSHINE_MODE_TANK) {
-        /* throttle 0-255, centered at 128: 128=stop, 255=full fwd, 0=full rev */
-        float fwd  = clampf(((float)in->ctrl_throttle - 128.0f) / 127.0f, -1.0f, 1.0f);
-        float turn = (float)in->ctrl_x / 127.0f;
+        /* W/S (ctrl_y) controls fwd/rev; A/D (ctrl_x) controls turning */
+        float fwd  = clampf((float)in->ctrl_y  / 127.0f, -1.0f, 1.0f);
+        float turn = clampf((float)in->ctrl_x  / 127.0f, -1.0f, 1.0f);
         v->dshot_cmd_left  = map_to_dshot(clampf(turn + fwd, -1.0f, 1.0f));
         v->dshot_cmd_right = map_to_dshot(clampf(turn - fwd, -1.0f, 1.0f));
         return;
@@ -56,6 +56,7 @@ void control_step(const SunshineInput *in, SunshineState *s, SunshineVars *v) {
     /* MELTY */
     s->theta_offset += ((float)in->ctrl_theta / 127.0f) * THETA_RATE_RADS * 0.001f;
 
+    /* throttle 0–255 unipolar: 0=stopped, 255=MAX_DSHOT_SPIN */
     float base      = ((float)in->ctrl_throttle / 255.0f) * MAX_DSHOT_SPIN;
     float cx        = (float)in->ctrl_x;
     float cy        = (float)in->ctrl_y;

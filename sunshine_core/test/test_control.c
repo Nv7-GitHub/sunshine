@@ -25,20 +25,25 @@ int main(void) {
     ASSERT_NEAR(v.dshot_cmd_right, 0.0f, 1e-6f, "DISABLED: right = 0");
     ASSERT_EQ(v.led_on, false, "DISABLED: LED off");
 
-    /* TANK forward: throttle=255 → left forward, right reverse (tangential wheels:
-     * opposite directions = translation, same direction = spin) */
-    in = make_input(SUNSHINE_MODE_TANK, 255, 0, 0, 0);
+    /* TANK forward: W key (ctrl_y=127) → tangential wheels: left fwd, right rev */
+    in = make_input(SUNSHINE_MODE_TANK, 0, 0, 127, 0);
     control_step(&in, &s, &v);
     ASSERT(v.dshot_cmd_left  > DSHOT_NEUTRAL, "TANK fwd: left > neutral (forward)");
     ASSERT(v.dshot_cmd_right < DSHOT_NEUTRAL, "TANK fwd: right < neutral (reverse, tangential drive)");
 
-    /* TANK reverse */
-    in = make_input(SUNSHINE_MODE_TANK, 0, 0, 0, 0);
+    /* TANK reverse: S key (ctrl_y=-127) */
+    in = make_input(SUNSHINE_MODE_TANK, 0, 0, -127, 0);
     control_step(&in, &s, &v);
     ASSERT(v.dshot_cmd_left  < DSHOT_NEUTRAL, "TANK rev: left < neutral");
 
-    /* TANK turn right: ctrl_x > 0 → left faster than right */
-    in = make_input(SUNSHINE_MODE_TANK, 200, 100, 0, 0);
+    /* TANK neutral: no keys → both at neutral */
+    in = make_input(SUNSHINE_MODE_TANK, 0, 0, 0, 0);
+    control_step(&in, &s, &v);
+    ASSERT_NEAR(v.dshot_cmd_left,  DSHOT_NEUTRAL, 1.0f, "TANK neutral: left = neutral");
+    ASSERT_NEAR(v.dshot_cmd_right, DSHOT_NEUTRAL, 1.0f, "TANK neutral: right = neutral");
+
+    /* TANK turn right: A/D (ctrl_x > 0) → left faster than right */
+    in = make_input(SUNSHINE_MODE_TANK, 0, 100, 0, 0);
     control_step(&in, &s, &v);
     ASSERT(v.dshot_cmd_left > v.dshot_cmd_right, "TANK turn right: left > right");
 
