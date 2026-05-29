@@ -137,6 +137,7 @@ Use the basic electrical model of a brushed motor. (Back-EMF source, resistance,
 - Wheel Diameter: 44mm
 - The wheels are 81mm apart (so radius from center is 40.5mm). 
 - The MoI of the robot is 1213859.17531 g-mm^2
+- Wheel MoI is 6407.44019 g-mm^2
 Use metric for everything.
 
 I believe the max body RPM is somewhere around 4,000, you should double check this to ensure I gave you the right-specs.
