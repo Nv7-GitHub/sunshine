@@ -1,6 +1,10 @@
 use crate::ffi::{SunshineInput, SunshineState, SunshineVars, brain_step, state_init};
 use crate::logging::LogWriter;
 use crate::protocol::TelemetryFrame;
+use crate::replay::{LogMetadata, read_frame, read_metadata};
+use std::fs::File;
+use std::io::{Seek, SeekFrom};
+use std::path::PathBuf;
 
 #[derive(Clone, Default)]
 pub struct DataPoint {
@@ -11,7 +15,7 @@ pub struct DataPoint {
     pub rep_theta_offset: f32,           // theta_offset from replay_state after brain_step
 }
 
-const RING_CAP: usize = 120_000;
+const RING_CAP: usize = 300_000;
 
 pub struct Pipeline {
     ring:          Vec<DataPoint>,
@@ -20,6 +24,7 @@ pub struct Pipeline {
     replay_state:  SunshineState,
     pub logger:    Option<LogWriter>,
     pub source:    SourceKind,
+    history_log:   Option<LogMetadata>,
     frame_count:   u32,
     hw_epoch_us:   u64,
     last_hw_us:    u32,
@@ -39,6 +44,7 @@ impl Pipeline {
             replay_state,
             logger: None,
             source: SourceKind::None,
+            history_log: None,
             frame_count: 0,
             hw_epoch_us: 0,
             last_hw_us: 0,
@@ -87,7 +93,33 @@ impl Pipeline {
         self.replay_state = *state;
     }
 
+    pub fn set_history_log(&mut self, meta: Option<LogMetadata>) {
+        self.history_log = meta;
+    }
+
     pub fn get_graph_data(
+        &mut self,
+        channel:    &str,
+        start_us:   u64,
+        end_us:     u64,
+        max_points: u32,
+    ) -> Vec<(u64, f32)> {
+        if let Some(path) = self.active_log_path() {
+            if let Some(data) = self.get_graph_data_from_log_path(&path, channel, start_us, end_us, max_points) {
+                return data;
+            }
+        }
+
+        if let Some(meta) = self.history_log.clone() {
+            if let Some(data) = self.get_graph_data_from_log_meta(&meta, channel, start_us, end_us, max_points) {
+                return data;
+            }
+        }
+
+        self.get_graph_data_from_ring(channel, start_us, end_us, max_points)
+    }
+
+    fn get_graph_data_from_ring(
         &self,
         channel:    &str,
         start_us:   u64,
@@ -95,7 +127,6 @@ impl Pipeline {
         max_points: u32,
     ) -> Vec<(u64, f32)> {
         if self.ring_len == 0 { return vec![]; }
-
         let accessor = channel_accessor(channel);
         let mut raw: Vec<(u64, f32)> = Vec::new();
         let start_idx = (self.ring_head + RING_CAP - self.ring_len) % RING_CAP;
@@ -106,21 +137,75 @@ impl Pipeline {
             raw.push((dp.time_us, accessor(dp)));
         }
 
-        if raw.len() <= max_points as usize { return raw; }
+        downsample_min_max(raw, max_points)
+    }
 
-        let bucket = raw.len() / max_points as usize;
-        let mut out = Vec::with_capacity(max_points as usize * 2);
-        for chunk in raw.chunks(bucket) {
-            if chunk.is_empty() { continue; }
-            let (t0, _) = chunk[0];
-            let (t1, _) = *chunk.last().unwrap();
-            let min = chunk.iter().map(|&(_, v)| v).fold(f32::INFINITY, f32::min);
-            let max = chunk.iter().map(|&(_, v)| v).fold(f32::NEG_INFINITY, f32::max);
-            let t_mid = (t0 + t1) / 2;
-            out.push((t0, min));
-            out.push((t_mid, max));
+    fn active_log_path(&mut self) -> Option<PathBuf> {
+        let logger = self.logger.as_mut()?;
+        let _ = logger.flush();
+        Some(logger.path().clone())
+    }
+
+    fn get_graph_data_from_log_path(
+        &self,
+        path:       &PathBuf,
+        channel:    &str,
+        start_us:   u64,
+        end_us:     u64,
+        max_points: u32,
+    ) -> Option<Vec<(u64, f32)>> {
+        let meta = read_metadata(path).ok()?;
+        self.get_graph_data_from_log_meta(&meta, channel, start_us, end_us, max_points)
+    }
+
+    fn get_graph_data_from_log_meta(
+        &self,
+        meta:       &LogMetadata,
+        channel:    &str,
+        start_us:   u64,
+        end_us:     u64,
+        max_points: u32,
+    ) -> Option<Vec<(u64, f32)>> {
+        let accessor = channel_accessor(channel);
+        let mut file = File::open(&meta.path).ok()?;
+        file.seek(SeekFrom::Start(meta.header_size)).ok()?;
+
+        let mut replay_state = SunshineState::default();
+        state_init(&mut replay_state);
+        let mut raw: Vec<(u64, f32)> = Vec::new();
+        let mut epoch_us = 0u64;
+        let mut last_hw_us = 0u32;
+
+        for _ in 0..meta.frame_count {
+            let (frame, _) = read_frame(&mut file, meta).ok()?;
+            for input in frame.inputs.iter() {
+                let hw = input.time_us;
+                if hw < last_hw_us && (last_hw_us - hw) > 0x8000_0000 {
+                    epoch_us += 0x1_0000_0000;
+                }
+                last_hw_us = hw;
+                let time_us = epoch_us + hw as u64;
+                let vars = brain_step(input, &mut replay_state);
+
+                if time_us < start_us {
+                    continue;
+                }
+                if time_us > end_us {
+                    return Some(downsample_min_max(raw, max_points));
+                }
+
+                let dp = DataPoint {
+                    time_us,
+                    input: *input,
+                    hw_state: frame.state,
+                    vars,
+                    rep_theta_offset: replay_state.theta_offset,
+                };
+                raw.push((time_us, accessor(&dp)));
+            }
         }
-        out
+
+        Some(downsample_min_max(raw, max_points))
     }
 
     pub fn get_channel_snapshot(&self, channels: &[String], time_us: Option<u64>) -> Vec<Option<f32>> {
@@ -155,6 +240,25 @@ impl Pipeline {
             if v.is_finite() { Some(v) } else { None }
         }).collect()
     }
+}
+
+fn downsample_min_max(raw: Vec<(u64, f32)>, max_points: u32) -> Vec<(u64, f32)> {
+    if raw.len() <= max_points as usize { return raw; }
+    if max_points == 0 { return vec![]; }
+
+    let bucket = (raw.len() / max_points as usize).max(1);
+    let mut out = Vec::with_capacity(max_points as usize * 2);
+    for chunk in raw.chunks(bucket) {
+        if chunk.is_empty() { continue; }
+        let (t0, _) = chunk[0];
+        let (t1, _) = *chunk.last().unwrap();
+        let min = chunk.iter().map(|&(_, v)| v).fold(f32::INFINITY, f32::min);
+        let max = chunk.iter().map(|&(_, v)| v).fold(f32::NEG_INFINITY, f32::max);
+        let t_mid = (t0 + t1) / 2;
+        out.push((t0, min));
+        out.push((t_mid, max));
+    }
+    out
 }
 
 const ADXL_SCALE_MS2: f32 = 49e-3 * 9.81;

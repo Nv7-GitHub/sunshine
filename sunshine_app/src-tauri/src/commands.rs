@@ -48,6 +48,11 @@ pub async fn connect_serial(
         }
     })).map_err(|e| e)?;
 
+    {
+        let mut pipe = state.pipeline.lock();
+        pipe.source = SourceKind::Live;
+        pipe.set_history_log(None);
+    }
     *state.serial_conn.lock() = Some(conn);
     Ok(())
 }
@@ -79,6 +84,12 @@ pub async fn start_simulation(state: State<'_, AppState>, app: AppHandle) -> Res
     let _ = app.emit("source_status", serde_json::json!({
         "kind": "Sim", "detail": "Running"
     }));
+
+    {
+        let mut pipe = state.pipeline.lock();
+        pipe.source = SourceKind::Simulation;
+        pipe.set_history_log(None);
+    }
 
     tokio::spawn(async move {
         let mut sim          = Simulation::new();
@@ -147,6 +158,12 @@ pub async fn start_replay(path: String, state: State<'_, AppState>, app: AppHand
         "kind": "Replay", "detail": "Playing"
     }));
 
+    {
+        let mut pipe = state.pipeline.lock();
+        pipe.source = SourceKind::Replay;
+        pipe.set_history_log(Some(meta.clone()));
+    }
+
     tokio::spawn(async move {
         let mut f = match File::open(&meta.path) {
             Ok(f) => f,
@@ -209,7 +226,9 @@ pub fn enable_logging(label: String, state: State<'_, AppState>) -> Result<Strin
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let path = make_log_path(&dir, &label);
     let writer = LogWriter::new(path.clone(), &label, 0).map_err(|e| e.to_string())?;
-    state.pipeline.lock().logger = Some(writer);
+    let mut pipe = state.pipeline.lock();
+    pipe.set_history_log(None);
+    pipe.logger = Some(writer);
     Ok(path.to_string_lossy().to_string())
 }
 

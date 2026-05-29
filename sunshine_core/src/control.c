@@ -56,8 +56,10 @@ void control_step(const SunshineInput *in, SunshineState *s, SunshineVars *v) {
     /* MELTY */
     s->theta_offset += ((float)in->ctrl_theta / 127.0f) * THETA_RATE_RADS * 0.001f;
 
-    /* throttle 0–255 unipolar: 0=stopped, 255=MAX_DSHOT_SPIN */
-    float base      = ((float)in->ctrl_throttle / 255.0f) * MAX_DSHOT_SPIN;
+    /* MELTY spin is unipolar in bidirectional DShot: stopped is neutral, not
+     * a small raw DShot value. Values below DSHOT_NEUTRAL command reverse. */
+    float spin_frac = clampf((float)in->ctrl_throttle / 255.0f, 0.0f, 1.0f);
+    float spin_span = spin_frac * (MAX_DSHOT_SPIN - DSHOT_NEUTRAL);
     float cx        = (float)in->ctrl_x;
     float cy        = (float)in->ctrl_y;
     float drive_dir = atan2f(cy, cx);
@@ -66,11 +68,8 @@ void control_step(const SunshineInput *in, SunshineState *s, SunshineVars *v) {
 
     float phase = wrap_to_pi(robot_angle - drive_dir);
     float diff  = trapezoid(phase, DRIFT_PULSE_WIDTH, DRIFT_RAMP_WIDTH)
-                  * drive_mag * DRIFT_AMPLITUDE * base;
+                  * drive_mag * DRIFT_AMPLITUDE * spin_span;
 
-    float cmd_l = clampf(base + diff, 0.0f, DSHOT_MAX);
-    float cmd_r = clampf(base - diff, 0.0f, DSHOT_MAX);
-    /* DShot 1-47 are special commands, not throttle — skip that range */
-    v->dshot_cmd_left  = (cmd_l > 0.0f && cmd_l < DSHOT_MIN) ? 0.0f : cmd_l;
-    v->dshot_cmd_right = (cmd_r > 0.0f && cmd_r < DSHOT_MIN) ? 0.0f : cmd_r;
+    v->dshot_cmd_left  = clampf(DSHOT_NEUTRAL + spin_span + diff, DSHOT_NEUTRAL, DSHOT_MAX);
+    v->dshot_cmd_right = clampf(DSHOT_NEUTRAL + spin_span - diff, DSHOT_NEUTRAL, DSHOT_MAX);
 }

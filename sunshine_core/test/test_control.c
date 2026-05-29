@@ -42,10 +42,11 @@ int main(void) {
     ASSERT_NEAR(v.dshot_cmd_left,  DSHOT_NEUTRAL, 1.0f, "TANK neutral: left = neutral");
     ASSERT_NEAR(v.dshot_cmd_right, DSHOT_NEUTRAL, 1.0f, "TANK neutral: right = neutral");
 
-    /* TANK turn right: A/D (ctrl_x > 0) → left faster than right */
+    /* TANK turn right: A/D (ctrl_x > 0) → both wheels drive the body spin */
     in = make_input(SUNSHINE_MODE_TANK, 0, 100, 0, 0);
     control_step(&in, &s, &v);
-    ASSERT(v.dshot_cmd_left > v.dshot_cmd_right, "TANK turn right: left > right");
+    ASSERT_NEAR(v.dshot_cmd_left, v.dshot_cmd_right, 1.0f, "TANK turn right: left≈right");
+    ASSERT(v.dshot_cmd_left > DSHOT_NEUTRAL, "TANK turn right: both forward of neutral");
 
     /* MELTY: throttle>0, no translation → left≈right≈base */
     sunshine_state_init(&s);
@@ -53,7 +54,19 @@ int main(void) {
     in = make_input(SUNSHINE_MODE_MELTY, 200, 0, 0, 0);
     control_step(&in, &s, &v);
     ASSERT_NEAR(v.dshot_cmd_left, v.dshot_cmd_right, 1.0f, "MELTY no-translation: left≈right");
-    ASSERT(v.dshot_cmd_left > 0, "MELTY throttle: outputs > 0");
+    ASSERT(v.dshot_cmd_left > DSHOT_NEUTRAL, "MELTY throttle: outputs forward of neutral");
+
+    /* MELTY low throttle must not fall into the bidirectional reverse range. */
+    in = make_input(SUNSHINE_MODE_MELTY, 13, 0, 0, 0);
+    control_step(&in, &s, &v);
+    ASSERT(v.dshot_cmd_left >= DSHOT_NEUTRAL, "MELTY low throttle: left not reverse");
+    ASSERT(v.dshot_cmd_right >= DSHOT_NEUTRAL, "MELTY low throttle: right not reverse");
+
+    /* MELTY zero throttle means stopped while enabled, not disarmed/special DShot. */
+    in = make_input(SUNSHINE_MODE_MELTY, 0, 0, 0, 0);
+    control_step(&in, &s, &v);
+    ASSERT_NEAR(v.dshot_cmd_left, DSHOT_NEUTRAL, 1.0f, "MELTY zero throttle: left neutral");
+    ASSERT_NEAR(v.dshot_cmd_right, DSHOT_NEUTRAL, 1.0f, "MELTY zero throttle: right neutral");
 
     /* MELTY: theta_offset accumulates with ctrl_theta */
     sunshine_state_init(&s);

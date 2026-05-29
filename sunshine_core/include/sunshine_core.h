@@ -56,7 +56,7 @@
 #define DRIFT_RAMP_WIDTH    0.10f   /* fraction for linear ramp            */
 #define DRIFT_AMPLITUDE     0.40f   /* max diff as fraction of base        */
 #define THETA_RATE_RADS     3.14159265f  /* rad/s per full ctrl_theta      */
-#define MAX_DSHOT_SPIN      1500.0f
+#define MAX_DSHOT_SPIN      DSHOT_MAX
 #define DSHOT_NEUTRAL       1048.0f
 #define DSHOT_MAX           2047.0f
 #define DSHOT_MIN           48.0f

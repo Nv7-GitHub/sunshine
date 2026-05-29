@@ -94,6 +94,10 @@ impl LogWriter {
         Ok(())
     }
 
+    pub fn flush(&mut self) -> std::io::Result<()> {
+        self.writer.flush()
+    }
+
     pub fn path(&self) -> &PathBuf { &self.path }
     pub fn frame_count(&self) -> u32 { self.frame_count }
 }
