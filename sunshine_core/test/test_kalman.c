@@ -21,7 +21,8 @@ int main(void) {
     /* state_init sets P to large diagonal */
     SunshineState s;
     sunshine_state_init(&s);
-    ASSERT(s.kf_P[0] > 1.0f && s.kf_P[3] > 1.0f, "P initialised to large values");
+    /* P[0] (angle) = 100 (large); P[3] (omega) = 1 (std dev 1 rad/s, not zero) */
+    ASSERT(s.kf_P[0] > 1.0f && s.kf_P[3] > 0.0f, "P initialised to non-zero positive values");
     ASSERT_NEAR(s.kf_P[1], 0.0f, 1e-6f, "P off-diagonal = 0");
 
     /* predict: theta advances by omega*dt */

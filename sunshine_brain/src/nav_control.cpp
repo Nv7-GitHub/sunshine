@@ -83,8 +83,8 @@ void nav_control_task(void *) {
 
         // ── 5. Apply outputs ──────────────────────────────────────────────
 #if FEATURE_DSHOT
-        dshot_send((uint16_t)vars.dshot_cmd_left,
-                   (uint16_t)vars.dshot_cmd_right);
+        dshot_send((uint16_t)(vars.dshot_cmd_left  + 0.5f),
+                   (uint16_t)(vars.dshot_cmd_right + 0.5f));
 #endif
         digitalWrite(PIN_LED, vars.led_on ? HIGH : LOW);
 

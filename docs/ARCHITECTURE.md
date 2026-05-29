@@ -73,13 +73,14 @@ sunshine/
 ```
 LIVE:       Brain sensors
               → 1 kHz sunshine_step() on ESP32
-              → ESP-NOW (50 Hz, 20 inputs/frame) → Receiver
-              → USB serial (643 B/frame) → Tauri serial.rs
-              → pipeline.rs: brain_step() × 20 → ring buffer → live_update event
+              → ESP-NOW (~167 Hz, 6 inputs/frame, 237 B) → Receiver
+                  (ESP-NOW 250-byte limit precludes 20 inputs/frame)
+              → USB serial (237 B payload + 5 B framing) → Tauri serial.rs
+              → pipeline.rs: brain_step() × 6 → ring buffer → live_update event
               → React GraphPanel
 
 REPLAY:     .sun file → replay.rs reads frames
-              → pipeline.rs: brain_step() × 20 (at controllable speed)
+              → pipeline.rs: brain_step() × 6 (at controllable speed)
               → same ring buffer + events path as LIVE
 
 SIMULATION: simulation.rs ticks at 1 kHz → SunshineInput
@@ -179,7 +180,7 @@ All physical/tuning constants are in `sunshine_core/include/sunshine_core.h`. Fi
 | `DRIFT_PULSE_WIDTH` | 0.25 | sunshine_core.h |
 | `DRIFT_AMPLITUDE` | 0.40 | sunshine_core.h |
 | Loop interval | 1000 µs (1 kHz) | config.h (brain) |
-| ESP-NOW TX rate (brain→rx) | 50 Hz | Derived: 20 inputs/frame |
+| ESP-NOW TX rate (brain→rx) | ~167 Hz | Derived: 6 inputs/frame (250-byte ESP-NOW limit) |
 | ESP-NOW TX rate (rx→brain) | 500 Hz | config.h (receiver) |
 | Host watchdog | 3 s | config.h (receiver) |
 | Brain watchdog | 500 ms | config.h (brain) |

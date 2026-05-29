@@ -1,6 +1,7 @@
 #pragma once
 #include <stdio.h>
 #include <math.h>
+#include <stdbool.h>
 static int _pass = 0, _fail = 0;
 #define ASSERT(cond, msg) \
     do { if(cond){_pass++;printf("  ok  %s\n",(msg));} \

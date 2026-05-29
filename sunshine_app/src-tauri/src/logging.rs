@@ -6,8 +6,13 @@ use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const MAGIC: &[u8; 5]  = b"SHINE";
-const FILE_FORMAT_VER: u16 = 1;
-const HEADER_SIZE: u16 = 93;
+const FILE_FORMAT_VER: u16 = 2;
+// Header layout (95 bytes):
+//  [0..4]   MAGIC (5)     [5..6]   FILE_FORMAT_VER (2)   [7..8]   HEADER_SIZE (2)
+//  [9..12]  schema_ver(4) [13..14] sizeof_input (2)       [15..16] sizeof_state (2)
+//  [17..18] sizeof_vars(2)[19..26] created_at_ms (8)      [27]     source (1)
+//  [28]     flags (1)     [29..92] label (64)              [93..94] num_inputs (2)
+const HEADER_SIZE: u16 = 95;
 
 pub struct LogWriter {
     writer:      BufWriter<File>,
@@ -40,6 +45,9 @@ impl LogWriter {
         let n = bytes.len().min(63);
         label_buf[..n].copy_from_slice(&bytes[..n]);
         w.write_all(&label_buf)?;
+        // [93..94] num_inputs per frame (added in FILE_FORMAT_VER 2)
+        use crate::protocol::INPUTS_PER_FRAME;
+        w.write_all(&(INPUTS_PER_FRAME as u16).to_le_bytes())?;
 
         Ok(LogWriter { writer: w, frame_count: 0, flush_every: 10, path })
     }
@@ -48,7 +56,7 @@ impl LogWriter {
         &mut self,
         frame_id: u32,
         state:    &SunshineState,
-        inputs:   &[SunshineInput; 20],
+        inputs:   &[SunshineInput],
         vars:     &SunshineVars,
     ) -> std::io::Result<()> {
         self.writer.write_all(&frame_id.to_le_bytes())?;

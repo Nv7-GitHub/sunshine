@@ -19,7 +19,13 @@ void sunshine_step(const SunshineInput *in, SunshineState *state, SunshineVars *
     float ay = sunshine_accel_to_ms2(in->accel_y);
     float centripetal = sqrtf(ax*ax + ay*ay);
     vars->centripetal_ms2 = centripetal;
-    vars->accel_saturated = centripetal > ACCEL_SAT_THRESHOLD_MS2;
+    /* Saturated if EITHER individual axis clips (e.g. during an impact that is
+     * not centripetal) OR the centripetal magnitude approaches the ±200 g limit.
+     * The 45° mounting makes the centripetal clip point 200g*√2≈283g, so 280g
+     * is a conservative vector-magnitude guard.  Per-axis check catches hits. */
+    vars->accel_saturated = (in->accel_x >=  ADXL_MAX_COUNTS || in->accel_x <= -ADXL_MAX_COUNTS ||
+                             in->accel_y >=  ADXL_MAX_COUNTS || in->accel_y <= -ADXL_MAX_COUNTS ||
+                             centripetal  >  ACCEL_SAT_THRESHOLD_MS2);
     vars->batt_voltage    = sunshine_batt_to_v(in->batt_offset);
     vars->erpm_left       = sunshine_f16_to_f32(in->erpm_left);
     vars->erpm_right      = sunshine_f16_to_f32(in->erpm_right);

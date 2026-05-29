@@ -19,6 +19,7 @@
 #define BATT_OFFSET_REF_V   7.6f               /* reference voltage (V)   */
 #define BATT_SCALE_V        0.0205f             /* V per batt_offset LSB   */
 #define IMU_RADIUS_M        0.011f              /* 11 mm from spin centre  */
+#define ADXL_MAX_COUNTS     4082                /* ±200 g / 49 mg·LSB⁻¹  */
 #define SUNSHINE_MAG_MIN_OMEGA  (4.0f * 3.14159265f)  /* ~120 RPM, rad/s  */
 
 /* ── Kalman tuning (override with -D flag for tuning builds) ───────────── */

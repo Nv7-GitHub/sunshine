@@ -207,19 +207,19 @@ fn channel_accessor(channel: &str) -> fn(&DataPoint) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::TelemetryFrame;
+    use crate::protocol::{TelemetryFrame, INPUTS_PER_FRAME};
     use crate::ffi::{SunshineInput, SunshineState};
 
-    fn make_frame(inputs: [SunshineInput; 20]) -> TelemetryFrame {
+    fn make_frame(inputs: [SunshineInput; INPUTS_PER_FRAME]) -> TelemetryFrame {
         TelemetryFrame { frame_id: 0, state: SunshineState::default(), inputs }
     }
 
     #[test]
     fn ingest_uses_hardware_timestamp() {
         let mut p = Pipeline::new();
-        let hw_us: u32 = 5_000_000; // 5 seconds in µs
+        let hw_us: u32 = 5_000_000;
         let input = SunshineInput { time_us: hw_us, ctrl_x: 7, ..SunshineInput::default() };
-        p.ingest_frame(&make_frame([input; 20]));
+        p.ingest_frame(&make_frame([input; INPUTS_PER_FRAME]));
         let data = p.get_graph_data("input.ctrl_x", hw_us as u64 - 1, hw_us as u64 + 1, 100);
         assert!(!data.is_empty(), "stored points must use hardware timestamp");
     }
@@ -236,7 +236,7 @@ mod tests {
     fn snapshot_latest() {
         let mut p = Pipeline::new();
         let input = SunshineInput { ctrl_x: 42, ..SunshineInput::default() };
-        p.ingest_frame(&make_frame([input; 20]));
+        p.ingest_frame(&make_frame([input; INPUTS_PER_FRAME]));
         let vals = p.get_channel_snapshot(&["input.ctrl_x".to_string()], None);
         assert_eq!(vals.len(), 1);
         assert_eq!(vals[0], Some(42.0));
@@ -247,7 +247,7 @@ mod tests {
         let mut p = Pipeline::new();
         let hw_us: u32 = 10_000_000;
         let input = SunshineInput { time_us: hw_us, ctrl_x: 7, ..SunshineInput::default() };
-        p.ingest_frame(&make_frame([input; 20]));
+        p.ingest_frame(&make_frame([input; INPUTS_PER_FRAME]));
         let later = hw_us as u64 + 1_000_000;
         let vals = p.get_channel_snapshot(&["input.ctrl_x".to_string()], Some(later));
         assert_eq!(vals[0], Some(7.0));
@@ -257,7 +257,7 @@ mod tests {
     fn snapshot_unknown_channel_returns_zero() {
         let mut p = Pipeline::new();
         let input = SunshineInput::default();
-        p.ingest_frame(&make_frame([input; 20]));
+        p.ingest_frame(&make_frame([input; INPUTS_PER_FRAME]));
         let vals = p.get_channel_snapshot(&["not.a.channel".to_string()], None);
         assert_eq!(vals[0], Some(0.0));
     }

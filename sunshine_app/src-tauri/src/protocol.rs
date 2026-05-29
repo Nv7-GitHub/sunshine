@@ -11,13 +11,16 @@ pub const STATUS_OK:                 u8 = 0x00;
 pub const STATUS_BRAIN_CONNECTED:    u8 = 0x01;
 pub const STATUS_BRAIN_DISCONNECTED: u8 = 0x02;
 
-pub const ESPNOW_TELEM_SIZE: usize = 643;
+// Brain sends 6 inputs per ESP-NOW packet (250-byte ESP-NOW limit prevents 20).
+// 2 (frame_id) + 1 (type) + 60 (SunshineState) + 6×29 (SunshineInput) = 237
+pub const ESPNOW_TELEM_SIZE: usize = 237;
+pub const INPUTS_PER_FRAME:  usize = 6;
 
 #[derive(Debug, Clone)]
 pub struct TelemetryFrame {
     pub frame_id: u16,
     pub state:    SunshineState,
-    pub inputs:   [SunshineInput; 20],
+    pub inputs:   [SunshineInput; INPUTS_PER_FRAME],
 }
 
 #[derive(Debug)]
@@ -114,8 +117,8 @@ fn parse_telem(payload: &[u8]) -> TelemetryFrame {
     let state: SunshineState = unsafe {
         std::ptr::read_unaligned(payload[3..3+60].as_ptr() as *const SunshineState)
     };
-    let mut inputs = [SunshineInput::default(); 20];
-    for i in 0..20 {
+    let mut inputs = [SunshineInput::default(); INPUTS_PER_FRAME];
+    for i in 0..INPUTS_PER_FRAME {
         let off = 63 + i * 29;
         inputs[i] = unsafe {
             std::ptr::read_unaligned(payload[off..off+29].as_ptr() as *const SunshineInput)

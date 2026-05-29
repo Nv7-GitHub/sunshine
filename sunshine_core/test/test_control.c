@@ -25,12 +25,12 @@ int main(void) {
     ASSERT_NEAR(v.dshot_cmd_right, 0.0f, 1e-6f, "DISABLED: right = 0");
     ASSERT_EQ(v.led_on, false, "DISABLED: LED off");
 
-    /* TANK forward: throttle=255 → both wheels max forward */
+    /* TANK forward: throttle=255 → left forward, right reverse (tangential wheels:
+     * opposite directions = translation, same direction = spin) */
     in = make_input(SUNSHINE_MODE_TANK, 255, 0, 0, 0);
     control_step(&in, &s, &v);
-    ASSERT(v.dshot_cmd_left  > DSHOT_NEUTRAL, "TANK fwd: left > neutral");
-    ASSERT(v.dshot_cmd_right > DSHOT_NEUTRAL, "TANK fwd: right > neutral");
-    ASSERT_NEAR(v.dshot_cmd_left, v.dshot_cmd_right, 1.0f, "TANK straight: left=right");
+    ASSERT(v.dshot_cmd_left  > DSHOT_NEUTRAL, "TANK fwd: left > neutral (forward)");
+    ASSERT(v.dshot_cmd_right < DSHOT_NEUTRAL, "TANK fwd: right < neutral (reverse, tangential drive)");
 
     /* TANK reverse */
     in = make_input(SUNSHINE_MODE_TANK, 0, 0, 0, 0);

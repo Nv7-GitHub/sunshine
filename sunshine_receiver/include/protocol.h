@@ -24,7 +24,9 @@ static constexpr uint8_t STATUS_LOGGING_STOPPED  = 0x03;
 static constexpr uint8_t STATUS_INIT_ERROR       = 0x04;
 
 // ── Payload sizes ─────────────────────────────────────────────────────────────
-static constexpr uint16_t ESPNOW_TELEM_SIZE  = 643; // 2+1+60+580
+// Brain sends 6 inputs per ESP-NOW packet (250-byte ESP-NOW max rules out 20).
+// 2 (frame_id) + 1 (type) + 60 (SunshineState) + 6*29 (SunshineInput) = 237
+static constexpr uint16_t ESPNOW_TELEM_SIZE  = 237;
 static constexpr uint16_t CTRL_PAYLOAD_SIZE  = 5;   // mode+x+y+theta+throttle
 static constexpr uint16_t HEARTBEAT_SIZE     = 4;
 static constexpr uint16_t RSSI_SIZE          = 1;

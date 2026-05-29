@@ -2,7 +2,7 @@
 
 use crate::{AppState,
             serial::{SerialConnection, list_ports as serial_list},
-            protocol::{ReceiverFrame, encode_ctrl, TelemetryFrame},
+            protocol::{ReceiverFrame, encode_ctrl, TelemetryFrame, INPUTS_PER_FRAME},
             pipeline::SourceKind,
             replay::{read_metadata, read_frame},
             simulation::Simulation,
@@ -94,7 +94,7 @@ pub async fn start_simulation(state: State<'_, AppState>, app: AppHandle) -> Res
                 (ctrl.ctrl_x, ctrl.ctrl_y, ctrl.ctrl_theta, ctrl.ctrl_throttle, ctrl.mode)
             };
 
-            let mut inputs = [SunshineInput::default(); 20];
+            let mut inputs = [SunshineInput::default(); INPUTS_PER_FRAME];
             for slot in inputs.iter_mut() {
                 let mut input = sim.tick(&prev_vars);
                 input.ctrl_x        = cx;
@@ -119,7 +119,8 @@ pub async fn start_simulation(state: State<'_, AppState>, app: AppHandle) -> Res
             let update = build_live_update(&telem);
             let _ = app.emit("live_update", update);
 
-            tokio::time::sleep(tokio::time::Duration::from_millis(20)).await;
+            // 6 inputs × 1 ms each → sleep 6 ms to run at 1:1 real-time
+            tokio::time::sleep(tokio::time::Duration::from_millis(6)).await;
         }
 
         let _ = app.emit("source_status", serde_json::json!({
@@ -151,7 +152,7 @@ pub async fn start_replay(path: String, state: State<'_, AppState>, app: AppHand
             Ok(f) => f,
             Err(_) => return,
         };
-        let _ = f.seek(SeekFrom::Start(93)); // skip fixed-size header
+        let _ = f.seek(SeekFrom::Start(meta.header_size));
 
         for _ in 0..meta.frame_count {
             if stop_flag.load(Ordering::Relaxed) { break; }
@@ -234,7 +235,7 @@ fn build_live_update(telem: &TelemetryFrame) -> serde_json::Value {
     let frame_id    = telem.frame_id;
     let kf_theta    = telem.state.kf_theta;
     let kf_omega    = telem.state.kf_omega;
-    let last        = telem.inputs[19];
+    let last        = telem.inputs[INPUTS_PER_FRAME - 1];
     let mode        = last.mode;
     let rssi        = last.rssi;
     let batt_offset = last.batt_offset;

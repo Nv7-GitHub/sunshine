@@ -45,9 +45,9 @@ void control_step(const SunshineInput *in, SunshineState *s, SunshineVars *v) {
     }
 
     if (in->mode == SUNSHINE_MODE_TANK) {
-        float fwd  = (float)in->ctrl_y     / 127.0f;
-        float turn = (float)in->ctrl_theta / 127.0f;
-        /* fwd drives motors opposite (→ translation), turn drives them same (→ spin) */
+        /* throttle 0-255, centered at 128: 128=stop, 255=full fwd, 0=full rev */
+        float fwd  = clampf(((float)in->ctrl_throttle - 128.0f) / 127.0f, -1.0f, 1.0f);
+        float turn = (float)in->ctrl_x / 127.0f;
         v->dshot_cmd_left  = map_to_dshot(clampf(turn + fwd, -1.0f, 1.0f));
         v->dshot_cmd_right = map_to_dshot(clampf(turn - fwd, -1.0f, 1.0f));
         return;
@@ -67,6 +67,9 @@ void control_step(const SunshineInput *in, SunshineState *s, SunshineVars *v) {
     float diff  = trapezoid(phase, DRIFT_PULSE_WIDTH, DRIFT_RAMP_WIDTH)
                   * drive_mag * DRIFT_AMPLITUDE * base;
 
-    v->dshot_cmd_left  = clampf(base + diff, 0.0f, DSHOT_MAX);
-    v->dshot_cmd_right = clampf(base - diff, 0.0f, DSHOT_MAX);
+    float cmd_l = clampf(base + diff, 0.0f, DSHOT_MAX);
+    float cmd_r = clampf(base - diff, 0.0f, DSHOT_MAX);
+    /* DShot 1-47 are special commands, not throttle — skip that range */
+    v->dshot_cmd_left  = (cmd_l > 0.0f && cmd_l < DSHOT_MIN) ? 0.0f : cmd_l;
+    v->dshot_cmd_right = (cmd_r > 0.0f && cmd_r < DSHOT_MIN) ? 0.0f : cmd_r;
 }
