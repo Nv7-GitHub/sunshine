@@ -199,7 +199,7 @@ pub async fn start_simulation(state: State<'_, AppState>, app: AppHandle) -> Res
 
 
 #[tauri::command]
-pub fn stop_source(state: State<'_, AppState>) {
+pub fn stop_source(state: State<'_, AppState>, app: AppHandle) {
     {
         let mut pipe = state.pipeline.lock();
         pipe.source = SourceKind::None;
@@ -207,6 +207,7 @@ pub fn stop_source(state: State<'_, AppState>) {
     }
     state.sim_stop.store(true, Ordering::Relaxed);
     force_disabled(&state);
+    let _ = app.emit("source_status", serde_json::json!({ "kind": "Disconnected", "detail": "" }));
 }
 
 #[tauri::command]

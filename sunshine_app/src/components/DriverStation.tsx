@@ -220,12 +220,10 @@ export default function DriverStation({ mode, setMode, sourceStatus, liveUpdate,
         )}
 
         {tab === 'replay' && (
-          <>
-            <div className="file-picker-row">
-              <span className="file-picker-name mono">
-                {replayPath ? replayPath.split('/').pop() ?? replayPath : 'No file selected'}
-              </span>
-              <button className="conn-btn" onClick={async () => {
+          <div className="tab-body">
+            <button
+              className={`file-btn${replayPath ? ' has-file' : ''}`}
+              onClick={async () => {
                 let selected: string | null = null;
                 try {
                   selected = await openDialog({ filters: [{ name: 'Sunshine Log', extensions: ['sun'] }] }) as string | null;
@@ -237,43 +235,57 @@ export default function DriverStation({ mode, setMode, sourceStatus, liveUpdate,
                     'open_replay', { path: selected }
                   );
                   setReplayMeta(meta);
-                } catch (e) {
+                } catch {
                   setReplayMeta(null);
                 }
-              }}>Browse…</button>
-            </div>
+              }}
+            >
+              <svg viewBox="0 0 16 16"><path d="M2 4.5A1.5 1.5 0 013.5 3h3.086a1.5 1.5 0 011.06.44L8.5 4.293A1.5 1.5 0 009.56 4.5H12.5A1.5 1.5 0 0114 6v5.5A1.5 1.5 0 0112.5 13h-9A1.5 1.5 0 012 11.5V4.5z" stroke="currentColor" stroke-width="1.2" fill="none" stroke-linejoin="round"/></svg>
+              <span>{replayPath ? replayPath.split('/').pop() ?? replayPath : 'Select .sun file…'}</span>
+            </button>
+
             {replayMeta && (
               <>
-                <div className="replay-info">
-                  <span>Label: {replayMeta.label || '(none)'}</span>
-                  <span>Frames: {replayMeta.frame_count}</span>
-                  <span>Schema v{replayMeta.schema_version}</span>
+                <div className="meta-rows">
+                  {replayMeta.label ? (
+                    <div className="meta-row"><span>Label</span><span>{replayMeta.label}</span></div>
+                  ) : null}
+                  <div className="meta-row">
+                    <span>Frames</span>
+                    <span>{replayMeta.frame_count.toLocaleString()}</span>
+                  </div>
+                  <div className="meta-row">
+                    <span>Schema</span>
+                    <span>v{replayMeta.schema_version}</span>
+                  </div>
                 </div>
                 {sourceStatus.kind === 'Replay' ? (
-                  <button className="conn-btn danger" onClick={stopSource}>Close</button>
+                  <button className="source-btn source-btn-stop" onClick={stopSource}>Close Replay</button>
                 ) : (
-                  <button className="conn-btn" onClick={async () => {
+                  <button className="source-btn source-btn-start" onClick={async () => {
                     try { await loadReplay(replayPath); } catch { /* ignore */ }
                   }}>Load</button>
                 )}
               </>
             )}
-          </>
+          </div>
         )}
 
         {tab === 'sim' && (
-          <>
+          <div className="tab-body">
             {sourceStatus.kind === 'Sim' ? (
-              <button className="conn-btn danger" onClick={stopSource}>Stop Simulation</button>
+              <button className="source-btn source-btn-stop" onClick={stopSource}>Stop</button>
             ) : (
-              <button className="conn-btn" onClick={() => { invoke('start_simulation'); setMode(1); }}>Start Simulation</button>
+              <button className="source-btn source-btn-start" onClick={() => { invoke('start_simulation'); setMode(1); }}>
+                Start Simulation
+              </button>
             )}
-            <div className="sim-info">
-              <span>KV: 1100 RPM/V</span>
-              <span>MoI: 1.214×10⁻³ kg·m²</span>
-              <span>Battery: 2S 8.4V</span>
+            <div className="meta-rows">
+              <div className="meta-row"><span>KV</span><span>1100 RPM/V</span></div>
+              <div className="meta-row"><span>MoI</span><span>1.214×10⁻³ kg·m²</span></div>
+              <div className="meta-row"><span>Battery</span><span>2S · 8.4 V</span></div>
             </div>
-          </>
+          </div>
         )}
       </div>
 
