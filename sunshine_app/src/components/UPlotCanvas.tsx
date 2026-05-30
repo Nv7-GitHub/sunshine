@@ -3,6 +3,8 @@ import uPlot from 'uplot';
 import 'uplot/dist/uPlot.min.css';
 import { invoke } from '@tauri-apps/api/core';
 
+export interface ReplayRange { startUs: number; endUs: number }
+
 interface Props {
   channels:      string[];
   channelUnits:  string[];
@@ -10,6 +12,7 @@ interface Props {
   height:        number;
   headTimeUs:    number;
   requestLive:   number;
+  replayRange?:  ReplayRange | null;
   onCursorMove?: (us: number | null) => void;
   onLiveChange?: (live: boolean) => void;
 }
@@ -111,7 +114,7 @@ function toUs(v: number): number {
   return Math.max(0, Math.round(v));
 }
 
-export default function UPlotCanvas({ channels, channelUnits, width, height, headTimeUs, requestLive, onCursorMove, onLiveChange }: Props) {
+export default function UPlotCanvas({ channels, channelUnits, width, height, headTimeUs, requestLive, replayRange, onCursorMove, onLiveChange }: Props) {
   const divRef     = useRef<HTMLDivElement>(null);
   const uRef       = useRef<uPlot | null>(null);
   const viewRef        = useRef({ startUs: 0, endUs: 0, live: true });
@@ -225,6 +228,14 @@ export default function UPlotCanvas({ channels, channelUnits, width, height, hea
     liveChgRef.current?.(true);
     fetchRef.current();
   }, [requestLive]);
+
+  // position graph over the full file range when a replay is loaded
+  useEffect(() => {
+    if (!replayRange) return;
+    viewRef.current = { startUs: replayRange.startUs, endUs: replayRange.endUs, live: false };
+    notifyLive(false);
+    fetchRef.current();
+  }, [replayRange, notifyLive]);
 
   // RAF loop: drives smooth live scrolling at display frame rate (60 Hz) and
   // triggers a data fetch at ~10 Hz. Replaces setInterval so the scroll

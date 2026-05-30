@@ -37,7 +37,7 @@ pub fn run() {
             commands::connect_serial,
             commands::disconnect_serial,
             commands::open_replay,
-            commands::start_replay,
+            commands::load_replay,
             commands::start_simulation,
             commands::stop_source,
             commands::set_mode,

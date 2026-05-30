@@ -1,5 +1,5 @@
 use crate::ffi::{SunshineInput, SunshineState, SunshineVars};
-use crate::protocol::TelemetryFrame;
+use crate::protocol::{TelemetryFrame, INPUTS_PER_FRAME};
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::mem::size_of;
@@ -83,6 +83,34 @@ pub fn read_frame(f: &mut File, meta: &LogMetadata) -> std::io::Result<(Telemetr
     let vars = read_padded::<SunshineVars>(f, meta.sizeof_vars as usize)?;
 
     Ok((TelemetryFrame { frame_id: frame_id as u16, state, inputs }, vars))
+}
+
+/// Returns the (first_input_time_us, last_input_time_us) for a log file.
+pub fn log_time_range(meta: &LogMetadata) -> std::io::Result<(u64, u64)> {
+    if meta.frame_count == 0 {
+        return Ok((0, 0));
+    }
+
+    let mut f = File::open(&meta.path)?;
+
+    f.seek(SeekFrom::Start(meta.header_size))?;
+    let (first_frame, _) = read_frame(&mut f, meta)?;
+    let start_us = first_frame.inputs[0].time_us as u64;
+
+    let frame_size = 5u64
+        + meta.sizeof_state as u64
+        + meta.sizeof_input as u64 * meta.num_inputs as u64
+        + meta.sizeof_vars as u64;
+    let last_pos = meta.header_size + (meta.frame_count as u64 - 1) * frame_size;
+    f.seek(SeekFrom::Start(last_pos))?;
+    let (last_frame, _) = read_frame(&mut f, meta)?;
+    let n = (meta.num_inputs as usize).min(INPUTS_PER_FRAME);
+    let last_us = last_frame.inputs[n.saturating_sub(1)].time_us as u64;
+
+    // Handle u32 hardware-clock wrap (sessions longer than ~4295 s)
+    let end_us = if last_us < start_us { last_us + 0x1_0000_0000 } else { last_us };
+
+    Ok((start_us, end_us))
 }
 
 fn read_padded<T: Default + Copy>(f: &mut File, file_size: usize) -> std::io::Result<T> {

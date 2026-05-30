@@ -1,6 +1,6 @@
 import { useRef, useState, useEffect } from 'react';
 import { CHANNELS } from '../types/sunshine';
-import UPlotCanvas from './UPlotCanvas';
+import UPlotCanvas, { type ReplayRange } from './UPlotCanvas';
 
 const SERIES_COLORS = [
   'oklch(.82 .14 168)',
@@ -21,11 +21,12 @@ interface Props {
   onToggle:     (key: string) => void;
   headTimeUs:   number;
   requestLive:  number;
+  replayRange?: ReplayRange | null;
   onCursorMove: (us: number | null) => void;
   onLiveChange: (live: boolean) => void;
 }
 
-export default function GraphPanel({ selected, onToggle, headTimeUs, requestLive, onCursorMove, onLiveChange }: Props) {
+export default function GraphPanel({ selected, onToggle, headTimeUs, requestLive, replayRange, onCursorMove, onLiveChange }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ w: 600, h: 400 });
 
@@ -58,6 +59,7 @@ export default function GraphPanel({ selected, onToggle, headTimeUs, requestLive
           height={size.h}
           headTimeUs={headTimeUs}
           requestLive={requestLive}
+          replayRange={replayRange}
           onCursorMove={onCursorMove}
           onLiveChange={onLiveChange}
         />

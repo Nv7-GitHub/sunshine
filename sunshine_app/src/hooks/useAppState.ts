@@ -3,6 +3,8 @@ import { listen } from '@tauri-apps/api/event';
 import { invoke } from '@tauri-apps/api/core';
 import { LiveUpdate, SourceStatus, Mode } from '../types/sunshine';
 
+export interface ReplayRange { startUs: number; endUs: number }
+
 export function useAppState() {
   const [mode,          setModeState]    = useState<Mode>(0);
   const [liveUpdate,    setLiveUpdate]   = useState<LiveUpdate | null>(null);
@@ -10,6 +12,7 @@ export function useAppState() {
   const [loggingActive, setLogging]      = useState(false);
   const [logPath,       setLogPath]      = useState('');
   const [rxRssi,        setRxRssi]       = useState<number>(-127);
+  const [replayRange,   setReplayRange]  = useState<ReplayRange | null>(null);
 
   useEffect(() => {
     const unsub1 = listen<LiveUpdate>('live_update',    e => setLiveUpdate(e.payload)).catch(() => {});
@@ -39,6 +42,17 @@ export function useAppState() {
     setLogging(false);
   }, []);
 
+  const loadReplay = useCallback(async (path: string) => {
+    const result = await invoke<{ start_us: number; end_us: number }>('load_replay', { path });
+    setReplayRange({ startUs: result.start_us, endUs: result.end_us });
+    setLiveUpdate(null); // clear stale live data
+  }, []);
+
+  const stopSource = useCallback(() => {
+    invoke('stop_source');
+    setReplayRange(null);
+  }, []);
+
   return { mode, setMode, liveUpdate, sourceStatus, loggingActive, logPath,
-           enableLogging, disableLogging, rxRssi };
+           enableLogging, disableLogging, rxRssi, replayRange, loadReplay, stopSource };
 }

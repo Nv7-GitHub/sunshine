@@ -119,14 +119,16 @@ function ControlsViz({ inputRef }: { inputRef: RefObject<InputState> }) {
 }
 
 interface Props {
-  mode:         Mode;
-  setMode:      (m: Mode) => void;
-  sourceStatus: SourceStatus;
-  liveUpdate:   LiveUpdate | null;
-  inputRef:     RefObject<InputState>;
+  mode:           Mode;
+  setMode:        (m: Mode) => void;
+  sourceStatus:   SourceStatus;
+  liveUpdate:     LiveUpdate | null;
+  inputRef:       RefObject<InputState>;
+  loadReplay:     (path: string) => Promise<void>;
+  stopSource:     () => void;
 }
 
-export default function DriverStation({ mode, setMode, sourceStatus, liveUpdate, inputRef }: Props) {
+export default function DriverStation({ mode, setMode, sourceStatus, liveUpdate, inputRef, loadReplay, stopSource }: Props) {
   const [tab, setTab]               = useState<'live' | 'replay' | 'sim'>('live');
   const [ports, setPorts]           = useState<string[]>([]);
   const [port, setPort]             = useState('');
@@ -248,9 +250,11 @@ export default function DriverStation({ mode, setMode, sourceStatus, liveUpdate,
                   <span>Schema v{replayMeta.schema_version}</span>
                 </div>
                 {sourceStatus.kind === 'Replay' ? (
-                  <button className="conn-btn danger" onClick={() => invoke('stop_source')}>Stop</button>
+                  <button className="conn-btn danger" onClick={stopSource}>Close</button>
                 ) : (
-                  <button className="conn-btn" onClick={() => invoke('start_replay', { path: replayPath })}>Play</button>
+                  <button className="conn-btn" onClick={async () => {
+                    try { await loadReplay(replayPath); } catch { /* ignore */ }
+                  }}>Load</button>
                 )}
               </>
             )}
@@ -260,7 +264,7 @@ export default function DriverStation({ mode, setMode, sourceStatus, liveUpdate,
         {tab === 'sim' && (
           <>
             {sourceStatus.kind === 'Sim' ? (
-              <button className="conn-btn danger" onClick={() => invoke('stop_source')}>Stop Simulation</button>
+              <button className="conn-btn danger" onClick={stopSource}>Stop Simulation</button>
             ) : (
               <button className="conn-btn" onClick={() => { invoke('start_simulation'); setMode(1); }}>Start Simulation</button>
             )}

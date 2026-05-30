@@ -20,7 +20,8 @@ export default function App() {
   const toggle = (key: string) =>
     setSelected(prev => prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key]);
 
-  const headTimeUs = state.liveUpdate?.time_us ?? 0;
+  // In replay mode, use 0 so the graph's live-scroll extrapolation is disabled.
+  const headTimeUs = state.sourceStatus.kind === 'Replay' ? 0 : (state.liveUpdate?.time_us ?? 0);
 
   return (
     <div className="app">
@@ -41,6 +42,7 @@ export default function App() {
         onToggle={toggle}
         headTimeUs={headTimeUs}
         requestLive={liveRequest}
+        replayRange={state.replayRange}
         onCursorMove={setCursorUs}
         onLiveChange={setIsGraphLive}
       />
@@ -50,6 +52,8 @@ export default function App() {
         sourceStatus={state.sourceStatus}
         liveUpdate={state.liveUpdate}
         inputRef={inputRef}
+        loadReplay={state.loadReplay}
+        stopSource={state.stopSource}
       />
     </div>
   );

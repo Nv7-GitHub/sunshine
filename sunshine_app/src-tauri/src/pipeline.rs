@@ -4,7 +4,6 @@ use crate::protocol::TelemetryFrame;
 use crate::replay::{LogMetadata, read_frame, read_metadata};
 use std::fs::File;
 use std::io::{Seek, SeekFrom};
-use std::path::PathBuf;
 
 #[derive(Clone, Default)]
 pub struct DataPoint {
@@ -25,6 +24,8 @@ pub struct Pipeline {
     pub logger:    Option<LogWriter>,
     pub source:    SourceKind,
     history_log:   Option<LogMetadata>,
+    /// Pre-computed DataPoints for Replay mode; populated by load_replay_cache.
+    replay_cache:  Vec<DataPoint>,
     frame_count:   u32,
     hw_epoch_us:   u64,
     last_hw_us:    u32,
@@ -45,6 +46,7 @@ impl Pipeline {
             logger: None,
             source: SourceKind::None,
             history_log: None,
+            replay_cache: Vec::new(),
             frame_count: 0,
             hw_epoch_us: 0,
             last_hw_us: 0,
@@ -96,7 +98,83 @@ impl Pipeline {
     }
 
     pub fn set_history_log(&mut self, meta: Option<LogMetadata>) {
+        if meta.is_none() { self.replay_cache.clear(); }
         self.history_log = meta;
+    }
+
+    /// Pre-compute every DataPoint for a replay file upfront so graph queries
+    /// are O(log n) binary searches instead of full linear re-runs each time.
+    pub fn load_replay_cache(&mut self, meta: &LogMetadata) {
+        let mut file = match File::open(&meta.path) {
+            Ok(f) => f,
+            Err(_) => return,
+        };
+        let _ = file.seek(SeekFrom::Start(meta.header_size));
+
+        let mut replay_state = SunshineState::default();
+        state_init(&mut replay_state);
+        let mut epoch_us:   u64 = 0;
+        let mut last_hw_us: u32 = 0;
+
+        let cap = meta.frame_count as usize * meta.num_inputs as usize;
+        let mut cache: Vec<DataPoint> = Vec::with_capacity(cap);
+
+        for _ in 0..meta.frame_count {
+            let (frame, _) = match read_frame(&mut file, meta) {
+                Ok(f) => f,
+                Err(_) => break,
+            };
+            for input in frame.inputs.iter() {
+                let hw = input.time_us;
+                if hw < last_hw_us && (last_hw_us - hw) > 0x8000_0000 {
+                    epoch_us += 0x1_0000_0000;
+                }
+                last_hw_us = hw;
+                let time_us = epoch_us + hw as u64;
+                let vars = brain_step(input, &mut replay_state);
+                cache.push(DataPoint {
+                    time_us,
+                    input:    *input,
+                    hw_state: frame.state,
+                    vars,
+                    rep_theta_offset: replay_state.theta_offset,
+                });
+            }
+        }
+
+        self.replay_cache = cache;
+    }
+
+    fn ring_oldest_us(&self) -> Option<u64> {
+        if self.ring_len == 0 { return None; }
+        let idx = (self.ring_head + RING_CAP - self.ring_len) % RING_CAP;
+        Some(self.ring[idx].time_us)
+    }
+
+    /// Write all ring-buffered data to the given LogWriter, grouped into
+    /// frames of INPUTS_PER_FRAME.  Called when logging is enabled mid-session
+    /// so the log file starts with a complete history.
+    pub fn backfill_log_from_ring(&self, logger: &mut LogWriter) {
+        use crate::protocol::INPUTS_PER_FRAME;
+        if self.ring_len < INPUTS_PER_FRAME { return; }
+
+        let start_idx = (self.ring_head + RING_CAP - self.ring_len) % RING_CAP;
+        // Only write complete frames; the last partial group will be captured by the next
+        // ingest_frame call so we don't write zero-padded inputs with broken time_us=0.
+        let complete_frames = self.ring_len / INPUTS_PER_FRAME;
+        let mut frame_id: u32 = 0;
+
+        for f in 0..complete_frames {
+            let chunk_start = f * INPUTS_PER_FRAME;
+            let mut inputs = [SunshineInput::default(); INPUTS_PER_FRAME];
+            for i in 0..INPUTS_PER_FRAME {
+                inputs[i] = self.ring[(start_idx + chunk_start + i) % RING_CAP].input;
+            }
+            let first = &self.ring[(start_idx + chunk_start) % RING_CAP];
+            let last  = &self.ring[(start_idx + chunk_start + INPUTS_PER_FRAME - 1) % RING_CAP];
+            let _ = logger.write_frame(frame_id, &first.hw_state, &inputs, &last.vars);
+            frame_id += 1;
+        }
     }
 
     pub fn get_graph_data(
@@ -106,15 +184,33 @@ impl Pipeline {
         end_us:     u64,
         max_points: u32,
     ) -> Vec<(u64, f32)> {
-        if let Some(path) = self.active_log_path() {
-            if let Some(data) = self.get_graph_data_from_log_path(&path, channel, start_us, end_us, max_points) {
+        // Replay mode with pre-loaded cache: O(log n) binary search, no file I/O.
+        if self.source == SourceKind::Replay && !self.replay_cache.is_empty() {
+            return get_graph_data_from_slice(&self.replay_cache, channel, start_us, end_us, max_points);
+        }
+
+        // Replay mode without cache (e.g. cache failed to load): fall back to file scan.
+        if let Some(meta) = self.history_log.clone() {
+            if let Some(data) = self.get_graph_data_from_log_meta(&meta, channel, start_us, end_us, max_points) {
                 return data;
             }
         }
 
-        if let Some(meta) = self.history_log.clone() {
-            if let Some(data) = self.get_graph_data_from_log_meta(&meta, channel, start_us, end_us, max_points) {
-                return data;
+        // Live / sim: use in-memory ring for recent data.
+        // If the requested window starts before the oldest ring entry the user has
+        // scrolled back past the ring; fall back to the active log file (slower but correct).
+        let oldest = self.ring_oldest_us();
+        if let Some(oldest_t) = oldest {
+            if start_us < oldest_t {
+                let log_path = self.logger.as_ref().map(|l| l.path().clone());
+                if let Some(path) = log_path {
+                    if let Some(logger) = self.logger.as_mut() { let _ = logger.flush(); }
+                    if let Ok(meta) = read_metadata(&path) {
+                        if let Some(data) = self.get_graph_data_from_log_meta(&meta, channel, start_us, end_us, max_points) {
+                            return data;
+                        }
+                    }
+                }
             }
         }
 
@@ -140,24 +236,6 @@ impl Pipeline {
         }
 
         downsample_min_max(raw, max_points)
-    }
-
-    fn active_log_path(&mut self) -> Option<PathBuf> {
-        let logger = self.logger.as_mut()?;
-        let _ = logger.flush();
-        Some(logger.path().clone())
-    }
-
-    fn get_graph_data_from_log_path(
-        &self,
-        path:       &PathBuf,
-        channel:    &str,
-        start_us:   u64,
-        end_us:     u64,
-        max_points: u32,
-    ) -> Option<Vec<(u64, f32)>> {
-        let meta = read_metadata(path).ok()?;
-        self.get_graph_data_from_log_meta(&meta, channel, start_us, end_us, max_points)
     }
 
     fn get_graph_data_from_log_meta(
@@ -242,6 +320,25 @@ impl Pipeline {
             if v.is_finite() { Some(v) } else { None }
         }).collect()
     }
+}
+
+fn get_graph_data_from_slice(
+    data:       &[DataPoint],
+    channel:    &str,
+    start_us:   u64,
+    end_us:     u64,
+    max_points: u32,
+) -> Vec<(u64, f32)> {
+    if data.is_empty() { return vec![]; }
+    let accessor = channel_accessor(channel);
+    // Binary search to the first point >= start_us
+    let lo = data.partition_point(|dp| dp.time_us < start_us);
+    let raw: Vec<(u64, f32)> = data[lo..]
+        .iter()
+        .take_while(|dp| dp.time_us <= end_us)
+        .map(|dp| (dp.time_us, accessor(dp)))
+        .collect();
+    downsample_min_max(raw, max_points)
 }
 
 fn downsample_min_max(raw: Vec<(u64, f32)>, max_points: u32) -> Vec<(u64, f32)> {

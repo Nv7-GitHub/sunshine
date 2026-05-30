@@ -98,6 +98,35 @@ pub fn open_replay(path: String) -> Result<serde_json::Value, String> {
     }))
 }
 
+/// Load a replay file: pre-compute all DataPoints upfront (so graph queries are
+/// instantaneous) and return the full time range so the frontend can position
+/// the graph over the entire file.
+#[tauri::command]
+pub fn load_replay(path: String, state: State<'_, AppState>, app: AppHandle) -> Result<serde_json::Value, String> {
+    let path_buf = std::path::PathBuf::from(&path);
+    let meta     = read_metadata(&path_buf).map_err(|e| e.to_string())?;
+    let (start_us, end_us) = crate::replay::log_time_range(&meta).map_err(|e| e.to_string())?;
+
+    {
+        let mut pipe = state.pipeline.lock();
+        pipe.source = SourceKind::Replay;
+        pipe.set_history_log(Some(meta.clone()));
+        pipe.load_replay_cache(&meta);
+    }
+
+    let _ = app.emit("source_status", serde_json::json!({
+        "kind": "Replay", "detail": meta.label.clone()
+    }));
+
+    Ok(serde_json::json!({
+        "label":          meta.label,
+        "frame_count":    meta.frame_count,
+        "schema_version": meta.schema_version,
+        "start_us":       start_us,
+        "end_us":         end_us,
+    }))
+}
+
 #[tauri::command]
 pub async fn start_simulation(state: State<'_, AppState>, app: AppHandle) -> Result<(), ()> {
     let pipeline  = state.pipeline.clone();
@@ -129,6 +158,8 @@ pub async fn start_simulation(state: State<'_, AppState>, app: AppHandle) -> Res
                 (ctrl.ctrl_x, ctrl.ctrl_y, ctrl.ctrl_theta, ctrl.ctrl_throttle, ctrl.mode)
             };
 
+            let frame_initial_state = replay_state; // snapshot before this batch
+
             let mut inputs = [SunshineInput::default(); INPUTS_PER_FRAME];
             for slot in inputs.iter_mut() {
                 let mut input = sim.tick(&prev_vars);
@@ -142,9 +173,10 @@ pub async fn start_simulation(state: State<'_, AppState>, app: AppHandle) -> Res
                 *slot = input;
             }
 
+            // Use the pre-batch state so hw_state == replayed state when viewed
             let telem = TelemetryFrame {
                 frame_id: 0,
-                state:    replay_state,
+                state:    frame_initial_state,
                 inputs,
             };
             {
@@ -165,65 +197,14 @@ pub async fn start_simulation(state: State<'_, AppState>, app: AppHandle) -> Res
     Ok(())
 }
 
-#[tauri::command]
-pub async fn start_replay(path: String, state: State<'_, AppState>, app: AppHandle) -> Result<(), String> {
-    use crate::replay::{read_metadata, read_frame};
-    use std::fs::File;
-    use std::io::{Seek, SeekFrom};
-
-    let path_buf = std::path::PathBuf::from(&path);
-    let meta     = read_metadata(&path_buf).map_err(|e| e.to_string())?;
-
-    let pipeline  = state.pipeline.clone();
-    let stop_flag = state.sim_stop.clone();
-    stop_flag.store(false, Ordering::Relaxed);
-
-    let _ = app.emit("source_status", serde_json::json!({
-        "kind": "Replay", "detail": "Playing"
-    }));
-
-    {
-        let mut pipe = state.pipeline.lock();
-        pipe.source = SourceKind::Replay;
-        pipe.set_history_log(Some(meta.clone()));
-    }
-
-    tokio::spawn(async move {
-        let mut f = match File::open(&meta.path) {
-            Ok(f) => f,
-            Err(_) => return,
-        };
-        let _ = f.seek(SeekFrom::Start(meta.header_size));
-
-        for _ in 0..meta.frame_count {
-            if stop_flag.load(Ordering::Relaxed) { break; }
-
-            match read_frame(&mut f, &meta) {
-                Ok((telem, _vars)) => {
-                    let update = {
-                        let mut pipe = pipeline.lock();
-                        pipe.ingest_frame(&telem);
-                        build_live_update(&telem)
-                    };
-                    let _ = app.emit("live_update", update);
-                }
-                Err(_) => break,
-            }
-
-            tokio::time::sleep(tokio::time::Duration::from_millis(20)).await;
-        }
-
-        let _ = app.emit("source_status", serde_json::json!({
-            "kind": "Disconnected", "detail": ""
-        }));
-    });
-
-    Ok(())
-}
 
 #[tauri::command]
 pub fn stop_source(state: State<'_, AppState>) {
-    state.pipeline.lock().source = SourceKind::None;
+    {
+        let mut pipe = state.pipeline.lock();
+        pipe.source = SourceKind::None;
+        pipe.set_history_log(None); // clears replay_cache too
+    }
     state.sim_stop.store(true, Ordering::Relaxed);
     force_disabled(&state);
 }
@@ -262,9 +243,11 @@ pub fn enable_logging(label: String, state: State<'_, AppState>) -> Result<Strin
     let dir  = dirs::document_dir().unwrap_or_default().join("sunshine_logs");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let path = make_log_path(&dir, &label);
-    let writer = LogWriter::new(path.clone(), &label, 0).map_err(|e| e.to_string())?;
+    let mut writer = LogWriter::new(path.clone(), &label, 0).map_err(|e| e.to_string())?;
     let mut pipe = state.pipeline.lock();
     pipe.set_history_log(None);
+    // Backfill any data already in the ring so the log starts with full history.
+    pipe.backfill_log_from_ring(&mut writer);
     pipe.logger = Some(writer);
     Ok(path.to_string_lossy().to_string())
 }
