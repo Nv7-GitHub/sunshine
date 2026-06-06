@@ -4,7 +4,7 @@
 // ── Brain MAC address ────────────────────────────────────────────────────────
 // Fill in the actual MAC from the brain's WiFi STA interface.
 // Run `WiFi.macAddress()` on brain to read it.
-static const uint8_t BRAIN_MAC[6] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00}; // TODO: fill in after bringup
+static const uint8_t BRAIN_MAC[6] = {0x10, 0xB4, 0x1D, 0xED, 0x4C, 0x68};
 
 // ── Timing constants ─────────────────────────────────────────────────────────
 static constexpr uint32_t CTRL_TX_INTERVAL_US    = 2000;    // 500 Hz
