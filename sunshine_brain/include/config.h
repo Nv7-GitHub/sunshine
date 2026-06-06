@@ -34,7 +34,7 @@
 static constexpr float BATT_ADC_SCALE = (3.3f / 4095.0f) * 3.0f;
 
 // ── LED ───────────────────────────────────────────────────────────────────────
-#define PIN_LED          2
+#define PIN_LED          38
 
 // ── Timing ────────────────────────────────────────────────────────────────────
 static constexpr uint32_t LOOP_INTERVAL_US   = 1000;  // 1 kHz
