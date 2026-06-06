@@ -44,7 +44,7 @@ Mag is LIS3MDL
 - IO18: MAG_CS
 - IO21: MAG_INT
 
-There is an LED connected that can be PWMed. It's connected to the gate of a low side switch so you drive it high to turn on the LEDs.
+There is an LED connected to IO38 that can be PWMed. It's connected to the gate of a low side switch so you drive it high to turn on the LEDs.
 
 IO7 is connected with a voltage divider (2kohm high, one kohm low) to the battery positive terminal
 
