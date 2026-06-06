@@ -12,20 +12,30 @@
 // Bidirectional is enabled so eRPM telemetry is available on the same wire.
 // Motor magnet count uses library default (14) — adjust to match actual motors if known.
 
-static DShotRMT dshot_left (PIN_DSHOT_LEFT,  DSHOT600, true);
-static DShotRMT dshot_right(PIN_DSHOT_RIGHT, DSHOT600, true);
+// AM32 auto-detects bidirectional DShot from the inverted signal.
+// DSHOT_BIDIRECTIONAL is set in config.h — 1 enables eRPM telemetry.
+static DShotRMT dshot_left (PIN_DSHOT_LEFT,  DSHOT300, DSHOT_BIDIRECTIONAL);
+static DShotRMT dshot_right(PIN_DSHOT_RIGHT, DSHOT300, DSHOT_BIDIRECTIONAL);
 
 static float erpm_left_val  = 0.0f;
 static float erpm_right_val = 0.0f;
 
+static char dshot_err[64];
+const char *dshot_last_error(void) { return dshot_err; }
+
 bool dshot_init(void) {
     dshot_result_t res_l = dshot_left.begin();
     dshot_result_t res_r = dshot_right.begin();
+    snprintf(dshot_err, sizeof(dshot_err), "L=%s(%d) R=%s(%d)",
+        res_l.success ? "OK" : "FAIL", res_l.result_code,
+        res_r.success ? "OK" : "FAIL", res_r.result_code);
     if (!res_l.success || !res_r.success) return false;
 
-    // Arming sequence: send disarm (0) for 300 ms so ESC recognises the controller.
-    for (int i = 0; i < 300; i++) {
-        dshot_left .sendThrottle(0);
+    // After ESP32 reset the DShot pin glitches, causing AM32 to lock up in
+    // protocol-detection. Send ~150ms of motor-stop frames so AM32 sees a
+    // clean DShot stream and completes its arm handshake before loop() runs.
+    for (int i = 0; i < 150; i++) {
+        dshot_left.sendThrottle(0);
         dshot_right.sendThrottle(0);
         delay(1);
     }
@@ -39,9 +49,40 @@ void dshot_send(uint16_t left, uint16_t right) {
     if (telem_l.success) erpm_left_val  = (float)telem_l.erpm;
     if (telem_r.success) erpm_right_val = (float)telem_r.erpm;
 
-    dshot_left .sendThrottle(left);
-    dshot_right.sendThrottle(right);
+    dshot_result_t res_l = dshot_left .sendThrottle(left);
+    dshot_result_t res_r = dshot_right.sendThrottle(right);
+
+    static uint32_t err_count = 0;
+    if (!res_l.success || !res_r.success) {
+        if (err_count < 10)
+            Serial.printf("DSHOT ERR L=%d(%d) R=%d(%d)\n",
+                res_l.success, res_l.result_code,
+                res_r.success, res_r.result_code);
+        err_count++;
+    }
 }
 
 float dshot_erpm_left(void)  { return erpm_left_val;  }
 float dshot_erpm_right(void) { return erpm_right_val; }
+
+extern volatile uint32_t g_dshot_rx_cb_count;
+extern volatile uint32_t g_dshot_rx_sym_last;
+extern volatile uint32_t g_dshot_rx_crc_ok;
+extern volatile uint32_t g_dshot_rx_crc_fail;
+
+void dshot_print_telem_debug(void) {
+    dshot_result_t tl = dshot_left.getTelemetry();
+    dshot_result_t tr = dshot_right.getTelemetry();
+    Serial.printf("TELEM L: success=%d code=%d erpm=%u  R: success=%d code=%d erpm=%u\n",
+        tl.success, tl.result_code, tl.erpm,
+        tr.success, tr.result_code, tr.erpm);
+    Serial.printf("RX ISR: fired=%lu last_sym=%lu crc_ok=%lu crc_fail=%lu\n",
+        g_dshot_rx_cb_count, g_dshot_rx_sym_last, g_dshot_rx_crc_ok, g_dshot_rx_crc_fail);
+}
+
+void dshot_dump_rx_frames(void) {
+    Serial.println("LEFT motor last RX frame:");
+    dshot_left.dumpLastRxFrame();
+    Serial.println("RIGHT motor last RX frame:");
+    dshot_right.dumpLastRxFrame();
+}

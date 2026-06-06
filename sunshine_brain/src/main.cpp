@@ -47,12 +47,12 @@ void setup() {
 
     // ── Level 2+ : init DShot ─────────────────────────────────────────────────
 #if FEATURE_DSHOT
-    if (!dshot_init()) error_halt(3, "DShot arming failed");
+    if (!dshot_init()) error_halt(3, dshot_last_error());
 #endif
 
 #if BRINGUP_LEVEL == 2
     // Bringup 2: interactive DShot test only
-    Serial.println("BRINGUP 2: DShot test. l <val>, r <val>, s, t");
+    Serial.println("BRINGUP 2: DShot test. l <val>, r <val>, s, t, d  (wait ~0.5s for ESC to arm)");
     return;
 #endif
 
@@ -108,6 +108,10 @@ void loop() {
             } else if (cmd[0] == 't') {
                 Serial.printf("eRPM L=%.0f R=%.0f\n",
                               dshot_erpm_left(), dshot_erpm_right());
+            } else if (cmd[0] == 'd') {
+                dshot_print_telem_debug();
+            } else if (cmd[0] == 'v') {
+                dshot_dump_rx_frames();
             }
         } else if (ci < 31) { cmd[ci++] = c; }
     }

@@ -22,6 +22,8 @@
 // ── DShot ─────────────────────────────────────────────────────────────────────
 #define PIN_DSHOT_LEFT   4   // S1
 #define PIN_DSHOT_RIGHT  5   // S2
+// AM32 2.x auto-detects BDSHOT from the inverted CRC — no configurator setting needed.
+#define DSHOT_BIDIRECTIONAL  1
 
 // ── Battery ADC ───────────────────────────────────────────────────────────────
 // ADC1_CH7 = GPIO7, connected to battery voltage divider (R_high=2k, R_low=1k)
@@ -49,8 +51,8 @@ static constexpr uint32_t CTRL_WATCHDOG_MS   = 500;   // no ctrl → DISABLED
 // should produce CCW body rotation (viewed from above). If the robot spins CW,
 // flip both. If only one motor spins the wrong way, flip that one.
 // See BRINGUP.md Level 2 for the verification procedure.
-static constexpr bool MOTOR_LEFT_INVERT  = false;
-static constexpr bool MOTOR_RIGHT_INVERT = false;
+static constexpr bool MOTOR_LEFT_INVERT  = true;
+static constexpr bool MOTOR_RIGHT_INVERT = true;
 
 // ── ESP-NOW ───────────────────────────────────────────────────────────────────
 static constexpr uint8_t ESPNOW_CHANNEL      = 1;
