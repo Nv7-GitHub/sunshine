@@ -31,6 +31,12 @@ static constexpr float BATT_ADC_SCALE = (3.3f / 4095.0f) * 3.0f;
 
 // ── LED ───────────────────────────────────────────────────────────────────────
 #define PIN_LED          38
+// Full brightness in production; 5% during bringup so it's not blinding at a desk.
+#if BRINGUP_LEVEL == 0
+#  define LED_DUTY  255
+#else
+#  define LED_DUTY  13
+#endif
 
 // ── Timing ────────────────────────────────────────────────────────────────────
 static constexpr uint32_t LOOP_INTERVAL_US   = 1000;  // 1 kHz

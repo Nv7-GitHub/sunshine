@@ -91,7 +91,7 @@ void nav_control_task(void *) {
         dshot_send(motor_cmd(vars.dshot_cmd_left,  MOTOR_LEFT_INVERT),
                    motor_cmd(vars.dshot_cmd_right, MOTOR_RIGHT_INVERT));
 #endif
-        digitalWrite(PIN_LED, vars.led_on ? HIGH : LOW);
+        analogWrite(PIN_LED, vars.led_on ? LED_DUTY : 0);
 
         // ── 6. Push to telemetry ring buffer ──────────────────────────────
 #if FEATURE_TELEMETRY
