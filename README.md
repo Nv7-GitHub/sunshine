@@ -46,7 +46,7 @@ Mag is LIS3MDL
 
 There is an LED connected that can be PWMed. It's connected to the gate of a low side switch so you drive it high to turn on the LEDs.
 
-IO39 is connected with a voltage divider (2kohm high, one kohm low) to the battery positive terminal
+IO7 is connected with a voltage divider (2kohm high, one kohm low) to the battery positive terminal
 
 IO4 is the signal pin of the left wheel ESC (S1), IO5 is for the right wheel ESC (S2). Use bidirectional DShot 600.
 
