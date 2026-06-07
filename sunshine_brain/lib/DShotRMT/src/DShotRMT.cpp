@@ -9,28 +9,31 @@
 #include "DShotRMT.h"
 #include <cstring>
 
-static uint16_t decodeErpmTelemetry(uint16_t raw)
+static bool isErpmTelemetryFrame(uint16_t raw)
 {
     if (raw == 0x0FFFU)
     {
-        return 0;
+        return false;
     }
 
-    uint16_t shift       = (raw >> 9U) & 0x7U;
-    uint16_t period_base = raw & 0x1FFU;
+    // Per EDT spec, eRPM frames are those with either a zero low nibble or
+    // bit 8 set. Other values are extended telemetry frames.
+    return ((raw & 0x000FU) == 0U) || ((raw & 0x0100U) != 0U);
+}
 
-    if (period_base == 0U)
+static uint32_t decodeErpmTelemetry(uint16_t raw)
+{
+    if (!isErpmTelemetryFrame(raw))
     {
         return 0;
     }
 
-    uint32_t period_us = static_cast<uint32_t>(period_base) << shift;
-    if (period_us == 0U)
-    {
-        return 0;
-    }
-
-    return static_cast<uint16_t>(60000000UL / period_us);
+    uint16_t exponent = (raw >> 9U) & 0x7U;
+    uint16_t mantissa = raw & 0x1FFU;
+    uint32_t period = static_cast<uint32_t>(mantissa) << exponent;
+    if (period == 0) return 0;
+    // Period is in µs; convert to eRPM (electrical rotations per minute).
+    return 60000000U / period;
 }
 
 // Constructor with GPIO number
@@ -392,8 +395,10 @@ void DShotRMT::_preCalculateRMTTicks()
 // using the same decode table Betaflight/ArduPilot use.
 uint16_t IRAM_ATTR DShotRMT::_decodeDShotFrame(const rmt_symbol_word_t *symbols, size_t num_symbols) const
 {
-    const uint32_t unit = 20; // ticks per bit (2.5 µs at 8 MHz)
-    const uint32_t half = 10; // for round-to-nearest
+    // Use the full bit period (not T1H) for run-length quantization.
+    // DShot300: 3.33µs × 8MHz = ~26 ticks; DShot600: 1.67µs × 8MHz = ~13 ticks.
+    const uint32_t unit = _rmt_ticks.bit_length_ticks ? _rmt_ticks.bit_length_ticks : 26;
+    const uint32_t half = unit / 2;
 
     auto decode_value = [](uint32_t candidate) -> uint16_t {
         static const uint32_t decode[32] = {
@@ -484,11 +489,18 @@ uint16_t IRAM_ATTR DShotRMT::_decodeDShotFrame(const rmt_symbol_word_t *symbols,
 
         for (uint32_t candidate : candidates)
         {
-            uint16_t erpm = decode_value(candidate);
-            if (erpm != DSHOT_NULL_PACKET)
+            uint16_t raw_frame = decode_value(candidate);
+            if (raw_frame == DSHOT_NULL_PACKET)
             {
-                return erpm;
+                continue;
             }
+
+            if (!isErpmTelemetryFrame(raw_frame))
+            {
+                continue;
+            }
+
+            return raw_frame;
         }
     }
 
@@ -552,9 +564,13 @@ dshot_result_t DShotRMT::_sendPacket(const dshot_packet_t &packet)
         // while passing every valid GCR pulse.
         // signal_range_max_ns: any idle > this ends the frame. 30 µs covers the
         // worst-case GCR run (multiple consecutive 0-bits at DSHOT300 speed).
+        // signal_range_max_ns raised to 100µs so that the inter-frame gap
+        // between TX end and the ESC starting its response (~25-30µs for
+        // DShot300) does not prematurely terminate the RX capture.
+        // The longest valid GCR run is 3 bits = ~10µs, well below 100µs.
         static const rmt_receive_config_t rmt_rx_config = {
             .signal_range_min_ns = 200,
-            .signal_range_max_ns = 30000,
+            .signal_range_max_ns = 100000,
         };
 
         if (rmt_receive(_rmt_rx_channel, _rx_symbols, sizeof(_rx_symbols), &rmt_rx_config) != DSHOT_OK)
@@ -714,11 +730,14 @@ bool IRAM_ATTR DShotRMT::_on_rx_done(rmt_channel_handle_t rmt_rx_channel, const 
 void DShotRMT::dumpLastRxFrame() const
 {
     uint8_t n = _last_rx_num_symbols.load();
-    Serial.printf("  RX frame: %u symbols\n", n);
+    uint32_t unit = _rmt_ticks.bit_length_ticks ? _rmt_ticks.bit_length_ticks : 26;
+    Serial.printf("  RX frame: %u symbols  unit=%lu ticks/bit\n", n, unit);
     for (uint8_t i = 0; i < n; i++) {
-        Serial.printf("  [%2u] d0=%4u l0=%u  d1=%4u l1=%u\n", i,
-            _last_rx_snapshot[i].duration0, _last_rx_snapshot[i].level0,
-            _last_rx_snapshot[i].duration1, _last_rx_snapshot[i].level1);
+        uint32_t d0 = _last_rx_snapshot[i].duration0;
+        uint32_t d1 = _last_rx_snapshot[i].duration1;
+        Serial.printf("  [%2u] d0=%4lu(l%u=%.1fb)  d1=%4lu(l%u=%.1fb)\n", i,
+            d0, _last_rx_snapshot[i].level0, (float)d0/unit,
+            d1, _last_rx_snapshot[i].level1, (float)d1/unit);
     }
 }
 

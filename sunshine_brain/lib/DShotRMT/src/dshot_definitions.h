@@ -179,8 +179,8 @@ typedef struct dshot_result
 {
     bool success;
     dshot_msg_code_t result_code;          // Specific error or success code.
-    uint16_t erpm;                         // Derived electrical RPM.
-    uint16_t motor_rpm;                    // Motor RPM if telemetry is successful and magnet count is known.
+    uint32_t erpm;                         // Derived electrical RPM.
+    uint32_t motor_rpm;                    // Motor RPM if telemetry is successful and magnet count is known.
     dshot_telemetry_data_t telemetry_data; // Full telemetry data if available
     bool telemetry_available;              // Flag to indicate if telemetry_data is valid
 } dshot_result_t;

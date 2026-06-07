@@ -23,18 +23,11 @@ static float erpm_right_val = 0.0f;
 static char dshot_err[64];
 const char *dshot_last_error(void) { return dshot_err; }
 
-static uint16_t dshot_packed_period_us(uint16_t packed) {
-    // Bidirectional DShot encodes the period as [eee][mmmmmmmmm].
-    // The real electrical RPM is 60e6 / period_us.
+static uint32_t dshot_normalized_erpm(uint16_t packed) {
+    // Bidirectional DShot encodes eRPM as [eee][mmmmmmmmm].
     uint16_t exponent = (packed >> 9) & 0x7;
     uint16_t value    = packed & 0x1FF;
-    return static_cast<uint16_t>(value << exponent);
-}
-
-static uint16_t dshot_packed_erpm(uint16_t packed) {
-    uint16_t period_us = dshot_packed_period_us(packed);
-    if (period_us == 0) return 0;
-    return static_cast<uint16_t>(60000000UL / period_us);
+    return static_cast<uint32_t>(value << exponent);
 }
 
 bool dshot_init(void) {
@@ -87,20 +80,18 @@ extern volatile uint32_t g_dshot_rx_crc_fail;
 void dshot_print_telem_debug(void) {
     dshot_result_t tl = dshot_left.getTelemetry();
     dshot_result_t tr = dshot_right.getTelemetry();
-    Serial.printf("TELEM L: success=%d code=%d erpm=%u  R: success=%d code=%d erpm=%u\n",
+    Serial.printf("TELEM L: success=%d code=%d erpm=%lu  R: success=%d code=%d erpm=%lu\n",
         tl.success, tl.result_code, tl.erpm,
         tr.success, tr.result_code, tr.erpm);
-    Serial.printf("PACKED L: raw=0x%03x exp=%u mant=0x%03x period_us=%u erpm=%u  R: raw=0x%03x exp=%u mant=0x%03x period_us=%u erpm=%u\n",
+    Serial.printf("PACKED L: raw=0x%03x exp=%u mant=0x%03x norm_erpm=%lu  R: raw=0x%03x exp=%u mant=0x%03x norm_erpm=%lu\n",
         tl.telemetry_available ? tl.telemetry_data.rpm : 0,
         tl.telemetry_available ? ((tl.telemetry_data.rpm >> 9) & 0x7) : 0,
         tl.telemetry_available ? (tl.telemetry_data.rpm & 0x1FF) : 0,
-        tl.telemetry_available ? dshot_packed_period_us(tl.telemetry_data.rpm) : 0,
-        tl.telemetry_available ? dshot_packed_erpm(tl.telemetry_data.rpm) : 0,
+        tl.telemetry_available ? dshot_normalized_erpm(tl.telemetry_data.rpm) : 0,
         tr.telemetry_available ? tr.telemetry_data.rpm : 0,
         tr.telemetry_available ? ((tr.telemetry_data.rpm >> 9) & 0x7) : 0,
         tr.telemetry_available ? (tr.telemetry_data.rpm & 0x1FF) : 0,
-        tr.telemetry_available ? dshot_packed_period_us(tr.telemetry_data.rpm) : 0,
-        tr.telemetry_available ? dshot_packed_erpm(tr.telemetry_data.rpm) : 0);
+        tr.telemetry_available ? dshot_normalized_erpm(tr.telemetry_data.rpm) : 0);
     Serial.printf("RX ISR: fired=%lu last_sym=%lu crc_ok=%lu crc_fail=%lu\n",
         g_dshot_rx_cb_count, g_dshot_rx_sym_last, g_dshot_rx_crc_ok, g_dshot_rx_crc_fail);
 }

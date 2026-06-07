@@ -125,7 +125,7 @@ inline void printDShotResult(dshot_result_t &result, Stream &output = Serial)
     // Print telemetry data if available
     if (result.success && (result.erpm > 0 || result.motor_rpm > 0))
     {
-        output.printf(" | eRPM: %u, Motor RPM: %u", result.erpm, result.motor_rpm);
+        output.printf(" | eRPM: %lu, Motor RPM: %lu", result.erpm, result.motor_rpm);
     }
 
     output.println();
@@ -159,7 +159,7 @@ inline void printDShotInfo(DShotRMT &dshot_rmt, Stream &output = Serial)
 
             if (telemetry_result.erpm > 0 || telemetry_result.motor_rpm > 0)
             {
-                output.printf("  eRPM: %u, Motor RPM: %u\n", telemetry_result.erpm, telemetry_result.motor_rpm);
+                output.printf("  eRPM: %lu, Motor RPM: %lu\n", telemetry_result.erpm, telemetry_result.motor_rpm);
             }
 
             if (telemetry_result.telemetry_available)
