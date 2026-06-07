@@ -8,6 +8,7 @@
 
 #include "config.h"
 #include "protocol.h"
+#include "led_status.h"
 #include <Arduino.h>
 #include <WiFi.h>
 #include <esp_now.h>
@@ -27,6 +28,10 @@ void setup() {
     Serial.begin(921600);
     delay(100);
 
+    // ── Status LED (safe before WiFi/ESP-NOW) ─────────────────────────────────
+    led_status_init();
+    led_status_set(LED_BOOT);
+
     // ── WiFi: STA mode, fixed channel 1, max power ────────────────────────────
     WiFi.mode(WIFI_STA);
     WiFi.disconnect();
@@ -36,9 +41,11 @@ void setup() {
     // ── ESP-NOW init ──────────────────────────────────────────────────────────
     if (esp_now_init() != ESP_OK) {
         Serial.println("ESP-NOW init failed");
-        // Blink fast indefinitely to signal error
+        // Latch red blink on the status LED to signal a fatal error.
+        led_status_set(LED_ERROR);
         while (true) {
-            delay(100);
+            led_status_tick();
+            delay(5);
         }
     }
     esp_now_set_pmk((uint8_t *)"pmk_not_used_000"); // required call; PMK unused

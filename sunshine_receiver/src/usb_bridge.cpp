@@ -3,6 +3,7 @@
 
 #include "config.h"
 #include "protocol.h"
+#include "led_status.h"
 #include <esp_now.h>
 #include <esp_timer.h>
 #include <freertos/FreeRTOS.h>
@@ -149,6 +150,7 @@ void usb_bridge_tick(void) {
     static uint8_t telem_buf[ESPNOW_TELEM_SIZE];
     if (espnow_rx_get_frame(telem_buf, 0)) {  // non-blocking
         usb_send_telem(telem_buf);
+        led_status_note_frame();  // activity blip on the status LED
     }
 
     // TX: heartbeat at 10 Hz
@@ -173,4 +175,13 @@ void usb_bridge_tick(void) {
         else
             usb_send_status(STATUS_BRAIN_DISCONNECTED, "Brain disconnected");
     }
+
+    // ── Status LED ────────────────────────────────────────────────────────────
+    // "host active" = a host packet within the last 1.5 s (the full control
+    // watchdog is 3 s; we use a tighter window so the LED reflects live control).
+    bool host_active = (esp_timer_get_time() - last_host_rx_us) < 1500000;
+    if (!connected)        led_status_set(LED_NO_BRAIN);
+    else if (!host_active) led_status_set(LED_BRAIN_IDLE);
+    else                   led_status_set(LED_LIVE);
+    led_status_tick();
 }
