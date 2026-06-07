@@ -116,7 +116,16 @@ void nav_control_task(void *) {
                    motor_cmd(vars.dshot_cmd_right, MOTOR_RIGHT_INVERT));
         dshot_us = micros() - t_d0;
 #endif
-        analogWrite(PIN_LED, vars.led_on ? LED_DUTY : 0);
+        // Disabled: slow breathe so the board is visibly alive but clearly idle.
+        // Active: binary heading flash from sunshine_step.
+        if (in.mode == SUNSHINE_MODE_DISABLED) {
+            uint32_t phase = (uint32_t)millis() % 2000;          // 2-s period
+            float t = phase < 1000 ? phase * 0.001f              // 0→1 ramp
+                                   : (2000 - phase) * 0.001f;    // 1→0 ramp
+            analogWrite(PIN_LED, (uint8_t)(t * t * LED_DUTY));   // squared for a softer fade
+        } else {
+            analogWrite(PIN_LED, vars.led_on ? LED_DUTY : 0);
+        }
 
         // ── 6. Push to telemetry ring buffer ──────────────────────────────
 #if FEATURE_TELEMETRY
