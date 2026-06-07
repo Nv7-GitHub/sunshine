@@ -2,7 +2,7 @@
 
 use crate::{AppState,
             serial::{SerialConnection, list_ports as serial_list},
-            protocol::{ReceiverFrame, encode_ctrl, TelemetryFrame, INPUTS_PER_FRAME, STATUS_BRAIN_CONNECTED},
+            protocol::{ReceiverFrame, encode_ctrl, TelemetryFrame, INPUTS_PER_FRAME},
             pipeline::SourceKind,
             replay::{read_metadata, read_frame},
             simulation::Simulation,
@@ -49,11 +49,11 @@ pub async fn connect_serial(
     let pipeline = state.pipeline.clone();
     let app2     = app.clone();
 
-    // Arm the live source + replay seed BEFORE opening the port, so the very
-    // first frame (which arrives on the reader thread) is seeded — no race.
+    // Mark the source Live BEFORE opening the port, so frames arriving on the
+    // reader thread are re-anchored from their transmitted state (ingest_frame).
     {
         let mut pipe = state.pipeline.lock();
-        pipe.begin_live();          // seed replay_state from the first frame
+        pipe.begin_live();
         pipe.set_history_log(None);
     }
 
@@ -67,11 +67,9 @@ pub async fn connect_serial(
                 let _ = app2.emit("live_update", update);
             }
             ReceiverFrame::Status { code, message } => {
-                // Brain (re)connected → its filter state has reset, so re-seed
-                // replay from the next frame's transmitted state.
-                if code == STATUS_BRAIN_CONNECTED {
-                    pipeline.lock().arm_live_seed();
-                }
+                // Brain (re)connect/disconnect is surfaced to the UI. Replay
+                // re-anchors from every packet's state (see ingest_frame), so a
+                // brain reset needs no special handling here.
                 let _ = app2.emit("source_status", serde_json::json!({
                     "kind": "Live", "code": code, "detail": message
                 }));

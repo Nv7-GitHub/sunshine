@@ -29,9 +29,6 @@ pub struct Pipeline {
     frame_count:   u32,
     hw_epoch_us:   u64,
     last_hw_us:    u32,
-    /// One-shot: seed `replay_state` from the next ingested frame's transmitted
-    /// state. Set when a live session begins or the brain reconnects.
-    live_seed_pending: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -53,7 +50,6 @@ impl Pipeline {
             frame_count: 0,
             hw_epoch_us: 0,
             last_hw_us: 0,
-            live_seed_pending: false,
         }
     }
 
@@ -67,14 +63,18 @@ impl Pipeline {
 
     pub fn ingest_frame(&mut self, frame: &TelemetryFrame) {
         // README: every telemetry packet carries the brain's filter state at the
-        // start of its inputs precisely so the host can *initialise* replay and
-        // run forward from there. Seed once per live session (re-armed on brain
-        // reconnect). Without this, replay starts from a zeroed state, which
-        // shows up as a constant heading offset vs the real state and an omega
-        // spike at connect while the Kalman filter converges from zero.
-        if self.live_seed_pending {
+        // start of its inputs, precisely so the host can re-seed replay from it
+        // and reconstruct the 1 kHz detail between packets. For a LIVE source we
+        // re-anchor on every packet. This makes the replayed state a faithful
+        // high-res copy of the real 50 Hz state instead of a free-running
+        // estimate that slowly diverges: dead-reckoned theta has no absolute
+        // reference at rest (omega < mag threshold → no mag update), and host vs
+        // ESP32 float math differs in the last ULPs — both integrate into drift.
+        // Re-anchoring also self-heals dropped packets (the next one re-seeds).
+        // (File replay deliberately free-runs from the first frame — see
+        // load_replay_cache — so changed code can be validated across a whole log.)
+        if self.source == SourceKind::Live {
             self.replay_state = frame.state;
-            self.live_seed_pending = false;
         }
 
         let mut last_vars = SunshineVars::default();
@@ -112,17 +112,10 @@ impl Pipeline {
         self.replay_state = *state;
     }
 
-    /// Begin a live session. The next ingested frame seeds `replay_state` from
-    /// its transmitted state (see `ingest_frame`).
+    /// Begin a live session. `ingest_frame` re-anchors `replay_state` from each
+    /// packet's transmitted state while the source is Live (see `ingest_frame`).
     pub fn begin_live(&mut self) {
         self.source = SourceKind::Live;
-        self.live_seed_pending = true;
-    }
-
-    /// Re-arm the one-shot replay-state seed. Call after a brain reconnect,
-    /// where the brain's filter state has reset to its init values.
-    pub fn arm_live_seed(&mut self) {
-        self.live_seed_pending = true;
     }
 
     pub fn set_history_log(&mut self, meta: Option<LogMetadata>) {
@@ -228,11 +221,18 @@ impl Pipeline {
         }
 
         // Live / sim: use in-memory ring for recent data.
-        // If the requested window starts before the oldest ring entry the user has
-        // scrolled back past the ring; fall back to the active log file (slower but correct).
+        // Only fall back to the active log file when the ring has actually
+        // WRAPPED (ring_len == RING_CAP) and the requested window starts before
+        // the oldest retained sample — i.e. the data was genuinely evicted.
+        // Without the wrap check this fires during the first ~5 min (and any
+        // time the window is wider than the data collected so far), and since a
+        // logger is present it re-reads + re-replays the entire growing log on
+        // every 10 Hz fetch, per channel → the multi-second logging freeze.
+        // When the ring hasn't wrapped, oldest_t is the start of all data, so
+        // the ring already holds everything the window can show.
         let oldest = self.ring_oldest_us();
         if let Some(oldest_t) = oldest {
-            if start_us < oldest_t {
+            if start_us < oldest_t && self.ring_len == RING_CAP {
                 let log_path = self.logger.as_ref().map(|l| l.path().clone());
                 if let Some(path) = log_path {
                     if let Some(logger) = self.logger.as_mut() { let _ = logger.flush(); }

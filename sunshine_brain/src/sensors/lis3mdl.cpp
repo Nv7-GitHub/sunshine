@@ -9,7 +9,9 @@ static Adafruit_LIS3MDL mag;
 
 bool lis3mdl_init(void) {
     hspi.begin(PIN_MAG_SCK, PIN_MAG_MISO, PIN_MAG_MOSI, PIN_MAG_CS);
-    if (!mag.begin_SPI(PIN_MAG_CS, &hspi)) return false;
+    // 5 MHz SPI (LIS3MDL max is 10 MHz). Default was 1 MHz → ~90 µs per read in
+    // the 1 kHz loop; 5 MHz cuts the transfer time ~5×.
+    if (!mag.begin_SPI(PIN_MAG_CS, &hspi, 5000000)) return false;
     // LIS3MDL_DATARATE_155_HZ internally sets UHP mode (per Adafruit library:
     // setDataRate calls setPerformanceMode(UHP) before writing the ODR bits).
     // Do NOT call setPerformanceMode separately — it would clobber the ODR

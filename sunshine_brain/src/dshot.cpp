@@ -14,8 +14,11 @@
 
 // AM32 auto-detects bidirectional DShot from the inverted signal.
 // DSHOT_BIDIRECTIONAL is set in config.h — 1 enables eRPM telemetry.
-static DShotRMT dshot_left (PIN_DSHOT_LEFT,  DSHOT300, DSHOT_BIDIRECTIONAL);
-static DShotRMT dshot_right(PIN_DSHOT_RIGHT, DSHOT300, DSHOT_BIDIRECTIONAL);
+// DSHOT600 halves the bit period vs DSHOT300, so each TX frame (and the
+// blocking rmt_tx_wait_all_done in _sendPacket) is ~2× shorter — important for
+// keeping the 1 kHz nav loop under budget while still capturing eRPM telemetry.
+static DShotRMT dshot_left (PIN_DSHOT_LEFT,  DSHOT600, DSHOT_BIDIRECTIONAL);
+static DShotRMT dshot_right(PIN_DSHOT_RIGHT, DSHOT600, DSHOT_BIDIRECTIONAL);
 
 static float erpm_left_val  = 0.0f;
 static float erpm_right_val = 0.0f;

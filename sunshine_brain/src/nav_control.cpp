@@ -29,10 +29,14 @@ void nav_control_task(void *) {
         SunshineInput in = {};
         in.time_us = t_start;
 
-        // Sensors
+        // Sensors  (per-section µs timing — see PROF print at end of loop)
+        uint32_t t_a0 = micros();
         Adxl375Sample a = adxl375_read();
+        uint32_t t_a1 = micros();
         MagSample     m = lis3mdl_read();
+        uint32_t t_a2 = micros();
         float         v = batt_read_v();
+        uint32_t t_a3 = micros();
 
         in.accel_x = a.x;
         in.accel_y = a.y;
@@ -53,7 +57,9 @@ void nav_control_task(void *) {
         in.erpm_right = sunshine_f32_to_f16(dshot_erpm_right());
 
         // ── 2. Control inputs (from telemetry task via mutex) ───────────
+        uint32_t t_c0 = micros();
         CtrlInputs ctrl = telemetry_get_ctrl();
+        uint32_t t_c1 = micros();
 
         // Safety watchdog: if no control packet for CTRL_WATCHDOG_MS, force DISABLED
         uint32_t now_ms = (uint32_t)millis();
@@ -79,7 +85,9 @@ void nav_control_task(void *) {
         // with its POST-step state would seed replay one sample ahead of the
         // inputs, so replayed θ/ω would not match the real trajectory.
         SunshineState pre_step_state = kf_state;
+        uint32_t t_s0 = micros();
         sunshine_step(&in, &kf_state, &vars);
+        uint32_t t_s1 = micros();
 
         // Safety: zero DShot at bringup levels 3-4
 #if FORCE_DSHOT_ZERO
@@ -88,14 +96,17 @@ void nav_control_task(void *) {
 #endif
 
         // ── 5. Apply outputs ──────────────────────────────────────────────
+        uint32_t dshot_us = 0;
 #if FEATURE_DSHOT
         auto motor_cmd = [](float cmd, bool invert) -> uint16_t {
             if (cmd == 0.0f) return 0;  // preserve disarm
             float c = invert ? (2.0f * DSHOT_NEUTRAL - cmd) : cmd;
             return (uint16_t)(c + 0.5f);
         };
+        uint32_t t_d0 = micros();
         dshot_send(motor_cmd(vars.dshot_cmd_left,  MOTOR_LEFT_INVERT),
                    motor_cmd(vars.dshot_cmd_right, MOTOR_RIGHT_INVERT));
+        dshot_us = micros() - t_d0;
 #endif
         analogWrite(PIN_LED, vars.led_on ? LED_DUTY : 0);
 
@@ -107,6 +118,26 @@ void nav_control_task(void *) {
 
         // ── 7. Timing: busy-wait until next 1 kHz tick ───────────────────
         uint32_t elapsed = micros() - t_start;
+
+        // ── PROF (diagnostic): per-section + total + worst-case-over-window.
+        // Printed inside the idle budget (before the busy-wait) so it doesn't
+        // itself cause an overrun. `rest` = everything not individually timed
+        // (analogWrite, telemetry_push, overhead, ISR/preemption jitter).
+        // Remove once the 1 kHz budget is comfortably met.
+        {
+            uint32_t adxl_us = t_a1 - t_a0, mag_us = t_a2 - t_a1, batt_us = t_a3 - t_a2;
+            uint32_t ctrl_us = t_c1 - t_c0, step_us = t_s1 - t_s0;
+            uint32_t measured = adxl_us + mag_us + batt_us + ctrl_us + step_us + dshot_us;
+            uint32_t rest_us  = elapsed > measured ? elapsed - measured : 0;
+            static uint32_t mx_total = 0, prof_n = 0;
+            if (elapsed > mx_total) mx_total = elapsed;
+            if (++prof_n % 500 == 0) {
+                Serial.printf("PROF us: adxl=%u mag=%u batt=%u ctrl=%u step=%u dshot=%u rest=%u | total=%u max=%u\n",
+                              adxl_us, mag_us, batt_us, ctrl_us, step_us, dshot_us, rest_us, elapsed, mx_total);
+                mx_total = 0;
+            }
+        }
+
         if (elapsed >= LOOP_INTERVAL_US) {
             overrun_count++;
             t_next = micros();  // re-sync BEFORE printf to exclude print latency

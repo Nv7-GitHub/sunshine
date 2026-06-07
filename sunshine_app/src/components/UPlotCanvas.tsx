@@ -268,7 +268,11 @@ export default function UPlotCanvas({ channels, channelUnits, width, height, hea
         }
       }
 
-      if (nowMs - lastFetchMs >= 100) {
+      // Only poll for new data while live. A scrolled-back view is static, so
+      // re-fetching every 100 ms is wasted work — and with logging active it can
+      // re-read the log file each time. Wheel/zoom and channel changes still
+      // fetch on demand via their own handlers.
+      if (viewRef.current.live && nowMs - lastFetchMs >= 100) {
         lastFetchMs = nowMs;
         fetchRef.current();
       }
