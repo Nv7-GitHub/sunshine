@@ -8,6 +8,7 @@ export default function ConnectionPanel({ sourceStatus }: { sourceStatus: Source
   const [port, setPort]             = useState('');
   const [replayMeta, setReplayMeta] = useState<{ label?: string; frame_count: number; schema_version: number } | null>(null);
   const [replayPath, setReplayPath] = useState('');
+  const isLive = sourceStatus.kind === 'Live';
 
   useEffect(() => {
     invoke<string[]>('list_serial_ports').then(setPorts).catch(() => setPorts([]));
@@ -25,15 +26,21 @@ export default function ConnectionPanel({ sourceStatus }: { sourceStatus: Source
 
       {tab === 'live' && (
         <div className="tab-content">
-          <select value={port} onChange={e => setPort(e.target.value)} className="port-select">
+          <select value={port} onChange={e => setPort(e.target.value)} className="port-select" disabled={isLive}>
             <option value="">Select port…</option>
             {ports.map(p => <option key={p} value={p}>{p}</option>)}
           </select>
-          <button onClick={() => invoke('connect_serial', { port })} disabled={!port} className="btn-connect">
-            Connect
-          </button>
-          <div className={`conn-status ${sourceStatus.kind === 'Live' ? 'connected' : 'disconnected'}`}>
-            {sourceStatus.detail || sourceStatus.kind}
+          {isLive ? (
+            <button onClick={() => invoke('disconnect_serial')} className="btn-stop">
+              Disconnect
+            </button>
+          ) : (
+            <button onClick={() => invoke('connect_serial', { port })} disabled={!port} className="btn-connect">
+              Connect
+            </button>
+          )}
+          <div className={`conn-status ${isLive ? 'connected' : 'disconnected'}`}>
+            {isLive ? '● ' : '○ '}{sourceStatus.detail || (isLive ? 'Connected' : 'Disconnected')}
           </div>
         </div>
       )}

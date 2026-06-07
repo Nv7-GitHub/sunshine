@@ -36,7 +36,13 @@ function fmtElapsed(_u: uPlot, vals: (number | null | undefined)[]): string[] {
   return vals.map(v => {
     if (v == null) return '';
     const s = v / 1_000_000;
-    return s < 60 ? s.toFixed(1) + 's' : (s / 60).toFixed(2) + 'm';
+    // Under a minute: keep fractional seconds so fine zoom stays readable.
+    if (s < 60) return (Number.isInteger(s) ? String(s) : s.toFixed(1)) + 's';
+    // A minute or more: "Xm SSs" (e.g. 1m 23s) instead of a decimal-minute value.
+    const m   = Math.floor(s / 60);
+    const rem = s - m * 60;
+    const remStr = Number.isInteger(rem) ? String(rem) : rem.toFixed(1);
+    return `${m}m ${rem < 10 ? '0' : ''}${remStr}s`;
   });
 }
 

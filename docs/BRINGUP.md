@@ -238,6 +238,8 @@ In the app:
 3. Click **Connect**
 4. Both status indicators (receiver + brain) should turn green within ~5 seconds
 
+The receiver's onboard RGB LED tracks this independently of the app: **red** (no brain) → **amber** (brain up, host silent) → **green** with cyan flicker (full pipeline live). See the *Receiver Status LED Reference* below.
+
 ### Step 5: Verify the full pipeline
 
 Open the graph panel and plot the following channels. Expected behavior at rest on a table:
@@ -372,6 +374,23 @@ See `TUNING.md` for the full drift tuning procedure. Constants are in `sunshine_
 - Robot can be steered to a target location reliably
 
 ---
+
+## Receiver Status LED Reference
+
+The receiver's onboard RGB LED (WS2812 on GPIO48 of the ESP32-S3-DevKitC-1) shows liveness and link state at a glance. All states use a slow "breathing" pulse so a steady, non-pulsing LED means the firmware has hung. Override the pin with `-DSTATUS_LED_PIN=<gpio>` in the receiver's `build_flags` if your board wires the LED elsewhere (some early revisions use GPIO38).
+
+| LED | Meaning |
+|-----|---------|
+| Dim **white** breathe | Booting / idle — powered up, nothing connected yet |
+| **Red** blink (fast, 150 ms) | Fatal error — ESP-NOW init failed (firmware halted) |
+| **Red** breathe | Alive, but no brain telemetry arriving (brain off, out of range, or wrong MAC/channel) |
+| **Amber** breathe | Brain link up, but the host app is silent (>1.5 s) — control is disabled / safe |
+| **Green** breathe | Brain + host both live; a brighter **cyan flash** pulses on each telemetry frame forwarded to the host |
+
+Quick bringup checks:
+- Plug in the receiver with nothing else on → expect **red breathe** (waiting for brain).
+- Power the brain → LED goes **amber** within ~200 ms once frames arrive.
+- Connect the host app (Level 3, Step 4) → LED goes **green** and flickers cyan as telemetry flows. This mirrors the two green status indicators in the app.
 
 ## Reconnect Behaviour Reference
 

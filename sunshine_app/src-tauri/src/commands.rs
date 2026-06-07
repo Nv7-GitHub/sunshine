@@ -2,7 +2,7 @@
 
 use crate::{AppState,
             serial::{SerialConnection, list_ports as serial_list},
-            protocol::{ReceiverFrame, encode_ctrl, TelemetryFrame, INPUTS_PER_FRAME},
+            protocol::{ReceiverFrame, encode_ctrl, TelemetryFrame, INPUTS_PER_FRAME, STATUS_BRAIN_CONNECTED},
             pipeline::SourceKind,
             replay::{read_metadata, read_frame},
             simulation::Simulation,
@@ -49,6 +49,14 @@ pub async fn connect_serial(
     let pipeline = state.pipeline.clone();
     let app2     = app.clone();
 
+    // Arm the live source + replay seed BEFORE opening the port, so the very
+    // first frame (which arrives on the reader thread) is seeded — no race.
+    {
+        let mut pipe = state.pipeline.lock();
+        pipe.begin_live();          // seed replay_state from the first frame
+        pipe.set_history_log(None);
+    }
+
     let conn = SerialConnection::open(&port, Arc::new(move |frame| {
         match frame {
             ReceiverFrame::Telemetry(telem) => {
@@ -59,6 +67,11 @@ pub async fn connect_serial(
                 let _ = app2.emit("live_update", update);
             }
             ReceiverFrame::Status { code, message } => {
+                // Brain (re)connected → its filter state has reset, so re-seed
+                // replay from the next frame's transmitted state.
+                if code == STATUS_BRAIN_CONNECTED {
+                    pipeline.lock().arm_live_seed();
+                }
                 let _ = app2.emit("source_status", serde_json::json!({
                     "kind": "Live", "code": code, "detail": message
                 }));
@@ -70,20 +83,29 @@ pub async fn connect_serial(
         }
     })).map_err(|e| e)?;
 
-    {
-        let mut pipe = state.pipeline.lock();
-        pipe.source = SourceKind::Live;
-        pipe.set_history_log(None);
-    }
     *state.serial_conn.lock() = Some(conn);
     force_disabled(&state);
+
+    // Reflect the connection immediately. The receiver only sends a brain
+    // status frame on *change*, so if the brain is already up we'd otherwise
+    // never get a source_status and the UI would stay on "Disconnected".
+    let _ = app.emit("source_status", serde_json::json!({
+        "kind": "Live", "detail": format!("Connected · {}", port)
+    }));
     Ok(())
 }
 
 #[tauri::command]
-pub fn disconnect_serial(state: State<'_, AppState>) {
+pub fn disconnect_serial(state: State<'_, AppState>, app: AppHandle) {
     force_disabled(&state);
     *state.serial_conn.lock() = None;
+    {
+        let mut pipe = state.pipeline.lock();
+        pipe.source = SourceKind::None;
+    }
+    let _ = app.emit("source_status", serde_json::json!({
+        "kind": "Disconnected", "detail": ""
+    }));
 }
 
 #[tauri::command]

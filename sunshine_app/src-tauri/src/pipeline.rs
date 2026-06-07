@@ -29,6 +29,9 @@ pub struct Pipeline {
     frame_count:   u32,
     hw_epoch_us:   u64,
     last_hw_us:    u32,
+    /// One-shot: seed `replay_state` from the next ingested frame's transmitted
+    /// state. Set when a live session begins or the brain reconnects.
+    live_seed_pending: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -50,6 +53,7 @@ impl Pipeline {
             frame_count: 0,
             hw_epoch_us: 0,
             last_hw_us: 0,
+            live_seed_pending: false,
         }
     }
 
@@ -62,6 +66,17 @@ impl Pipeline {
     }
 
     pub fn ingest_frame(&mut self, frame: &TelemetryFrame) {
+        // README: every telemetry packet carries the brain's filter state at the
+        // start of its inputs precisely so the host can *initialise* replay and
+        // run forward from there. Seed once per live session (re-armed on brain
+        // reconnect). Without this, replay starts from a zeroed state, which
+        // shows up as a constant heading offset vs the real state and an omega
+        // spike at connect while the Kalman filter converges from zero.
+        if self.live_seed_pending {
+            self.replay_state = frame.state;
+            self.live_seed_pending = false;
+        }
+
         let mut last_vars = SunshineVars::default();
         for input in frame.inputs.iter() {
             let time_us = self.expand_hw_time(input.time_us);
@@ -97,6 +112,19 @@ impl Pipeline {
         self.replay_state = *state;
     }
 
+    /// Begin a live session. The next ingested frame seeds `replay_state` from
+    /// its transmitted state (see `ingest_frame`).
+    pub fn begin_live(&mut self) {
+        self.source = SourceKind::Live;
+        self.live_seed_pending = true;
+    }
+
+    /// Re-arm the one-shot replay-state seed. Call after a brain reconnect,
+    /// where the brain's filter state has reset to its init values.
+    pub fn arm_live_seed(&mut self) {
+        self.live_seed_pending = true;
+    }
+
     pub fn set_history_log(&mut self, meta: Option<LogMetadata>) {
         if meta.is_none() { self.replay_cache.clear(); }
         self.history_log = meta;
@@ -119,11 +147,14 @@ impl Pipeline {
         let cap = meta.frame_count as usize * meta.num_inputs as usize;
         let mut cache: Vec<DataPoint> = Vec::with_capacity(cap);
 
+        let mut seeded = false;
         for _ in 0..meta.frame_count {
             let (frame, _) = match read_frame(&mut file, meta) {
                 Ok(f) => f,
                 Err(_) => break,
             };
+            // Initialise replay from the first logged state (see ingest_frame).
+            if !seeded { replay_state = frame.state; seeded = true; }
             for input in frame.inputs.iter() {
                 let hw = input.time_us;
                 if hw < last_hw_us && (last_hw_us - hw) > 0x8000_0000 {
@@ -256,8 +287,11 @@ impl Pipeline {
         let mut epoch_us = 0u64;
         let mut last_hw_us = 0u32;
 
+        let mut seeded = false;
         for _ in 0..meta.frame_count {
             let (frame, _) = read_frame(&mut file, meta).ok()?;
+            // Initialise replay from the first logged state (see ingest_frame).
+            if !seeded { replay_state = frame.state; seeded = true; }
             for input in frame.inputs.iter() {
                 let hw = input.time_us;
                 if hw < last_hw_us && (last_hw_us - hw) > 0x8000_0000 {

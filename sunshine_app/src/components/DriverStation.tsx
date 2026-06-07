@@ -206,15 +206,21 @@ export default function DriverStation({ mode, setMode, sourceStatus, liveUpdate,
 
         {tab === 'live' && (
           <>
-            <select className="conn-select" value={port} onChange={e => setPort(e.target.value)}>
+            <select className="conn-select" value={port} onChange={e => setPort(e.target.value)} disabled={isLive}>
               <option value="">Select port…</option>
               {ports.map(p => <option key={p} value={p}>{p}</option>)}
             </select>
-            <button className="conn-btn" onClick={() => invoke('connect_serial', { port })} disabled={!port}>
-              Connect
-            </button>
+            {isLive ? (
+              <button className="conn-btn danger" onClick={() => invoke('disconnect_serial')}>
+                Disconnect
+              </button>
+            ) : (
+              <button className="conn-btn" onClick={() => invoke('connect_serial', { port })} disabled={!port}>
+                Connect
+              </button>
+            )}
             <div className={`conn-status ${isLive ? 'connected' : 'disconnected'}`}>
-              {sourceStatus.detail || sourceStatus.kind}
+              {isLive ? '● ' : '○ '}{sourceStatus.detail || (isLive ? 'Connected' : 'Disconnected')}
             </div>
           </>
         )}

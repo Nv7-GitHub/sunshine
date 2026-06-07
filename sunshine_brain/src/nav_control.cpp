@@ -73,6 +73,12 @@ void nav_control_task(void *) {
         in.dshot_right_q = dshot_quantize(vars.dshot_cmd_right);
 
         // ── 4. sunshine_step ──────────────────────────────────────────────
+        // Snapshot the filter state BEFORE stepping. Telemetry must carry the
+        // "state at the start" of each frame (README → Replay): the host seeds
+        // replay from frame.state and then re-runs the inputs. Pairing an input
+        // with its POST-step state would seed replay one sample ahead of the
+        // inputs, so replayed θ/ω would not match the real trajectory.
+        SunshineState pre_step_state = kf_state;
         sunshine_step(&in, &kf_state, &vars);
 
         // Safety: zero DShot at bringup levels 3-4
@@ -95,7 +101,7 @@ void nav_control_task(void *) {
 
         // ── 6. Push to telemetry ring buffer ──────────────────────────────
 #if FEATURE_TELEMETRY
-        bool pushed = telemetry_push(&in, &kf_state);
+        bool pushed = telemetry_push(&in, &pre_step_state);
         if (!pushed) vars.loop_overrun = true;  // set if current tick overran OR telem ring full
 #endif
 

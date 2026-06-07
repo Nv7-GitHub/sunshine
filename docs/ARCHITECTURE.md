@@ -31,11 +31,13 @@ sunshine/
 ├── sunshine_receiver/      # PlatformIO ESP32-S3 receiver firmware
 │   ├── include/
 │   │   ├── config.h        # Brain MAC, timing constants
-│   │   └── protocol.h      # USB frame format, encode/decode, FrameParser
+│   │   ├── protocol.h      # USB frame format, encode/decode, FrameParser
+│   │   └── led_status.h    # Onboard RGB status LED API
 │   └── src/
-│       ├── main.cpp        # WiFi+ESP-NOW init, task creation
+│       ├── main.cpp        # WiFi+ESP-NOW init, task creation, LED init
 │       ├── espnow_rx.cpp   # Core 0: ESP-NOW RX callback, double buffer
-│       └── usb_bridge.cpp  # Core 1: USB TX/RX, 500 Hz ESP-NOW TX, watchdog
+│       ├── usb_bridge.cpp  # Core 1: USB TX/RX, 500 Hz ESP-NOW TX, watchdog, LED drive
+│       └── led_status.cpp  # Non-blocking WS2812 status LED (link/liveness)
 ├── sunshine_app/           # Tauri + React host application
 │   ├── src-tauri/src/
 │   │   ├── ffi.rs          # sunshine_core C bindings + safe wrappers (unsafe here only)
@@ -117,6 +119,7 @@ SIMULATION: simulation.rs ticks at 1 kHz → SunshineInput
 - **Core 0**: ESP-NOW RX callback stores brain telemetry in a double buffer, signals Core 1.
 - **Core 1**: USB bridge loop — forwards telemetry frames to host, reads USB from host, forwards controls to brain. A FreeRTOS-independent `esp_timer` at 500 Hz sends the latest control packet to the brain regardless of host cadence.
 - **Host watchdog**: If no USB packet from host for 3 seconds, forces `mode=DISABLED` before sending to brain.
+- **Status LED**: The onboard WS2812 RGB LED (`led_status.cpp`, GPIO48 via `RGB_BUILTIN`) shows liveness and link state — driven each bridge tick from the existing brain-connected and host-watchdog signals. See the LED legend in `BRINGUP.md`.
 
 ### `sunshine_app` — Tauri backend
 
