@@ -6,22 +6,29 @@ import { LiveUpdate, SourceStatus, Mode } from '../types/sunshine';
 export interface ReplayRange { startUs: number; endUs: number }
 
 export function useAppState() {
-  const [mode,          setModeState]    = useState<Mode>(0);
-  const [liveUpdate,    setLiveUpdate]   = useState<LiveUpdate | null>(null);
-  const [sourceStatus,  setSourceStatus] = useState<SourceStatus>({ kind: 'Disconnected', detail: '' });
-  const [loggingActive, setLogging]      = useState(false);
-  const [logPath,       setLogPath]      = useState('');
-  const [rxRssi,        setRxRssi]       = useState<number>(-127);
-  const [replayRange,   setReplayRange]  = useState<ReplayRange | null>(null);
+  const [mode,           setModeState]    = useState<Mode>(0);
+  const [liveUpdate,     setLiveUpdate]   = useState<LiveUpdate | null>(null);
+  const [sourceStatus,   setSourceStatus] = useState<SourceStatus>({ kind: 'Disconnected', detail: '' });
+  const [loggingActive,  setLogging]      = useState(false);
+  const [logPath,        setLogPath]      = useState('');
+  const [rxRssi,         setRxRssi]       = useState<number>(-127);
+  const [replayRange,    setReplayRange]  = useState<ReplayRange | null>(null);
+  // null = not loading; 0–1 = loading fraction
+  const [replayProgress, setReplayProgress] = useState<number | null>(null);
 
   useEffect(() => {
-    const unsub1 = listen<LiveUpdate>('live_update',    e => setLiveUpdate(e.payload)).catch(() => {});
-    const unsub2 = listen<SourceStatus>('source_status', e => setSourceStatus(e.payload)).catch(() => {});
-    const unsub3 = listen<number>('rx_rssi',            e => setRxRssi(e.payload)).catch(() => {});
+    const unsub1 = listen<LiveUpdate>('live_update',      e => setLiveUpdate(e.payload)).catch(() => {});
+    const unsub2 = listen<SourceStatus>('source_status',  e => setSourceStatus(e.payload)).catch(() => {});
+    const unsub3 = listen<number>('rx_rssi',              e => setRxRssi(e.payload)).catch(() => {});
+    const unsub4 = listen<number>('replay_progress',      e => {
+      const v = e.payload;
+      setReplayProgress(v < 0 ? null : v); // -1 sentinel = done
+    }).catch(() => {});
     return () => {
       unsub1.then(f => typeof f === 'function' && f()).catch(() => {});
       unsub2.then(f => typeof f === 'function' && f()).catch(() => {});
       unsub3.then(f => typeof f === 'function' && f()).catch(() => {});
+      unsub4.then(f => typeof f === 'function' && f()).catch(() => {});
     };
   }, []);
 
@@ -54,5 +61,5 @@ export function useAppState() {
   }, []);
 
   return { mode, setMode, liveUpdate, sourceStatus, loggingActive, logPath,
-           enableLogging, disableLogging, rxRssi, replayRange, loadReplay, stopSource };
+           enableLogging, disableLogging, rxRssi, replayRange, replayProgress, loadReplay, stopSource };
 }

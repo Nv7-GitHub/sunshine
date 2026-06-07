@@ -49,6 +49,10 @@ pub async fn connect_serial(
     let pipeline = state.pipeline.clone();
     let app2     = app.clone();
 
+    // Drop any existing connection first so the port is released before we try
+    // to open it again (e.g. after switching away from live to replay and back).
+    *state.serial_conn.lock() = None;
+
     // Mark the source Live BEFORE opening the port, so frames arriving on the
     // reader thread are re-anchored from their transmitted state (ingest_frame).
     {
@@ -126,11 +130,11 @@ pub fn open_replay(path: String) -> Result<serde_json::Value, String> {
     }))
 }
 
-/// Load a replay file: pre-compute all DataPoints upfront (so graph queries are
-/// instantaneous) and return the full time range so the frontend can position
-/// the graph over the entire file.
+/// Load a replay file: pre-compute all DataPoints (so graph queries are O(log n))
+/// and return the full time range. Emits `replay_progress` (0.0–1.0) events while
+/// building the cache so the UI can show a progress bar.
 #[tauri::command]
-pub fn load_replay(path: String, state: State<'_, AppState>, app: AppHandle) -> Result<serde_json::Value, String> {
+pub async fn load_replay(path: String, state: State<'_, AppState>, app: AppHandle) -> Result<serde_json::Value, String> {
     let path_buf = std::path::PathBuf::from(&path);
     let meta     = read_metadata(&path_buf).map_err(|e| e.to_string())?;
     let (start_us, end_us) = crate::replay::log_time_range(&meta).map_err(|e| e.to_string())?;
@@ -139,12 +143,27 @@ pub fn load_replay(path: String, state: State<'_, AppState>, app: AppHandle) -> 
         let mut pipe = state.pipeline.lock();
         pipe.source = SourceKind::Replay;
         pipe.set_history_log(Some(meta.clone()));
-        pipe.load_replay_cache(&meta);
+        pipe.set_replay_cache(vec![]); // clear stale cache immediately
     }
 
     let _ = app.emit("source_status", serde_json::json!({
         "kind": "Replay", "detail": meta.label.clone()
     }));
+    let _ = app.emit("replay_progress", 0.0f32);
+
+    // Build the cache off the pipeline mutex in a blocking thread.
+    let meta_clone    = meta.clone();
+    let app_clone     = app.clone();
+    let pipeline_arc  = state.pipeline.clone();
+
+    tokio::task::spawn_blocking(move || {
+        let cache = crate::pipeline::build_replay_cache(&meta_clone, |frac| {
+            let _ = app_clone.emit("replay_progress", frac);
+        });
+        pipeline_arc.lock().set_replay_cache(cache);
+    }).await.map_err(|e| e.to_string())?;
+
+    let _ = app.emit("replay_progress", -1.0f32); // sentinel: loading done
 
     Ok(serde_json::json!({
         "label":          meta.label,

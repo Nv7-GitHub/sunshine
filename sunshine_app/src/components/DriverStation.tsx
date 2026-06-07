@@ -220,7 +220,7 @@ export default function DriverStation({ mode, setMode, sourceStatus, liveUpdate,
               </button>
             )}
             <div className={`conn-status ${isLive ? 'connected' : 'disconnected'}`}>
-              {isLive ? '● ' : '○ '}{sourceStatus.detail || (isLive ? 'Connected' : 'Disconnected')}
+              {isLive ? '● ' : '○ '}{isLive ? (sourceStatus.detail || 'Connected') : 'Disconnected'}
             </div>
           </>
         )}

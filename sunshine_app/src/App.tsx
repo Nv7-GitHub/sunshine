@@ -55,6 +55,19 @@ export default function App() {
         loadReplay={state.loadReplay}
         stopSource={state.stopSource}
       />
+      {state.replayProgress !== null && (
+        <div style={{
+          position: 'fixed', bottom: 0, left: 0, right: 0,
+          height: 3, background: 'var(--bg-2)', zIndex: 9999,
+        }}>
+          <div style={{
+            height: '100%',
+            width: `${state.replayProgress * 100}%`,
+            background: 'var(--accent)',
+            transition: 'width 80ms linear',
+          }} />
+        </div>
+      )}
     </div>
   );
 }

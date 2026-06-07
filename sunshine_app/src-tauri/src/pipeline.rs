@@ -112,10 +112,17 @@ impl Pipeline {
         self.replay_state = *state;
     }
 
-    /// Begin a live session. `ingest_frame` re-anchors `replay_state` from each
-    /// packet's transmitted state while the source is Live (see `ingest_frame`).
+    /// Begin a live session. Clears stale ring data and resets timestamp state
+    /// so old frames from a previous session don't bleed into the new one.
+    /// `ingest_frame` re-anchors `replay_state` from each packet's transmitted
+    /// state while the source is Live (see `ingest_frame`).
     pub fn begin_live(&mut self) {
-        self.source = SourceKind::Live;
+        self.source      = SourceKind::Live;
+        self.ring_len    = 0;
+        self.ring_head   = 0;
+        self.hw_epoch_us = 0;
+        self.last_hw_us  = 0;
+        self.frame_count = 0;
     }
 
     pub fn set_history_log(&mut self, meta: Option<LogMetadata>) {
@@ -123,49 +130,7 @@ impl Pipeline {
         self.history_log = meta;
     }
 
-    /// Pre-compute every DataPoint for a replay file upfront so graph queries
-    /// are O(log n) binary searches instead of full linear re-runs each time.
-    pub fn load_replay_cache(&mut self, meta: &LogMetadata) {
-        let mut file = match File::open(&meta.path) {
-            Ok(f) => f,
-            Err(_) => return,
-        };
-        let _ = file.seek(SeekFrom::Start(meta.header_size));
-
-        let mut replay_state = SunshineState::default();
-        state_init(&mut replay_state);
-        let mut epoch_us:   u64 = 0;
-        let mut last_hw_us: u32 = 0;
-
-        let cap = meta.frame_count as usize * meta.num_inputs as usize;
-        let mut cache: Vec<DataPoint> = Vec::with_capacity(cap);
-
-        let mut seeded = false;
-        for _ in 0..meta.frame_count {
-            let (frame, _) = match read_frame(&mut file, meta) {
-                Ok(f) => f,
-                Err(_) => break,
-            };
-            // Initialise replay from the first logged state (see ingest_frame).
-            if !seeded { replay_state = frame.state; seeded = true; }
-            for input in frame.inputs.iter() {
-                let hw = input.time_us;
-                if hw < last_hw_us && (last_hw_us - hw) > 0x8000_0000 {
-                    epoch_us += 0x1_0000_0000;
-                }
-                last_hw_us = hw;
-                let time_us = epoch_us + hw as u64;
-                let vars = brain_step(input, &mut replay_state);
-                cache.push(DataPoint {
-                    time_us,
-                    input:    *input,
-                    hw_state: frame.state,
-                    vars,
-                    rep_theta_offset: replay_state.theta_offset,
-                });
-            }
-        }
-
+    pub fn set_replay_cache(&mut self, cache: Vec<DataPoint>) {
         self.replay_cache = cache;
     }
 
@@ -208,28 +173,22 @@ impl Pipeline {
         end_us:     u64,
         max_points: u32,
     ) -> Vec<(u64, f32)> {
-        // Replay mode with pre-loaded cache: O(log n) binary search, no file I/O.
-        if self.source == SourceKind::Replay && !self.replay_cache.is_empty() {
+        // Replay mode: always use the pre-computed cache. Return [] while the
+        // cache is still being built (spawn_blocking hasn't stored it yet).
+        // NEVER fall back to a file scan here — that would hold the pipeline
+        // mutex for seconds and starve the cache-building thread trying to store
+        // the finished cache (→ freeze).
+        if self.source == SourceKind::Replay {
             return get_graph_data_from_slice(&self.replay_cache, channel, start_us, end_us, max_points);
-        }
-
-        // Replay mode without cache (e.g. cache failed to load): fall back to file scan.
-        if let Some(meta) = self.history_log.clone() {
-            if let Some(data) = self.get_graph_data_from_log_meta(&meta, channel, start_us, end_us, max_points) {
-                return data;
-            }
         }
 
         // Live / sim: use in-memory ring for recent data.
         // Only fall back to the active log file when the ring has actually
         // WRAPPED (ring_len == RING_CAP) and the requested window starts before
         // the oldest retained sample — i.e. the data was genuinely evicted.
-        // Without the wrap check this fires during the first ~5 min (and any
-        // time the window is wider than the data collected so far), and since a
-        // logger is present it re-reads + re-replays the entire growing log on
-        // every 10 Hz fetch, per channel → the multi-second logging freeze.
-        // When the ring hasn't wrapped, oldest_t is the start of all data, so
-        // the ring already holds everything the window can show.
+        // Without the wrap check this fires during the first ~5 min, and since
+        // a logger is present it re-reads + re-replays the entire growing log on
+        // every 10 Hz fetch → multi-second freeze.
         let oldest = self.ring_oldest_us();
         if let Some(oldest_t) = oldest {
             if start_us < oldest_t && self.ring_len == RING_CAP {
@@ -354,6 +313,54 @@ impl Pipeline {
             if v.is_finite() { Some(v) } else { None }
         }).collect()
     }
+}
+
+/// Build the replay cache off the pipeline mutex. Calls `on_progress(0..=1)`
+/// periodically so the caller can forward progress to the UI.
+pub fn build_replay_cache(meta: &LogMetadata, mut on_progress: impl FnMut(f32)) -> Vec<DataPoint> {
+    let mut file = match File::open(&meta.path) {
+        Ok(f) => f,
+        Err(_) => return vec![],
+    };
+    let _ = file.seek(SeekFrom::Start(meta.header_size));
+
+    let mut replay_state = SunshineState::default();
+    state_init(&mut replay_state);
+    let mut epoch_us:   u64 = 0;
+    let mut last_hw_us: u32 = 0;
+
+    let total = meta.frame_count as usize;
+    let cap   = total * meta.num_inputs as usize;
+    let mut cache: Vec<DataPoint> = Vec::with_capacity(cap);
+    let mut seeded = false;
+
+    for i in 0..total {
+        let (frame, _) = match read_frame(&mut file, meta) {
+            Ok(f) => f,
+            Err(_) => break,
+        };
+        if !seeded { replay_state = frame.state; seeded = true; }
+        for input in frame.inputs.iter() {
+            let hw = input.time_us;
+            if hw < last_hw_us && (last_hw_us - hw) > 0x8000_0000 {
+                epoch_us += 0x1_0000_0000;
+            }
+            last_hw_us = hw;
+            let time_us = epoch_us + hw as u64;
+            let vars = brain_step(input, &mut replay_state);
+            cache.push(DataPoint {
+                time_us,
+                input:    *input,
+                hw_state: frame.state,
+                vars,
+                rep_theta_offset: replay_state.theta_offset,
+            });
+        }
+        if i % 200 == 0 || i == total - 1 {
+            on_progress((i + 1) as f32 / total as f32);
+        }
+    }
+    cache
 }
 
 fn get_graph_data_from_slice(

@@ -40,7 +40,7 @@ export default function ConnectionPanel({ sourceStatus }: { sourceStatus: Source
             </button>
           )}
           <div className={`conn-status ${isLive ? 'connected' : 'disconnected'}`}>
-            {isLive ? '● ' : '○ '}{sourceStatus.detail || (isLive ? 'Connected' : 'Disconnected')}
+            {isLive ? '● ' : '○ '}{isLive ? (sourceStatus.detail || 'Connected') : 'Disconnected'}
           </div>
         </div>
       )}
