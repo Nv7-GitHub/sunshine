@@ -395,9 +395,16 @@ void DShotRMT::_preCalculateRMTTicks()
 // using the same decode table Betaflight/ArduPilot use.
 uint16_t IRAM_ATTR DShotRMT::_decodeDShotFrame(const rmt_symbol_word_t *symbols, size_t num_symbols) const
 {
-    // Use the full bit period (not T1H) for run-length quantization.
-    // DShot300: 3.33µs × 8MHz = ~26 ticks; DShot600: 1.67µs × 8MHz = ~13 ticks.
-    const uint32_t unit = _rmt_ticks.bit_length_ticks ? _rmt_ticks.bit_length_ticks : 26;
+    // Bidirectional DShot telemetry is transmitted at 5/4 the command bit rate,
+    // so each GCR bit on the wire lasts only 4/5 of a DShot command bit period.
+    // Quantizing by the command bit period (26 ticks for DShot300) pushes the
+    // 2-vs-3-bit decision boundary out to 2.5*26 = 65 ticks, so real 3-bit runs
+    // (~62 ticks, measured at bringup level 2) decode as 2 bits and corrupt the
+    // frame — the cause of the ~90% CRC-fail rate. The measured GCR bit period
+    // is ~20.5 ticks for DShot300; 4/5 of the command period lands dead-on.
+    // Integer math only: this runs in the RMT RX ISR (no FPU saves there).
+    const uint32_t cmd_ticks = _rmt_ticks.bit_length_ticks ? _rmt_ticks.bit_length_ticks : 26;
+    const uint32_t unit = (cmd_ticks * 4u) / 5u;
     const uint32_t half = unit / 2;
 
     auto decode_value = [](uint32_t candidate) -> uint16_t {
@@ -495,7 +502,13 @@ uint16_t IRAM_ATTR DShotRMT::_decodeDShotFrame(const rmt_symbol_word_t *symbols,
                 continue;
             }
 
-            if (!isErpmTelemetryFrame(raw_frame))
+            // A CRC-valid 0xFFF is the bidirectional "motor stopped / zero eRPM"
+            // sentinel — a real frame, not an error. Accept it so an idle motor
+            // reads as eRPM 0 (getTelemetry maps it to 0) instead of being tallied
+            // as a CRC failure. An un-throttled ESC answers EVERY frame with 0xFFF,
+            // which is why a single spinning motor previously showed a ~50% "fail"
+            // rate — the other channel's valid stopped-frames were counted as fails.
+            if (raw_frame != 0x0FFFU && !isErpmTelemetryFrame(raw_frame))
             {
                 continue;
             }

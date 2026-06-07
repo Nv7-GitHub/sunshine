@@ -31,6 +31,18 @@ static uint32_t dshot_normalized_erpm(uint16_t packed) {
 }
 
 bool dshot_init(void) {
+    // Force AM32 to reset its arm/protocol state, mimicking a brain power-cycle.
+    // On a warm brain reset (reflash) the ESC stays powered and the 5.1k pull-up
+    // holds the inverted-DShot line HIGH (idle) the whole time, so the ESC never
+    // sees a disconnect and stays latched/unresponsive (no telemetry) until it is
+    // physically power-cycled. Powering the brain off drops the line LOW, which IS
+    // what makes the ESC reset and re-arm. Reproduce that here: drive the lines LOW
+    // briefly (a sustained low = "signal lost") before RMT takes over, so the ESC
+    // resets and then re-arms from the zero-throttle burst below — no power-cycle.
+    pinMode(PIN_DSHOT_LEFT,  OUTPUT); digitalWrite(PIN_DSHOT_LEFT,  LOW);
+    pinMode(PIN_DSHOT_RIGHT, OUTPUT); digitalWrite(PIN_DSHOT_RIGHT, LOW);
+    delay(500);
+
     dshot_result_t res_l = dshot_left.begin();
     dshot_result_t res_r = dshot_right.begin();
     snprintf(dshot_err, sizeof(dshot_err), "L=%s(%d) R=%s(%d)",
@@ -38,9 +50,9 @@ bool dshot_init(void) {
         res_r.success ? "OK" : "FAIL", res_r.result_code);
     if (!res_l.success || !res_r.success) return false;
 
-    // After ESP32 reset the DShot pin glitches, causing AM32 to lock up in
-    // protocol-detection. Send ~150ms of motor-stop frames so AM32 sees a
-    // clean DShot stream and completes its arm handshake before loop() runs.
+    // Send ~150ms of zero-throttle frames so AM32 completes its arm handshake
+    // before loop() runs (same as a clean cold boot, now that the LOW pulse above
+    // has reset the ESC).
     for (int i = 0; i < 150; i++) {
         dshot_left.sendThrottle(0);
         dshot_right.sendThrottle(0);
