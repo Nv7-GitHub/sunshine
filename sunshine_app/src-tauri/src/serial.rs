@@ -1,9 +1,9 @@
 use crate::protocol::{FrameParser, ReceiverFrame, parse_frame};
 use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use parking_lot::Mutex;
-use std::io::Write;
+use std::io::{self, Write};
 
 pub fn list_ports() -> Vec<String> {
     serialport::available_ports()
@@ -33,28 +33,59 @@ impl SerialConnection {
             .open()
             .map_err(|e| e.to_string())?;
 
-        let port     = Arc::new(Mutex::new(port));
-        let running  = Arc::new(AtomicBool::new(true));
-        let port_rx  = port.clone();
-        let running2 = running.clone();
+        let port          = Arc::new(Mutex::new(port));
+        let running       = Arc::new(AtomicBool::new(true));
+        let port_rx       = port.clone();
+        let running2      = running.clone();
+        let port_name_str = port_name.to_string();
 
         thread::spawn(move || {
             let mut parser = FrameParser::new();
             let mut buf    = [0u8; 1024];
             while running2.load(Ordering::Relaxed) {
-                let n = {
+                let result = {
                     let mut p = port_rx.lock();
-                    p.read(&mut buf).unwrap_or(0)
+                    p.read(&mut buf)
                 };
-                for &byte in &buf[..n] {
-                    if let Some((t, payload)) = parser.feed(byte) {
-                        if let Some(frame) = parse_frame(t, &payload) {
-                            on_frame(frame);
+                match result {
+                    Ok(0) => {
+                        thread::sleep(Duration::from_millis(1));
+                    }
+                    Ok(n) => {
+                        for &byte in &buf[..n] {
+                            if let Some((t, payload)) = parser.feed(byte) {
+                                if let Some(frame) = parse_frame(t, &payload) {
+                                    on_frame(frame);
+                                }
+                            }
                         }
                     }
-                }
-                if n == 0 {
-                    thread::sleep(Duration::from_millis(1));
+                    Err(e) if e.kind() == io::ErrorKind::TimedOut
+                           || e.kind() == io::ErrorKind::WouldBlock => {
+                        thread::sleep(Duration::from_millis(1));
+                    }
+                    Err(_) => {
+                        // Port dropped — device reset or flash started.
+                        on_frame(ReceiverFrame::SerialLost);
+
+                        // Poll for the port to come back for up to 30 s.
+                        let deadline = Instant::now() + Duration::from_secs(30);
+                        let mut ok = false;
+                        while running2.load(Ordering::Relaxed) && Instant::now() < deadline {
+                            thread::sleep(Duration::from_millis(500));
+                            if let Ok(new_port) = serialport::new(&port_name_str, 921600)
+                                .timeout(Duration::from_millis(10))
+                                .open()
+                            {
+                                *port_rx.lock() = new_port;
+                                parser = FrameParser::new();
+                                on_frame(ReceiverFrame::SerialReconnected);
+                                ok = true;
+                                break;
+                            }
+                        }
+                        if !ok { break; }
+                    }
                 }
             }
         });

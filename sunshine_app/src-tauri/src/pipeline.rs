@@ -410,8 +410,8 @@ fn channel_accessor(channel: &str) -> fn(&DataPoint) -> f32 {
         "hw.kf_theta"           => |dp: &DataPoint| dp.hw_state.kf_theta,
         "hw.kf_omega"           => |dp| dp.hw_state.kf_omega,
         "hw.theta_offset"       => |dp| dp.hw_state.theta_offset,
-        "hw.dshot_left"         => |dp| dp.input.dshot_left_q as f32,
-        "hw.dshot_right"        => |dp| dp.input.dshot_right_q as f32,
+        "hw.dshot_left"         => |dp| dp.input.dshot_left_q  as f32 * (2047.0 / 255.0),
+        "hw.dshot_right"        => |dp| dp.input.dshot_right_q as f32 * (2047.0 / 255.0),
         /* Variables — always host-computed via brain_step */
         "rep.est_theta"         => |dp| dp.vars.est_theta,
         "rep.est_omega"         => |dp| dp.vars.est_omega,

@@ -30,6 +30,10 @@ pub enum ReceiverFrame {
     Status { code: u8, message: String },
     Heartbeat { timestamp_ms: u32 },
     RxRssi { rssi: i8 },
+    /// Serial port dropped (device reset / flashing started).
+    SerialLost,
+    /// Serial port came back after a SerialLost (auto-reconnect succeeded).
+    SerialReconnected,
 }
 
 pub struct FrameParser {

@@ -46,8 +46,9 @@ pub async fn connect_serial(
     app:   AppHandle,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    let pipeline = state.pipeline.clone();
-    let app2     = app.clone();
+    let pipeline  = state.pipeline.clone();
+    let app2      = app.clone();
+    let port_name = port.clone();
 
     // Drop any existing connection first so the port is released before we try
     // to open it again (e.g. after switching away from live to replay and back).
@@ -80,6 +81,16 @@ pub async fn connect_serial(
             }
             ReceiverFrame::RxRssi { rssi } => {
                 let _ = app2.emit("rx_rssi", rssi);
+            }
+            ReceiverFrame::SerialLost => {
+                let _ = app2.emit("source_status", serde_json::json!({
+                    "kind": "Live", "detail": "Serial lost — reconnecting…"
+                }));
+            }
+            ReceiverFrame::SerialReconnected => {
+                let _ = app2.emit("source_status", serde_json::json!({
+                    "kind": "Live", "detail": format!("Connected · {}", port_name)
+                }));
             }
             _ => {}
         }
