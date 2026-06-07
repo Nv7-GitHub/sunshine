@@ -135,7 +135,7 @@ typedef struct dshot_packet
 // Structure for decoded DShot telemetry data (from ESC)
 typedef struct dshot_telemetry_data
 {
-    uint16_t rpm;         // Motor RPM
+    uint16_t rpm;         // Packed bidirectional DShot RPM field: [eee][mmmmmmmmm]
     uint16_t voltage;     // Voltage in mV
     uint16_t current;     // Current in mA
     uint16_t consumption; // Consumption in mAh
@@ -179,7 +179,7 @@ typedef struct dshot_result
 {
     bool success;
     dshot_msg_code_t result_code;          // Specific error or success code.
-    uint16_t erpm;                         // Electrical RPM (eRPM) if telemetry is successful.
+    uint16_t erpm;                         // Derived electrical RPM.
     uint16_t motor_rpm;                    // Motor RPM if telemetry is successful and magnet count is known.
     dshot_telemetry_data_t telemetry_data; // Full telemetry data if available
     bool telemetry_available;              // Flag to indicate if telemetry_data is valid

@@ -120,7 +120,7 @@ private:
     std::atomic<uint8_t> _last_rx_num_symbols = 0;
 
     // Telemetry Related Variables
-    std::atomic<uint16_t> _last_erpm_atomic = 0;                          // Atomically stored last received eRPM value
+    std::atomic<uint16_t> _last_erpm_atomic = 0;                          // Atomically stored packed bidirectional DShot RPM field
     std::atomic<bool> _telemetry_ready_flag_atomic = false;               // Atomically stored flag indicating new telemetry data
     std::atomic<dshot_telemetry_data_t> _last_telemetry_data_atomic = {}; // Atomically stored last received full telemetry data
     std::atomic<bool> _full_telemetry_ready_flag_atomic = false;          // Atomically stored flag indicating new full telemetry data

@@ -9,6 +9,30 @@
 #include "DShotRMT.h"
 #include <cstring>
 
+static uint16_t decodeErpmTelemetry(uint16_t raw)
+{
+    if (raw == 0x0FFFU)
+    {
+        return 0;
+    }
+
+    uint16_t shift       = (raw >> 9U) & 0x7U;
+    uint16_t period_base = raw & 0x1FFU;
+
+    if (period_base == 0U)
+    {
+        return 0;
+    }
+
+    uint32_t period_us = static_cast<uint32_t>(period_base) << shift;
+    if (period_us == 0U)
+    {
+        return 0;
+    }
+
+    return static_cast<uint16_t>(60000000UL / period_us);
+}
+
 // Constructor with GPIO number
 DShotRMT::DShotRMT(gpio_num_t gpio, dshot_mode_t mode, bool is_bidirectional, uint16_t magnet_count)
     : _gpio(gpio),
@@ -153,40 +177,44 @@ dshot_result_t DShotRMT::getTelemetry()
         return result;
     }
 
-    // Prioritize checking for full telemetry data, as it is richer.
+    if (_telemetry_ready_flag_atomic)
+    {
+        _telemetry_ready_flag_atomic = false; // Reset the flag
+        uint16_t raw_erpm = _last_erpm_atomic;    // Read the atomic variable
+
+        if (raw_erpm != DSHOT_NULL_PACKET && _motor_magnet_count >= MAGNETS_PER_POLE_PAIR)
+        {
+            // Decode the packed telemetry field into electrical RPM and derive
+            // mechanical RPM from the configured magnet count.
+            uint8_t pole_pairs = _motor_magnet_count / MAGNETS_PER_POLE_PAIR;
+            result.telemetry_available = true;
+            result.telemetry_data.rpm = raw_erpm;
+            result.erpm = decodeErpmTelemetry(raw_erpm);
+            result.motor_rpm = (result.erpm / pole_pairs);
+            result.success = true;
+            result.result_code = DSHOT_TELEMETRY_SUCCESS;
+            return result;
+        }
+    }
+
+    // Fall back to the full 10-byte telemetry frame only when no bidirectional
+    // RPM sample is pending. This prevents stale full frames from masking the
+    // live eRPM stream used during bringup.
     if (_full_telemetry_ready_flag_atomic)
     {
         _full_telemetry_ready_flag_atomic = false; // Reset the flag
         result.telemetry_data = _last_telemetry_data_atomic; // Read the atomic variable
         result.telemetry_available = true;
 
-        // Also populate eRPM fields from the full telemetry data for consistency.
-        result.erpm = result.telemetry_data.rpm;
+        result.erpm = decodeErpmTelemetry(result.telemetry_data.rpm);
         if (_motor_magnet_count >= MAGNETS_PER_POLE_PAIR) {
             uint8_t pole_pairs = _motor_magnet_count / MAGNETS_PER_POLE_PAIR;
-            result.motor_rpm = result.telemetry_data.rpm / pole_pairs;
+            result.motor_rpm = result.erpm / pole_pairs;
         }
         
         result.success = true;
         result.result_code = DSHOT_TELEMETRY_DATA_AVAILABLE;
         return result;
-    }
-
-    // If no full telemetry, check for eRPM-only data.
-    if (_telemetry_ready_flag_atomic)
-    {
-        _telemetry_ready_flag_atomic = false; // Reset the flag
-        uint16_t erpm = _last_erpm_atomic;    // Read the atomic variable
-
-        if (erpm != DSHOT_NULL_PACKET && _motor_magnet_count >= MAGNETS_PER_POLE_PAIR)
-        {
-            // Calculate motor RPM from eRPM and magnet count
-            uint8_t pole_pairs = _motor_magnet_count / MAGNETS_PER_POLE_PAIR;
-            result.erpm = erpm;
-            result.motor_rpm = (erpm / pole_pairs);
-            result.success = true;
-            result.result_code = DSHOT_TELEMETRY_SUCCESS;
-        }
     }
 
     return result;
@@ -358,59 +386,113 @@ void DShotRMT::_preCalculateRMTTicks()
     }
 }
 
-// AM32 BDSHOT GCR response: NRZ-M run-length encoding, bit period ~2.5 µs
-// (20 RMT ticks at 8 MHz).  Each RMT symbol is one LOW run (d0) + one HIGH
-// run (d1).  A run of N bit-periods in NRZ-M = 1 leading "1" bit (the
-// transition that started the run) + (N-1) "0" bits (stable periods).
-// We reconstruct the 21-bit GCR stream, then NRZI-decode and check CRC.
+// AM32 BDSHOT eRPM telemetry arrives as a 21-bit run-length encoded stream.
+// Each RMT symbol contains two consecutive runs. Reconstruct the stream from
+// those run lengths, then map the 5-bit GCR groups back to the 16-bit packet
+// using the same decode table Betaflight/ArduPilot use.
 uint16_t IRAM_ATTR DShotRMT::_decodeDShotFrame(const rmt_symbol_word_t *symbols, size_t num_symbols) const
 {
     const uint32_t unit = 20; // ticks per bit (2.5 µs at 8 MHz)
     const uint32_t half = 10; // for round-to-nearest
 
-    uint32_t gcr  = 0;
-    uint32_t bits = 0;
+    auto decode_value = [](uint32_t candidate) -> uint16_t {
+        static const uint32_t decode[32] = {
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 9, 10, 11, 0, 13, 14, 15,
+            0, 0, 2, 3, 0, 5, 6, 7, 0, 0, 8, 1, 0, 4, 12, 0
+        };
 
-    for (size_t i = 0; i < num_symbols && bits < DSHOT_ERPM_FRAME_GCR_BITS; i++)
-    {
-        // LOW run
-        uint32_t low_n = (symbols[i].duration0 + half) / unit;
-        if (low_n == 0) low_n = 1;
-        for (uint32_t j = 0; j < low_n && bits < DSHOT_ERPM_FRAME_GCR_BITS; j++)
+        uint16_t decoded_value = decode[candidate & 0x1fU];
+        decoded_value |= decode[(candidate >> 5U) & 0x1fU] << 4U;
+        decoded_value |= decode[(candidate >> 10U) & 0x1fU] << 8U;
+        decoded_value |= decode[(candidate >> 15U) & 0x1fU] << 12U;
+
+        uint32_t csum = decoded_value;
+        csum ^= (csum >> 8U);
+        csum ^= (csum >> 4U);
+        if ((csum & 0x0fU) != 0x0fU)
         {
-            gcr = (gcr << 1) | (j == 0 ? 1u : 0u);
-            bits++;
+            return DSHOT_NULL_PACKET;
         }
 
-        if (symbols[i].duration1 == 0) break; // end-of-frame marker
+        // Strip the 4-bit CRC nibble. The caller wants the packed telemetry
+        // payload so it can normalize the exponent/mantissa field.
+        return decoded_value >> DSHOT_CRC_BIT_SHIFT;
+    };
 
-        // HIGH run
-        uint32_t high_n = (symbols[i].duration1 + half) / unit;
-        if (high_n == 0) high_n = 1;
-        for (uint32_t j = 0; j < high_n && bits < DSHOT_ERPM_FRAME_GCR_BITS; j++)
+    auto build_value = [&](bool consume_final_tail) -> uint32_t {
+        uint32_t value = 0;
+        uint32_t bits = 0;
+
+        for (size_t i = 0; i < num_symbols && bits < DSHOT_ERPM_FRAME_GCR_BITS; i++)
         {
-            gcr = (gcr << 1) | (j == 0 ? 1u : 0u);
-            bits++;
+            uint32_t runs[2] = {
+                static_cast<uint32_t>((symbols[i].duration0 + half) / unit),
+                static_cast<uint32_t>((symbols[i].duration1 + half) / unit),
+            };
+
+            for (size_t r = 0; r < 2 && bits < DSHOT_ERPM_FRAME_GCR_BITS; r++)
+            {
+                uint32_t run = runs[r];
+
+                if (run == 0)
+                {
+                    // Some captures end with a zero-length second run. On the
+                    // last symbol that can mean "the rest of the frame" rather
+                    // than a literal zero-length interval.
+                    if (consume_final_tail &&
+                        i == num_symbols - 1 &&
+                        r == 1 &&
+                        bits < DSHOT_ERPM_FRAME_GCR_BITS)
+                    {
+                        run = DSHOT_ERPM_FRAME_GCR_BITS - bits;
+                    }
+                    else
+                    {
+                        continue;
+                    }
+                }
+
+                uint32_t remaining = DSHOT_ERPM_FRAME_GCR_BITS - bits;
+                if (run > remaining) run = remaining;
+
+                value <<= run;
+                value |= (1u << (run - 1u));
+                bits += run;
+            }
+        }
+
+        return bits == 0 ? DSHOT_NULL_PACKET : value;
+    };
+
+    const uint32_t values[] = {
+        build_value(false),
+        build_value(true),
+    };
+
+    for (uint32_t value : values)
+    {
+        if (value == DSHOT_NULL_PACKET)
+        {
+            continue;
+        }
+
+        const uint32_t candidates[] = {
+            value << 1U,
+            value,
+            value >> 1U,
+        };
+
+        for (uint32_t candidate : candidates)
+        {
+            uint16_t erpm = decode_value(candidate);
+            if (erpm != DSHOT_NULL_PACKET)
+            {
+                return erpm;
+            }
         }
     }
 
-    if (bits < 16) return DSHOT_NULL_PACKET;
-
-    // Pad to 21 bits (left-align)
-    if (bits < DSHOT_ERPM_FRAME_GCR_BITS)
-        gcr <<= (DSHOT_ERPM_FRAME_GCR_BITS - bits);
-
-    // NRZI decode: recover original GCR bit stream
-    uint32_t decoded    = gcr ^ (gcr >> 1);
-    uint16_t data_crc   = decoded & DSHOT_FULL_PACKET;
-    uint16_t recv_data  = data_crc >> DSHOT_CRC_BIT_SHIFT;
-    uint16_t recv_crc   = data_crc & DSHOT_CRC_MASK;
-
-    // ESC response CRC is NON-inverted (unlike the TX CRC which is inverted to
-    // signal BDSHOT mode). Using _calculateCRC() would invert and fail always.
-    uint16_t calc_crc = (recv_data ^ (recv_data >> 4) ^ (recv_data >> 8)) & DSHOT_CRC_MASK;
-    if (recv_crc != calc_crc) return DSHOT_NULL_PACKET;
-    return recv_data & DSHOT_THROTTLE_MAX;
+    return DSHOT_NULL_PACKET;
 }
 
 // Private Frame Processing Functions
