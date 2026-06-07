@@ -79,7 +79,7 @@ void led_status_tick(void) {
             // Amber breathe — brain link up, host silent (control disabled).
             uint8_t v = breathe(2000, 3, LED_MAX);
             r = v;
-            g = (uint8_t)(v * 0.45f);  // amber = red + a touch of green
+            g = (uint8_t)(v * 0.20f);  // amber: ~20% green keeps it orange, not yellow
             break;
         }
         case LED_LIVE: {

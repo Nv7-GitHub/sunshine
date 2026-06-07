@@ -66,6 +66,21 @@ impl SerialConnection {
         let _ = self.port.lock().write_all(data);
     }
 
+    // Spawns a background thread that calls data_fn every `interval` and writes
+    // the result to the port. Stops automatically when this SerialConnection is
+    // dropped (the running flag goes false).
+    pub fn send_periodic(&self, interval: Duration, data_fn: impl Fn() -> Vec<u8> + Send + 'static) {
+        let port    = self.port.clone();
+        let running = self.running.clone();
+        thread::spawn(move || {
+            while running.load(Ordering::Relaxed) {
+                let data = data_fn();
+                let _ = port.lock().write_all(&data);
+                thread::sleep(interval);
+            }
+        });
+    }
+
     pub fn close(self) {
         self.running.store(false, Ordering::Relaxed);
     }

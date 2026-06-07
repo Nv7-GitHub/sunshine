@@ -81,6 +81,14 @@ pub async fn connect_serial(
         }
     })).map_err(|e| e)?;
 
+    // Send the current (DISABLED) control state every 200 ms so the receiver's
+    // host-watchdog (1.5 s) never fires while the app is open.
+    let controls2 = state.controls.clone();
+    conn.send_periodic(std::time::Duration::from_millis(200), move || {
+        let ctrl = controls2.lock();
+        encode_ctrl(ctrl.mode, ctrl.ctrl_x, ctrl.ctrl_y, ctrl.ctrl_theta, ctrl.ctrl_throttle)
+    });
+
     *state.serial_conn.lock() = Some(conn);
     force_disabled(&state);
 
