@@ -282,7 +282,7 @@ Let the system run for 2 minutes without touching anything. Pass if:
 **Setup:** Full robot assembled, **props off** initially.  
 **Firmware environment:** `bringup_4_navigation`
 
-Motor outputs are zeroed in this environment. The Kalman filter and derotation filter run, but no DShot commands are sent.
+In this environment **TANK mode drives the motors** so you can spin the robot to tune the filters. DISABLED and MELTY keep the motors zeroed (MELTY isn't tuned until Level 5). The Kalman and derotation filters run in all modes. **Props off.**
 
 ### Step 1: Flash and connect
 

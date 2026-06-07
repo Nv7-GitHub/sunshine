@@ -89,10 +89,18 @@ void nav_control_task(void *) {
         sunshine_step(&in, &kf_state, &vars);
         uint32_t t_s1 = micros();
 
-        // Safety: zero DShot at bringup levels 3-4
+        // Safety: zero DShot at bringup level 3 (telemetry only, no motion).
 #if FORCE_DSHOT_ZERO
         vars.dshot_cmd_left  = 0.0f;
         vars.dshot_cmd_right = 0.0f;
+#endif
+        // Level 4 (nav tuning): only TANK drives — used to spin the robot for
+        // filter tuning. DISABLED and MELTY stay zeroed.
+#if TANK_ONLY_OUTPUT
+        if (in.mode != SUNSHINE_MODE_TANK) {
+            vars.dshot_cmd_left  = 0.0f;
+            vars.dshot_cmd_right = 0.0f;
+        }
 #endif
 
         // ── 5. Apply outputs ──────────────────────────────────────────────
