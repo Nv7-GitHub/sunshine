@@ -9,9 +9,10 @@ static float clampf(float v, float lo, float hi) {
 }
 
 static float wrap_to_pi(float a) {
-    while (a >  M_PI_F) a -= 2.0f * M_PI_F;
-    while (a < -M_PI_F) a += 2.0f * M_PI_F;
-    return a;
+    /* O(1) wrap to [-pi, pi] — see kalman.c. The old iterative version's cost
+     * scaled with |a|, so once kf_theta grew large this ran thousands of loops
+     * every tick and blew the 1 kHz budget. */
+    return remainderf(a, 2.0f * M_PI_F);
 }
 
 /* Trapezoidal wave: +1 at |phase|<half_flat, linear ramp, -1 at bottom */
@@ -54,7 +55,11 @@ void control_step(const SunshineInput *in, SunshineState *s, SunshineVars *v) {
     }
 
     /* MELTY */
-    s->theta_offset += ((float)in->ctrl_theta / 127.0f) * THETA_RATE_RADS * 0.001f;
+    /* Driver heading offset is an angle — keep it wrapped so it can't grow
+     * unbounded when the driver holds a turn (precision + keeps cos/sin args
+     * small). Only used as (kf_theta + theta_offset), so wrapping is invisible. */
+    s->theta_offset = wrap_to_pi(s->theta_offset
+                       + ((float)in->ctrl_theta / 127.0f) * THETA_RATE_RADS * 0.001f);
 
     /* MELTY spin is unipolar in bidirectional DShot: stopped is neutral, not
      * a small raw DShot value. Values below DSHOT_NEUTRAL command reverse. */

@@ -6,9 +6,11 @@
 #define M_PI_F 3.14159265f
 
 static float wrap_to_pi(float a) {
-    while (a >  M_PI_F) a -= 2.0f * M_PI_F;
-    while (a < -M_PI_F) a += 2.0f * M_PI_F;
-    return a;
+    /* O(1) wrap to [-pi, pi]. The previous iterative subtraction looped once
+     * per 2*pi, so its cost grew without bound as kf_theta got large. With
+     * kf_theta now wrapped in kalman_predict this can't happen, but remainderf
+     * is the correct, magnitude-independent implementation regardless. */
+    return remainderf(a, 2.0f * M_PI_F);
 }
 
 void sunshine_state_init(SunshineState *s) {
@@ -19,7 +21,14 @@ void sunshine_state_init(SunshineState *s) {
 
 /* Predict step: F = [[1,dt],[0,1]] */
 void kalman_predict(SunshineState *s, float dt) {
-    s->kf_theta += s->kf_omega * dt;
+    /* Wrap to [-pi, pi]. kf_theta is an absolute heading that otherwise grows
+     * without bound (~2*pi per revolution while spinning, and dead-reckoned
+     * noise at rest). Unbounded growth (a) blew the old iterative wrap_to_pi
+     * cost up over time → 1 kHz overruns, (b) loses float precision at large
+     * magnitudes, and (c) magnifies host/ESP32 float divergence in replay.
+     * Wrapping is safe: derotation uses cos/sin(kf_theta) (periodic) and the
+     * mag update wraps its innovation, so observable behaviour is unchanged. */
+    s->kf_theta = wrap_to_pi(s->kf_theta + s->kf_omega * dt);
     float p00 = s->kf_P[0], p01 = s->kf_P[1];
     float p10 = s->kf_P[2], p11 = s->kf_P[3];
     s->kf_P[0] = p00 + dt*(p10 + p01) + dt*dt*p11 + KF_Q_THETA;
