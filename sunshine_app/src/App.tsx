@@ -11,7 +11,7 @@ const DEFAULT_CHANNELS = ['rep.est_theta', 'rep.est_omega'];
 
 export default function App() {
   const state    = useAppState();
-  const inputRef = useKeyboard(state.mode);
+  const inputRef = useKeyboard(state.mode, state.setMode);
   const [selected,    setSelected]    = useState<string[]>(DEFAULT_CHANNELS);
   const [cursorUs,    setCursorUs]    = useState<number | null>(null);
   const [isGraphLive, setIsGraphLive] = useState(true);

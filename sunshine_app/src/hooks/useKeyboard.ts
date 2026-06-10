@@ -9,10 +9,18 @@ export interface InputState {
   throttle: number;
 }
 
-const ALPHA_XY    = 0.012;
-const ALPHA_THETA = 0.020;
+// Linear ramp rates (units/frame) — derived from old exponential τ (83 and 50 frames).
+// Key held → ramps up to ±127 at this rate; released → decays back to 0 at same rate.
+const RATE_XY    = 127 / 83;   // ≈ 1.53 / frame
+const RATE_THETA = 127 / 50;   // ≈ 2.54 / frame
 
-export function useKeyboard(mode: number): RefObject<InputState> {
+function moveToward(current: number, target: number, rate: number): number {
+  if (current < target) return Math.min(target, current + rate);
+  if (current > target) return Math.max(target, current - rate);
+  return current;
+}
+
+export function useKeyboard(mode: number, setMode: (m: number) => void): RefObject<InputState> {
   const target   = useRef<InputState>({ x: 0, y: 0, theta: 0, throttle: 0 });
   const filtered = useRef<InputState>({ x: 0, y: 0, theta: 0, throttle: 0 });
   const keys     = useRef(new Set<string>());
@@ -20,10 +28,12 @@ export function useKeyboard(mode: number): RefObject<InputState> {
   useEffect(() => {
     const onDown = (e: KeyboardEvent) => {
       if (!e.repeat) keys.current.add(e.code);
-      // Prevent arrow keys from scrolling any focusable element (variable tree, etc.)
       if (e.code === 'ArrowUp' || e.code === 'ArrowDown' ||
           e.code === 'ArrowLeft' || e.code === 'ArrowRight') {
         e.preventDefault();
+      }
+      if (e.code === 'Enter') {
+        setMode(0);
       }
     };
     const onUp = (e: KeyboardEvent) => keys.current.delete(e.code);
@@ -37,7 +47,6 @@ export function useKeyboard(mode: number): RefObject<InputState> {
       const k = keys.current;
       const t = target.current;
 
-      // Target: full ±127 per axis — no pre-normalization here.
       t.x     = k.has('KeyA') ? -127 : k.has('KeyD') ?  127 : 0;
       t.y     = k.has('KeyW') ?  127 : k.has('KeyS') ? -127 : 0;
       t.theta = k.has('ArrowLeft') ? -127 : k.has('ArrowRight') ? 127 : 0;
@@ -46,9 +55,9 @@ export function useKeyboard(mode: number): RefObject<InputState> {
       if (k.has('ArrowDown')) t.throttle = Math.max(0,   t.throttle - 1.5);
 
       const f = filtered.current;
-      f.x     += ALPHA_XY    * (t.x     - f.x);
-      f.y     += ALPHA_XY    * (t.y     - f.y);
-      f.theta += ALPHA_THETA * (t.theta - f.theta);
+      f.x     = moveToward(f.x,     t.x,     RATE_XY);
+      f.y     = moveToward(f.y,     t.y,     RATE_XY);
+      f.theta = moveToward(f.theta, t.theta, RATE_THETA);
       f.throttle = t.throttle;
 
       if (Math.abs(f.x)     < 0.4) f.x     = 0;
