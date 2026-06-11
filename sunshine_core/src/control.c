@@ -63,8 +63,9 @@ void control_step(const SunshineInput *in, SunshineState *s, SunshineVars *v) {
     s->theta_offset = wrap_to_pi(s->theta_offset
                        + ((float)in->ctrl_theta / 127.0f) * THETA_RATE_RADS * 0.001f);
 
-    /* MELTY spin is unipolar in bidirectional DShot: stopped is neutral, not
-     * a small raw DShot value. Values below DSHOT_NEUTRAL command reverse. */
+    /* MELTY spin is unipolar: outputs stay in [DSHOT_NEUTRAL..DSHOT_MAX].
+     * motor_cmd() in nav_control inverts these into the ESC reverse zone
+     * [48..1047], so both motors always spin CCW (forward = CCW per BRINGUP). */
     float spin_frac = clampf((float)in->ctrl_throttle / 255.0f, 0.0f, 1.0f);
     float spin_span = spin_frac * (MAX_DSHOT_SPIN - DSHOT_NEUTRAL);
     float cx        = (float)in->ctrl_x;
