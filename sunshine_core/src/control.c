@@ -26,9 +26,12 @@ static float trapezoid(float phase, float pulse_width, float ramp_width) {
 }
 
 static float map_to_dshot(float v) {
-    /* v in [-1, 1]: positive = forward, negative = reverse (AM32 3D mode) */
+    /* v in [-1, 1]: positive = forward, negative = reverse (AM32 3D mode)
+     * Reverse zone [48, 1047]: 48 = min reverse, 1047 = max reverse.
+     * v=-1 maps to 1047 (max), v→0⁻ maps to 48 (min). Discontinuous at 0
+     * by design — neutral (1048) and the reverse zone are non-adjacent. */
     if (v >= 0.0f) return DSHOT_NEUTRAL + v * (DSHOT_MAX - DSHOT_NEUTRAL);
-    else           return DSHOT_NEUTRAL + v * (DSHOT_NEUTRAL - DSHOT_MIN);
+    else           return DSHOT_MIN + (-v) * (DSHOT_NEUTRAL - 1.0f - DSHOT_MIN);
 }
 
 void control_step(const SunshineInput *in, SunshineState *s, SunshineVars *v) {
@@ -49,8 +52,8 @@ void control_step(const SunshineInput *in, SunshineState *s, SunshineVars *v) {
         /* W/S (ctrl_y) controls fwd/rev; A/D (ctrl_x) controls turning */
         float fwd  = clampf((float)in->ctrl_y  / 127.0f, -1.0f, 1.0f);
         float turn = clampf((float)in->ctrl_x  / 127.0f, -1.0f, 1.0f);
-        v->dshot_cmd_left  = map_to_dshot(clampf(turn + fwd, -1.0f, 1.0f));
-        v->dshot_cmd_right = map_to_dshot(clampf(turn - fwd, -1.0f, 1.0f));
+        v->dshot_cmd_left  = map_to_dshot(clampf(fwd + turn, -1.0f, 1.0f));
+        v->dshot_cmd_right = map_to_dshot(clampf(fwd - turn, -1.0f, 1.0f));
         return;
     }
 
