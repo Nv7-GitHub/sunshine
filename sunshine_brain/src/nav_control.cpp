@@ -108,7 +108,16 @@ void nav_control_task(void *) {
 #if FEATURE_DSHOT
         auto motor_cmd = [](float cmd, bool invert) -> uint16_t {
             if (cmd == 0.0f) return 0;  // preserve disarm
-            float c = invert ? (2.0f * DSHOT_NEUTRAL - cmd) : cmd;
+            if (!invert) return (uint16_t)(cmd + 0.5f);
+            // Swap fwd↔rev zones while preserving relative speed.
+            // 2*DSHOT_NEUTRAL-cmd reflects around neutral but inverts speed
+            // ordering within each zone (min fwd → max rev, etc.). Instead,
+            // shift by 1001 so min fwd (1049) → min rev (48) and max fwd
+            // (2047) → max rev (1046), keeping slow↔slow and fast↔fast.
+            static constexpr float kOffset = DSHOT_NEUTRAL + 1.0f - DSHOT_MIN; // 1001
+            float c = (cmd > DSHOT_NEUTRAL) ? cmd - kOffset :
+                      (cmd < DSHOT_NEUTRAL) ? cmd + kOffset : DSHOT_NEUTRAL;
+            c = (c < DSHOT_MIN) ? DSHOT_MIN : (c > DSHOT_MAX) ? DSHOT_MAX : c;
             return (uint16_t)(c + 0.5f);
         };
         uint32_t t_d0 = micros();

@@ -555,6 +555,7 @@ input, select { font: inherit; color: inherit; }
 }
 .conn-status.connected    { background: var(--good-soft); color: var(--good); }
 .conn-status.disconnected { background: var(--danger-soft); color: var(--danger); opacity: .7; }
+.conn-status.error        { background: var(--warn-soft); color: var(--warn); opacity: 1; }
 
 /* ─── Tab body: flex column wrapper for replay/sim tabs ─── */
 .tab-body {

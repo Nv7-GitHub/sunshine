@@ -8,6 +8,7 @@ export default function ConnectionPanel({ sourceStatus }: { sourceStatus: Source
   const [port, setPort]             = useState('');
   const [replayMeta, setReplayMeta] = useState<{ label?: string; frame_count: number; schema_version: number } | null>(null);
   const [replayPath, setReplayPath] = useState('');
+  const [connectError, setConnectError] = useState('');
   const isLive = sourceStatus.kind === 'Live';
 
   useEffect(() => {
@@ -18,7 +19,7 @@ export default function ConnectionPanel({ sourceStatus }: { sourceStatus: Source
     <div className="connection-panel">
       <div className="tab-bar">
         {(['live','replay','sim'] as const).map(t => (
-          <button key={t} className={`tab ${tab===t?'active':''}`} onClick={() => setTab(t)}>
+          <button key={t} className={`tab ${tab===t?'active':''}`} onClick={() => { setTab(t); setConnectError(''); }}>
             {t.toUpperCase()}
           </button>
         ))}
@@ -31,17 +32,23 @@ export default function ConnectionPanel({ sourceStatus }: { sourceStatus: Source
             {ports.map(p => <option key={p} value={p}>{p}</option>)}
           </select>
           {isLive ? (
-            <button onClick={() => invoke('disconnect_serial')} className="btn-stop">
+            <button onClick={() => { setConnectError(''); invoke('disconnect_serial'); }} className="btn-stop">
               Disconnect
             </button>
           ) : (
-            <button onClick={() => invoke('connect_serial', { port })} disabled={!port} className="btn-connect">
+            <button onClick={() => {
+              setConnectError('');
+              invoke('connect_serial', { port }).catch((e: unknown) => {
+                setConnectError(String(e));
+              });
+            }} disabled={!port} className="btn-connect">
               Connect
             </button>
           )}
           <div className={`conn-status ${isLive ? 'connected' : 'disconnected'}`}>
             {isLive ? '● ' : '○ '}{isLive ? (sourceStatus.detail || 'Connected') : 'Disconnected'}
           </div>
+          {connectError && <div className="conn-error">{connectError}</div>}
         </div>
       )}
 

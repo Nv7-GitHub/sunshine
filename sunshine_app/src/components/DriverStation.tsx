@@ -132,6 +132,7 @@ export default function DriverStation({ mode, setMode, sourceStatus, liveUpdate,
   const [tab, setTab]               = useState<'live' | 'replay' | 'sim'>('live');
   const [ports, setPorts]           = useState<string[]>([]);
   const [port, setPort]             = useState('');
+  const [connectError, setConnectError] = useState('');
   const [replayPath, setReplayPath] = useState('');
   const [replayMeta, setReplayMeta] = useState<{ label?: string; frame_count: number; schema_version: number } | null>(null);
 
@@ -211,16 +212,24 @@ export default function DriverStation({ mode, setMode, sourceStatus, liveUpdate,
               {ports.map(p => <option key={p} value={p}>{p}</option>)}
             </select>
             {isLive ? (
-              <button className="conn-btn danger" onClick={() => invoke('disconnect_serial')}>
+              <button className="conn-btn danger" onClick={() => { setConnectError(''); invoke('disconnect_serial'); }}>
                 Disconnect
               </button>
             ) : (
-              <button className="conn-btn" onClick={() => invoke('connect_serial', { port })} disabled={!port}>
+              <button className="conn-btn" onClick={async () => {
+                setConnectError('');
+                try {
+                  await invoke('connect_serial', { port });
+                } catch (e: unknown) {
+                  setConnectError(typeof e === 'string' ? e : String(e));
+                }
+              }} disabled={!port}>
                 Connect
               </button>
             )}
-            <div className={`conn-status ${isLive ? 'connected' : 'disconnected'}`}>
-              {isLive ? '● ' : '○ '}{isLive ? (sourceStatus.detail || 'Connected') : 'Disconnected'}
+            <div className={`conn-status ${isLive ? 'connected' : connectError ? 'error' : 'disconnected'}`}>
+              {isLive ? '● ' : connectError ? '⚠ ' : '○ '}
+              {isLive ? (sourceStatus.detail || 'Connected') : connectError || 'Disconnected'}
             </div>
           </>
         )}
