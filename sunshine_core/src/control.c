@@ -26,12 +26,12 @@ static float trapezoid(float phase, float pulse_width, float ramp_width) {
 }
 
 static float map_to_dshot(float v) {
-    /* v in [-1, 1]: positive = forward, negative = reverse (AM32 3D mode)
-     * Reverse zone [48, 1047]: 48 = min reverse, 1047 = max reverse.
-     * v=-1 maps to 1047 (max), v→0⁻ maps to 48 (min). Discontinuous at 0
-     * by design — neutral (1048) and the reverse zone are non-adjacent. */
+    /* v in [-1, 1]: positive = forward, negative = reverse.
+     * motor_cmd() in nav_control.cpp reflects these around DSHOT_NEUTRAL when
+     * MOTOR_*_INVERT is true, which is what maps them into the correct AM32
+     * 3D-mode zones after accounting for motor mounting direction. */
     if (v >= 0.0f) return DSHOT_NEUTRAL + v * (DSHOT_MAX - DSHOT_NEUTRAL);
-    else           return DSHOT_MIN + (-v) * (DSHOT_NEUTRAL - 1.0f - DSHOT_MIN);
+    else           return DSHOT_NEUTRAL + v * (DSHOT_NEUTRAL - DSHOT_MIN);
 }
 
 void control_step(const SunshineInput *in, SunshineState *s, SunshineVars *v) {
