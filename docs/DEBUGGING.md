@@ -33,26 +33,41 @@ The host app shows the current log file path in the logging status bar.
 
 ## Log file format (for reference)
 
+**Current format is FILE_FORMAT_VER 2 (95-byte header).** VER 1 files (93-byte header, 20 inputs/frame) are rare and from early sessions.
+
 ```
-Header (93 bytes):
+Header (95 bytes, FILE_FORMAT_VER 2):
   magic[5]        = "SHINE"
-  file_format     = 1 (uint16 LE)
-  header_size     = 93 (uint16 LE)
-  schema_version  = uint32 LE
+  file_format     = 2 (uint16 LE)           ← was 1 in old files
+  header_size     = 95 (uint16 LE)          ← was 93 in old files
+  schema_version  = uint32 LE               (bumped when structs change)
   sizeof_input    = 29 (uint16 LE)
   sizeof_state    = 60 (uint16 LE)
-  sizeof_vars     = 52 (uint16 LE)
+  sizeof_vars     = 56 (uint16 LE)          ← was 52 in old files (heading_deg added)
   created_at_ms   = Unix timestamp ms (uint64 LE)
   source          = 0=live, 1=replay, 2=simulation (uint8)
   flags           = bit0=logging_complete (uint8)
   label[64]       = null-terminated UTF-8
+  num_inputs      = uint16 LE               ← VER 2 ONLY: inputs per frame (currently 6)
 
-Frame (697 bytes at schema v1, 50 Hz):
+Frame (295 bytes at schema v2, ~167 Hz):
   frame_id        = uint32 LE, monotonic (gaps = dropped telemetry)
   frame_flags     = bit0=vars_valid (uint8)
   SunshineState   = 60 bytes (state at START of frame, before inputs)
-  SunshineInput×20 = 580 bytes (20 consecutive 1 kHz inputs)
-  SunshineVars    = 52 bytes (computed after all 20 steps — 50 Hz snapshot)
+  SunshineInput×6 = 174 bytes (6 consecutive 1 kHz inputs)  ← was ×20 in VER 1
+  SunshineVars    = 56 bytes (computed after all 6 steps)
+```
+
+**Frame size formula:** `5 + sizeof_state + sizeof_input × num_inputs + sizeof_vars`
+Always read `num_inputs` from the header (bytes [93..94]) — do NOT hardcode 20.
+
+**SunshineVars field order** (56 bytes packed):
+```
+float  omega_from_accel, derot_I, derot_Q, mag_angle, est_theta, est_omega,
+       dshot_cmd_left, dshot_cmd_right, batt_voltage, erpm_left, erpm_right,
+       centripetal_ms2;     ← 12 floats = 48 bytes
+uint8  led_on, accel_saturated, mag_valid, loop_overrun;  ← 4 bytes
+float  heading_deg;         ← 4 bytes (added in schema v2; was not in 52-byte vars)
 ```
 
 ---
@@ -61,7 +76,7 @@ Frame (697 bytes at schema v1, 50 Hz):
 
 All channels are available in the host app's channel selector when replaying. The same list is available to the replay-debug skill.
 
-**Inputs (1 kHz, 20 per frame):**
+**Inputs (1 kHz, 6 per frame in current VER 2 files):**
 - `inputs.time_us` — timestamp in µs
 - `inputs.accel_x/y/z` — raw ADXL375 counts
 - `inputs.mag_x/y/z` — raw LIS3MDL counts
@@ -95,6 +110,7 @@ In replay, `SunshineVars` is recomputed at 1 kHz (not just the 50 Hz snapshot in
 - `vars.accel_saturated` — 1 when centripetal > 280g
 - `vars.mag_valid` — 1 when omega > 4π rad/s
 - `vars.loop_overrun` — 1 if 1 kHz loop exceeded budget
+- `vars.heading_deg` — robot heading [0, 360), matches LED zero (added in schema v2)
 
 ---
 
@@ -109,6 +125,10 @@ In replay, `SunshineVars` is recomputed at 1 kHz (not just the 50 Hz snapshot in
 4. `state.kf_P[0]` — is the angle covariance decreasing? It should drop from 100 toward near-zero after the mag update engages.
 
 **Try:** Set `KF_R_MAG` lower and replay. Does theta converge faster?
+
+**What to expect from real vs. simulated mag data:**
+- Real `inputs.mag_x/y`: large constant offset (~−95 µT X, ~+103 µT Y from motor hard-iron) plus a ~25 µT Earth-field sine wave. The LIS3MDL y-axis is physically inverted on the PCB, so `my = −E·sin(φ−θ)` (negated relative to the naive model). This is what makes the derotation algebra work — do not "fix" it.
+- Sim `inputs.mag_x/y`: same convention with hard-iron and horizontal-only Earth field (25 µT, not 50 µT total).
 
 ### Scenario 2: omega_from_accel reads wrong
 

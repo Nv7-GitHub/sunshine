@@ -11,9 +11,18 @@ const WHEEL_CENTER: f64 = 0.0405;
 const MASS:         f64 = 0.454;
 const MOI:          f64 = 1.214e-3;
 const WHEEL_INERTIA:f64 = 6.407_440_19e-6;
-const IMU_RADIUS:   f64 = 0.011;
-const EARTH_FIELD:  f64 = 50.0;
-const EARTH_ANGLE:  f64 = 0.0;
+const IMU_RADIUS:      f64 = 0.011;
+// EARTH_FIELD is the horizontal component only — the robot spins in a horizontal plane so
+// the vertical component is constant regardless of heading and creates no rotating signal.
+// Total field ≈ 50 µT; at ~60° magnetic inclination (typical US), horizontal = 50×cos(60°) = 25 µT.
+// Confirmed by spiritridge.sun: settled derot_I/Q magnitude ≈ 25 µT.
+const EARTH_FIELD:     f64 = 25.0;          // µT, horizontal component only
+const EARTH_ANGLE:     f64 = 0.0;           // Earth field azimuth (rad, arbitrary reference)
+// Hard-iron: constant body-frame bias from motor magnets and PCB traces.
+// The derotation LP filter rejects this (it becomes AC after derotation) but it is visible
+// in raw sensor data as the large offset between sim and real. Values from spiritridge.sun.
+const HARD_IRON_X:     f64 = -95.0;         // µT
+const HARD_IRON_Y:     f64 =  103.0;        // µT
 const ADXL_SCALE:   f64 = 49e-3 * 9.81;
 const ADXL_MAX_G:   f64 = 200.0;           // ADXL375 physical ±200g range
 const ADXL_MAX_CNT: f64 = ADXL_MAX_G / (49e-3);  // ≈ 4082 counts
@@ -104,8 +113,14 @@ impl Simulation {
         let ay = (body_x + body_y) / 2.0f64.sqrt();
         let az = 9.81f64;
 
-        let mx = EARTH_FIELD * (EARTH_ANGLE - self.body_angle).cos();
-        let my = EARTH_FIELD * (EARTH_ANGLE - self.body_angle).sin();
+        // The derotation algorithm (derot_filter.c) applies R(-θ) to [mx, my], which gives
+        // DC output for Earth's field only when the sensor y-axis is negated relative to the
+        // naive geometric model.  The LIS3MDL is physically mounted with its y-axis inverted,
+        // so my = -E·sin(φ−θ).  Without the minus sign the derotated signal oscillates at 2ω
+        // and the LP filter kills it → heading Kalman update receives atan2(0,0)=0 every tick.
+        let phi_minus_theta = EARTH_ANGLE - self.body_angle;
+        let mx = EARTH_FIELD * phi_minus_theta.cos() + HARD_IRON_X;
+        let my = -EARTH_FIELD * phi_minus_theta.sin() + HARD_IRON_Y;
 
         let i_total = self.supply_current(last_vars.dshot_cmd_left, last_vars.dshot_cmd_right, V_NOMINAL);
         let v_batt  = V_NOMINAL - i_total * R_INTERNAL;
