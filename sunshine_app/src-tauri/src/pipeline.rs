@@ -282,6 +282,33 @@ impl Pipeline {
     }
 
     pub fn get_channel_snapshot(&self, channels: &[String], time_us: Option<u64>) -> Vec<Option<f32>> {
+        // Replay mode: data lives in replay_cache, not the ring.
+        if self.source == SourceKind::Replay {
+            if self.replay_cache.is_empty() {
+                return channels.iter().map(|_| None).collect();
+            }
+            let dp = match time_us {
+                None => self.replay_cache.last().unwrap(),
+                Some(t) => {
+                    // replay_cache is sorted by time_us — use binary search.
+                    let lo = self.replay_cache.partition_point(|dp| dp.time_us < t);
+                    if lo == 0 {
+                        &self.replay_cache[0]
+                    } else if lo == self.replay_cache.len() {
+                        self.replay_cache.last().unwrap()
+                    } else {
+                        let before = &self.replay_cache[lo - 1];
+                        let after  = &self.replay_cache[lo];
+                        if t - before.time_us <= after.time_us - t { before } else { after }
+                    }
+                }
+            };
+            return channels.iter().map(|ch| {
+                let v = channel_accessor(ch)(dp);
+                if v.is_finite() { Some(v) } else { None }
+            }).collect();
+        }
+
         if self.ring_len == 0 {
             return channels.iter().map(|_| None).collect();
         }

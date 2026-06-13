@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "sunshine_app",
+  "productName": "SunshineScope",
   "version": "0.1.0",
   "identifier": "com.nv.sunshine-app",
   "build": {
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "Sunshine",
+        "title": "SunshineScope",
         "width": 1280,
         "height": 800,
         "fullscreen": true

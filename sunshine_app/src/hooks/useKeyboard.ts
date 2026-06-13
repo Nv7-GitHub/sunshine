@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import type { RefObject } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import type { Mode } from '../types/sunshine';
 
 export interface InputState {
   x:        number;
@@ -20,7 +21,7 @@ function moveToward(current: number, target: number, rate: number): number {
   return current;
 }
 
-export function useKeyboard(mode: number, setMode: (m: number) => void): RefObject<InputState> {
+export function useKeyboard(mode: Mode, setMode: (m: Mode) => void): RefObject<InputState> {
   const target   = useRef<InputState>({ x: 0, y: 0, theta: 0, throttle: 0 });
   const filtered = useRef<InputState>({ x: 0, y: 0, theta: 0, throttle: 0 });
   const keys     = useRef(new Set<string>());
