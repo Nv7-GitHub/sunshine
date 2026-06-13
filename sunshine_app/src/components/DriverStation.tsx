@@ -291,7 +291,7 @@ export default function DriverStation({ mode, setMode, sourceStatus, liveUpdate,
             {sourceStatus.kind === 'Sim' ? (
               <button className="source-btn source-btn-stop" onClick={stopSource}>Stop</button>
             ) : (
-              <button className="source-btn source-btn-start" onClick={() => { invoke('start_simulation'); setMode(1); }}>
+              <button className="source-btn source-btn-start" onClick={() => { stopSource(); invoke('start_simulation'); setMode(1); }}>
                 Start Simulation
               </button>
             )}

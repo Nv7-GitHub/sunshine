@@ -125,6 +125,20 @@ impl Pipeline {
         self.frame_count = 0;
     }
 
+    /// Begin a simulation session. Identical ring/timestamp reset as begin_live
+    /// so stale ring entries from a previous sim/live session don't produce
+    /// non-monotonic timestamps when the new sim restarts time_us from 0.
+    pub fn begin_sim(&mut self) {
+        self.source      = SourceKind::Simulation;
+        self.ring_len    = 0;
+        self.ring_head   = 0;
+        self.hw_epoch_us = 0;
+        self.last_hw_us  = 0;
+        self.frame_count = 0;
+        self.replay_cache.clear();
+        self.history_log = None;
+    }
+
     pub fn set_history_log(&mut self, meta: Option<LogMetadata>) {
         if meta.is_none() { self.replay_cache.clear(); }
         self.history_log = meta;

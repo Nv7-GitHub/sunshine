@@ -142,6 +142,11 @@ export default function UPlotCanvas({ channels, channelUnits, width, height, hea
   const fetchingRef = useRef(false);
   const pendingRef  = useRef(false);
 
+  // Tracks whether replayRange has ever been truthy — used to distinguish initial
+  // mount (where null means "no replay yet") from a transition back to null
+  // (source was stopped) that should reset the view to live mode.
+  const replayEverSetRef = useRef(false);
+
   const prevLiveRef = useRef(true);
   const notifyLive = useCallback((live: boolean) => {
     viewRef.current.live = live;
@@ -235,9 +240,19 @@ export default function UPlotCanvas({ channels, channelUnits, width, height, hea
     fetchRef.current();
   }, [requestLive]);
 
-  // position graph over the full file range when a replay is loaded
+  // position graph over the full file range when a replay is loaded;
+  // reset to live mode when the source is stopped (replayRange goes null).
   useEffect(() => {
-    if (!replayRange) return;
+    if (!replayRange) {
+      if (replayEverSetRef.current) {
+        // Source was stopped — reset view so the RAF loop doesn't keep scrolling
+        // to an extrapolated head from the previous source.
+        viewRef.current = { startUs: 0, endUs: 0, live: true };
+        notifyLive(true);
+      }
+      return;
+    }
+    replayEverSetRef.current = true;
     viewRef.current = { startUs: replayRange.startUs, endUs: replayRange.endUs, live: false };
     notifyLive(false);
     fetchRef.current();

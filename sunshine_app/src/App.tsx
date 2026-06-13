@@ -20,8 +20,9 @@ export default function App() {
   const toggle = (key: string) =>
     setSelected(prev => prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key]);
 
-  // In replay mode, use 0 so the graph's live-scroll extrapolation is disabled.
-  const headTimeUs = state.sourceStatus.kind === 'Replay' ? 0 : (state.liveUpdate?.time_us ?? 0);
+  // Use 0 when there's no active live source so the RAF extrapolation is disabled.
+  const headTimeUs = (state.sourceStatus.kind === 'Replay' || state.sourceStatus.kind === 'Disconnected')
+    ? 0 : (state.liveUpdate?.time_us ?? 0);
 
   return (
     <div className="app">

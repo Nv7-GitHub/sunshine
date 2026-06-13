@@ -198,8 +198,7 @@ pub async fn start_simulation(state: State<'_, AppState>, app: AppHandle) -> Res
 
     {
         let mut pipe = state.pipeline.lock();
-        pipe.source = SourceKind::Simulation;
-        pipe.set_history_log(None);
+        pipe.begin_sim();
     }
 
     tokio::spawn(async move {
