@@ -54,9 +54,11 @@ fn dshot_to_throttle(dshot: f32) -> f64 {
     let d = dshot as f64;
     if d < DSHOT_MIN { return 0.0; }  // 0 = disarmed, 1–47 = special commands → coast
     if d >= DSHOT_NEUTRAL {
+        // 1048 → 0.0 (slowest fwd), 2047 → 1.0 (fastest fwd)
         (d - DSHOT_NEUTRAL) / (DSHOT_MAX - DSHOT_NEUTRAL)
     } else {
-        -((DSHOT_NEUTRAL - d) / (DSHOT_NEUTRAL - DSHOT_MIN))
+        // 48 → 0.0 (slowest rev), 1047 → -1.0 (fastest rev)
+        -((d - DSHOT_MIN) / (DSHOT_NEUTRAL - 1.0 - DSHOT_MIN))
     }
 }
 
