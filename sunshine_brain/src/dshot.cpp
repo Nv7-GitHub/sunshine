@@ -23,6 +23,66 @@ static DShotRMT dshot_right(PIN_DSHOT_RIGHT, DSHOT600, DSHOT_BIDIRECTIONAL);
 static float erpm_left_val  = 0.0f;
 static float erpm_right_val = 0.0f;
 
+// ── eRPM sanitising filter ──────────────────────────────────────────────────
+// Bidirectional-DShot telemetry carries only a weak 4-bit GCR checksum, so a
+// few percent of frames decode to wrong values: implausibly LOW eRPM (corrupt
+// = oversized period) or absurdly HIGH (tiny period → getTelemetry returns
+// ~6e7 eRPM, which then overflows the float16 telemetry field to +inf). Both
+// show up as the "dropouts" and inf spikes seen in recorded logs.
+//
+// The flywheel's huge rotational inertia means TRUE eRPM changes slowly, so any
+// large single-sample jump is a decode error, not real motion. Three-stage
+// clean-up, modelled and validated against logs/2026-06-12_..._spiritridge.sun
+// (driven-motor envelope-outlier rate fell from ~15% to ~0.2%, zero inf out):
+//   1. range-gate : reject decodes outside [0, ERPM_MAX]      — kills +inf source
+//   2. deviation-gate : reject a decode that deviates > {LO,HI}× the running
+//        median (only once the motor is clearly spinning, median > GATE_MIN) —
+//        rejects the low/high garbage cloud that a plain median can't outvote
+//   3. median-5 over accepted decodes                         — smooths residue
+// An ESCAPE counter prevents the gate from latching: after ERPM_ESCAPE
+// consecutive out-of-band decodes (a genuine fast change, e.g. a hard brake)
+// the ring is flushed to the new level. eRPM is telemetry-only (never read by
+// the Kalman/control), so the few-sample median lag is irrelevant to behaviour.
+static constexpr float ERPM_MAX      = 65000.0f;  // ~1100KV·8.5V·7pp; < f16 finite max (65504)
+static constexpr int   ERPM_MED_N    = 5;
+static constexpr float ERPM_GATE_MIN = 3000.0f;   // below this the gate is off (arming/idle)
+static constexpr float ERPM_GATE_LO  = 0.5f;      // accept band: [LO, HI] × running median
+static constexpr float ERPM_GATE_HI  = 1.7f;
+static constexpr int   ERPM_ESCAPE   = 6;         // consecutive rejects → accept (real change)
+
+struct ErpmFilter {
+    float ring[ERPM_MED_N] = {0, 0, 0, 0, 0};
+    int   count  = 0;
+    int   reject = 0;
+    float median() const {
+        if (count == 0) return 0.0f;
+        float tmp[ERPM_MED_N];
+        for (int i = 0; i < count; i++) tmp[i] = ring[i];
+        for (int i = 1; i < count; i++) {  // insertion sort (count ≤ 5)
+            float k = tmp[i]; int j = i - 1;
+            while (j >= 0 && tmp[j] > k) { tmp[j + 1] = tmp[j]; j--; }
+            tmp[j + 1] = k;
+        }
+        return tmp[count / 2];
+    }
+    // Feed one freshly-decoded eRPM; returns the current sanitised value.
+    float push(float v) {
+        if (!(v >= 0.0f && v <= ERPM_MAX)) return median();  // out of range → hold
+        float m = median();
+        if (count > 0 && m > ERPM_GATE_MIN && (v < ERPM_GATE_LO * m || v > ERPM_GATE_HI * m)) {
+            if (++reject < ERPM_ESCAPE) return median();      // transient outlier → reject/hold
+            for (int i = 0; i < ERPM_MED_N; i++) ring[i] = v; // sustained → flush to new level
+            count = ERPM_MED_N; reject = 0; return v;
+        }
+        reject = 0;
+        for (int i = ERPM_MED_N - 1; i > 0; i--) ring[i] = ring[i - 1];
+        ring[0] = v;
+        if (count < ERPM_MED_N) count++;
+        return median();
+    }
+};
+static ErpmFilter erpm_filt_left, erpm_filt_right;
+
 static char dshot_err[64];
 const char *dshot_last_error(void) { return dshot_err; }
 
@@ -68,8 +128,12 @@ void dshot_send(uint16_t left, uint16_t right) {
     // Retrieve any pending telemetry before the next transmission window.
     dshot_result_t telem_l = dshot_left .getTelemetry();
     dshot_result_t telem_r = dshot_right.getTelemetry();
-    if (telem_l.success) erpm_left_val  = (float)telem_l.erpm;
-    if (telem_r.success) erpm_right_val = (float)telem_r.erpm;
+    // Sanitise each freshly-decoded eRPM (see ErpmFilter above): range-gate +
+    // deviation-gate + median. push() handles all rejection internally and
+    // always returns the current clean value, so bad frames can't poison the
+    // logged/telemetered stream.
+    if (telem_l.success) erpm_left_val  = erpm_filt_left .push((float)telem_l.erpm);
+    if (telem_r.success) erpm_right_val = erpm_filt_right.push((float)telem_r.erpm);
 
     dshot_result_t res_l = dshot_left .sendThrottle(left);
     dshot_result_t res_r = dshot_right.sendThrottle(right);
