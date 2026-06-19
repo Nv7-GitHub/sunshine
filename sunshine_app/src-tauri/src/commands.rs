@@ -2,7 +2,7 @@
 
 use crate::{AppState,
             serial::{SerialConnection, list_ports as serial_list},
-            protocol::{ReceiverFrame, encode_ctrl, TelemetryFrame, INPUTS_PER_FRAME},
+            protocol::{ReceiverFrame, encode_ctrl, TelemetryFrame, INPUTS_PER_FRAME, STATUS_BRAIN_CONNECTED},
             pipeline::SourceKind,
             replay::{read_metadata, read_frame},
             simulation::Simulation,
@@ -46,9 +46,10 @@ pub async fn connect_serial(
     app:   AppHandle,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    let pipeline  = state.pipeline.clone();
-    let app2      = app.clone();
-    let port_name = port.clone();
+    let pipeline     = state.pipeline.clone();
+    let app2         = app.clone();
+    let port_name    = port.clone();
+    let controls_fc  = state.controls.clone();
 
     // Drop any existing connection first so the port is released before we try
     // to open it again (e.g. after switching away from live to replay and back).
@@ -72,9 +73,21 @@ pub async fn connect_serial(
                 let _ = app2.emit("live_update", update);
             }
             ReceiverFrame::Status { code, message } => {
-                // Brain (re)connect/disconnect is surfaced to the UI. Replay
-                // re-anchors from every packet's state (see ingest_frame), so a
-                // brain reset needs no special handling here.
+                if code == STATUS_BRAIN_CONNECTED {
+                    // Brain rebooted: clear the ring and reset epoch so timestamps
+                    // don't go backward (which breaks graph queries), then force
+                    // the app back to disabled since the brain always starts there.
+                    pipeline.lock().begin_live();
+                    {
+                        let mut ctrl = controls_fc.lock();
+                        ctrl.mode = 0;
+                        ctrl.ctrl_x = 0;
+                        ctrl.ctrl_y = 0;
+                        ctrl.ctrl_theta = 0;
+                        ctrl.ctrl_throttle = 0;
+                    }
+                    let _ = app2.emit("force_disabled", ());
+                }
                 let _ = app2.emit("source_status", serde_json::json!({
                     "kind": "Live", "code": code, "detail": message
                 }));

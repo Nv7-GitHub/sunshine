@@ -75,6 +75,11 @@ export function useKeyboard(mode: Mode, setMode: (m: Mode) => void): RefObject<I
         f.y = (f.y / fmag) * 127;
       }
 
+      if (mode === 0) {
+        t.throttle = 0;
+        f.throttle = 0;
+      }
+
       if (frame++ % 2 === 0 && mode !== 0) {
         invoke('set_controls', {
           x:        Math.round(f.x),

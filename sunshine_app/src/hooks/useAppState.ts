@@ -24,11 +24,13 @@ export function useAppState() {
       const v = e.payload;
       setReplayProgress(v < 0 ? null : v); // -1 sentinel = done
     }).catch(() => {});
+    const unsub5 = listen('force_disabled', () => setModeState(0)).catch(() => {});
     return () => {
       unsub1.then(f => typeof f === 'function' && f()).catch(() => {});
       unsub2.then(f => typeof f === 'function' && f()).catch(() => {});
       unsub3.then(f => typeof f === 'function' && f()).catch(() => {});
       unsub4.then(f => typeof f === 'function' && f()).catch(() => {});
+      unsub5.then(f => typeof f === 'function' && f()).catch(() => {});
     };
   }, []);
 
