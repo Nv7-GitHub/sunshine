@@ -129,6 +129,7 @@ export default function UPlotCanvas({ channels, channelUnits, width, height, hea
   const headRef    = useRef(headTimeUs);
   const headWallRef = useRef(performance.now()); // wall time (ms) when headTimeUs last changed
   const liveChgRef = useRef(onLiveChange);
+  const channelsRef = useRef(channels); // latest channels, to detect stale in-flight fetches
 
   // Capture wall time whenever the hardware head advances
   if (headRef.current !== headTimeUs) {
@@ -136,6 +137,7 @@ export default function UPlotCanvas({ channels, channelUnits, width, height, hea
     headRef.current     = headTimeUs;
   }
   liveChgRef.current = onLiveChange;
+  channelsRef.current = channels;
 
   // Concurrency guard: if a fetch is in flight when another is requested,
   // mark it pending and re-run immediately after the current one finishes.
@@ -168,22 +170,32 @@ export default function UPlotCanvas({ channels, channelUnits, width, height, hea
       const u = uRef.current;
       if (!u) return;
 
-      const startUs = toUs(viewRef.current.startUs);
-      const endUs   = toUs(viewRef.current.endUs);
+      const startUs   = toUs(viewRef.current.startUs);
+      const endUs     = toUs(viewRef.current.endUs);
+      // Snapshot live-ness now: this fetch's result must be painted according to
+      // the view it was requested for, not whatever view is current once the
+      // (possibly slow) backend round-trip resolves — otherwise a fetch issued
+      // for the old source/window can be misapplied after a source switch.
+      const wasLive   = viewRef.current.live;
+      const reqChannels = channels;
 
-      if (channels.length === 0) {
-        u.setData([[], ...channels.map(() => [])] as uPlot.AlignedData, false);
+      if (reqChannels.length === 0) {
+        u.setData([[], ...reqChannels.map(() => [])] as uPlot.AlignedData, false);
         return;
       }
 
       const maxPts = Math.round(Math.max(100, width));
-      const allPts = await Promise.all(channels.map(ch =>
-        invoke<[number, number][]>('get_graph_data', {
-          channel: ch, startUs, endUs, maxPoints: maxPts,
-        }).catch(() => [] as [number, number][])
-      ));
+      // Fetch all channels in a single backend call so they come from one
+      // consistent snapshot of the source. Querying each channel separately
+      // lets the source mutate in between (file swap, new live frames),
+      // producing series of mismatched length that corrupt the chart.
+      const allPts = await invoke<[number, number][][]>('get_graph_data_multi', {
+        channels: reqChannels, startUs, endUs, maxPoints: maxPts,
+      }).catch(() => reqChannels.map(() => [] as [number, number][]));
 
-      if (!uRef.current) return;
+      // Bail if a newer fetch superseded this one (uPlot may have been
+      // recreated for a different channel set in the meantime).
+      if (!uRef.current || reqChannels !== channelsRef.current) return;
 
       const times = allPts[0]?.map(([t]) => t) ?? [];
       const series: number[][] = [
@@ -191,7 +203,7 @@ export default function UPlotCanvas({ channels, channelUnits, width, height, hea
         ...allPts.map(pts => pts.slice(0, times.length).map(([, v]) => v)),
       ];
 
-      if (viewRef.current.live) {
+      if (wasLive) {
         // Scale is driven by the RAF loop for smooth 60 Hz scrolling.
         uRef.current.setData(series as uPlot.AlignedData, false);
       } else {

@@ -45,6 +45,7 @@ pub fn run() {
             commands::enable_logging,
             commands::disable_logging,
             commands::get_graph_data,
+            commands::get_graph_data_multi,
             commands::get_channel_snapshot,
         ])
         .run(tauri::generate_context!())

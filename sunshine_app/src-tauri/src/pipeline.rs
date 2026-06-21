@@ -295,6 +295,24 @@ impl Pipeline {
         Some(downsample_min_max(raw, max_points))
     }
 
+    /// Fetch multiple channels for the same window under a single pipeline lock,
+    /// so all returned series come from one consistent snapshot of the source
+    /// (replay cache or ring). Querying each channel via a separate lock
+    /// acquisition (one round-trip per channel) lets the source mutate between
+    /// calls — e.g. a file swap or new live frames arriving — producing series
+    /// of mismatched length/range that corrupt the chart when painted together.
+    pub fn get_graph_data_multi(
+        &mut self,
+        channels:   &[String],
+        start_us:   u64,
+        end_us:     u64,
+        max_points: u32,
+    ) -> Vec<Vec<(u64, f32)>> {
+        channels.iter()
+            .map(|ch| self.get_graph_data(ch, start_us, end_us, max_points))
+            .collect()
+    }
+
     pub fn get_channel_snapshot(&self, channels: &[String], time_us: Option<u64>) -> Vec<Option<f32>> {
         // Replay mode: data lives in replay_cache, not the ring.
         if self.source == SourceKind::Replay {
@@ -551,5 +569,21 @@ mod tests {
         p.ingest_frame(&make_frame([input; INPUTS_PER_FRAME]));
         let vals = p.get_channel_snapshot(&["not.a.channel".to_string()], None);
         assert_eq!(vals[0], Some(0.0));
+    }
+
+    #[test]
+    fn graph_data_multi_returns_equal_length_series_for_same_window() {
+        let mut p = Pipeline::new();
+        for i in 0..5u32 {
+            let input = SunshineInput { time_us: i * 1_000_000, ctrl_x: i as i8, ..SunshineInput::default() };
+            p.ingest_frame(&make_frame([input; INPUTS_PER_FRAME]));
+        }
+        let channels = vec!["input.ctrl_x".to_string(), "input.ctrl_y".to_string()];
+        let series = p.get_graph_data_multi(&channels, 0, 5_000_000, 1000);
+        assert_eq!(series.len(), 2);
+        // Same window, same underlying data -> every channel's series must be
+        // the same length, otherwise the chart can't align them by index.
+        assert_eq!(series[0].len(), series[1].len());
+        assert!(!series[0].is_empty());
     }
 }

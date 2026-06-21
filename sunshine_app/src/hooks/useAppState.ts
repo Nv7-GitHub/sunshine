@@ -57,8 +57,8 @@ export function useAppState() {
     setLiveUpdate(null); // clear stale live data
   }, []);
 
-  const stopSource = useCallback(() => {
-    invoke('stop_source');
+  const stopSource = useCallback(async () => {
+    await invoke('stop_source');
     setReplayRange(null);
   }, []);
 

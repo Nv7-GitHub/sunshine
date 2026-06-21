@@ -24,6 +24,12 @@ export default function App() {
   const headTimeUs = (state.sourceStatus.kind === 'Replay' || state.sourceStatus.kind === 'Disconnected')
     ? 0 : (state.liveUpdate?.time_us ?? 0);
 
+  // Derive (rather than separately reset) so switching to Live/Sim directly —
+  // without first clicking "Close Replay" — can't leave the graph pinned to a
+  // stale file's window: it falls back to live mode the moment sourceStatus
+  // stops reporting 'Replay'.
+  const replayRange = state.sourceStatus.kind === 'Replay' ? state.replayRange : null;
+
   return (
     <div className="app">
       <TopBar
@@ -43,7 +49,7 @@ export default function App() {
         onToggle={toggle}
         headTimeUs={headTimeUs}
         requestLive={liveRequest}
-        replayRange={state.replayRange}
+        replayRange={replayRange}
         onCursorMove={setCursorUs}
         onLiveChange={setIsGraphLive}
       />

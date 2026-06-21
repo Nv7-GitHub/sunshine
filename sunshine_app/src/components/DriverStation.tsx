@@ -125,7 +125,7 @@ interface Props {
   liveUpdate:     LiveUpdate | null;
   inputRef:       RefObject<InputState>;
   loadReplay:     (path: string) => Promise<void>;
-  stopSource:     () => void;
+  stopSource:     () => Promise<void>;
 }
 
 export default function DriverStation({ mode, setMode, sourceStatus, liveUpdate, inputRef, loadReplay, stopSource }: Props) {
@@ -291,7 +291,11 @@ export default function DriverStation({ mode, setMode, sourceStatus, liveUpdate,
             {sourceStatus.kind === 'Sim' ? (
               <button className="source-btn source-btn-stop" onClick={stopSource}>Stop</button>
             ) : (
-              <button className="source-btn source-btn-start" onClick={() => { stopSource(); invoke('start_simulation'); setMode(1); }}>
+              <button className="source-btn source-btn-start" onClick={async () => {
+                await stopSource();
+                await invoke('start_simulation');
+                setMode(1);
+              }}>
                 Start Simulation
               </button>
             )}

@@ -55,6 +55,11 @@ pub async fn connect_serial(
     // to open it again (e.g. after switching away from live to replay and back).
     *state.serial_conn.lock() = None;
 
+    // Stop any running simulation loop — it ingests frames on its own tokio task
+    // independently of `source`, so without this it would keep writing into the
+    // same ring concurrently with the live reader thread we're about to start.
+    state.sim_stop.store(true, Ordering::Relaxed);
+
     // Mark the source Live BEFORE opening the port, so frames arriving on the
     // reader thread are re-anchored from their transmitted state (ingest_frame).
     {
@@ -163,6 +168,12 @@ pub async fn load_replay(path: String, state: State<'_, AppState>, app: AppHandl
     let meta     = read_metadata(&path_buf).map_err(|e| e.to_string())?;
     let (start_us, end_us) = crate::replay::log_time_range(&meta).map_err(|e| e.to_string())?;
 
+    // Stop any live/sim producer — both ingest frames into the ring on their own
+    // thread/task independently of `source`, so leaving one running while replay
+    // is active would let it keep mutating shared pipeline state in the background.
+    *state.serial_conn.lock() = None;
+    state.sim_stop.store(true, Ordering::Relaxed);
+
     {
         let mut pipe = state.pipeline.lock();
         pipe.source = SourceKind::Replay;
@@ -203,6 +214,11 @@ pub async fn start_simulation(state: State<'_, AppState>, app: AppHandle) -> Res
     let pipeline  = state.pipeline.clone();
     let controls  = state.controls.clone();
     let stop_flag = state.sim_stop.clone();
+
+    // Stop any live producer first — the serial reader thread ingests frames
+    // independently of `source`, so leaving it connected would race the sim
+    // loop's writes into the same ring.
+    *state.serial_conn.lock() = None;
     stop_flag.store(false, Ordering::Relaxed);
 
     let _ = app.emit("source_status", serde_json::json!({
@@ -339,6 +355,17 @@ pub fn get_graph_data(
     state:      State<'_, AppState>,
 ) -> Vec<(u64, f32)> {
     state.pipeline.lock().get_graph_data(&channel, start_us, end_us, max_points)
+}
+
+#[tauri::command]
+pub fn get_graph_data_multi(
+    channels:   Vec<String>,
+    start_us:   u64,
+    end_us:     u64,
+    max_points: u32,
+    state:      State<'_, AppState>,
+) -> Vec<Vec<(u64, f32)>> {
+    state.pipeline.lock().get_graph_data_multi(&channels, start_us, end_us, max_points)
 }
 
 fn build_live_update(telem: &TelemetryFrame) -> serde_json::Value {
