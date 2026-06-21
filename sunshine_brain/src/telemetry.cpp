@@ -19,14 +19,16 @@ struct TelemetryEntry {
     SunshineInput  input;
     SunshineState  state;
 };
-static RingBuffer<TelemetryEntry, 32> telem_ring;  // N=32 (power of 2; plan said 40 which is not)
+static RingBuffer<TelemetryEntry, 64> telem_ring;  // >= INPUTS_PER_FRAME + jitter margin (power of 2)
 
 // ── ESP-NOW TX frame ──────────────────────────────────────────────────────────
-// ESP-NOW maximum payload is 250 bytes.
-// Frame layout: frame_id(2) + type(1) + SunshineState(60) + SunshineInput[6](6*29=174) = 237 bytes
-// (fits within 250-byte limit)
-static constexpr int  INPUTS_PER_FRAME  = 6;
+// ESP-NOW v2 (IDF >= 5.4) raises the max payload from 250 to 1490 bytes, which
+// lets us send the README-intended 50 Hz frame: one packet per 20 inputs.
+// Frame layout: frame_id(2) + type(1) + SunshineState(60) + SunshineInput[20](20*29=580) = 643 bytes.
+static constexpr int  INPUTS_PER_FRAME  = 20;
 static constexpr int  FRAME_SIZE        = 2 + 1 + (int)sizeof(SunshineState) + INPUTS_PER_FRAME * (int)sizeof(SunshineInput);
+static_assert(FRAME_SIZE <= ESP_NOW_MAX_DATA_LEN_V2,
+              "telemetry frame exceeds ESP-NOW v2 max payload (needs IDF >= 5.4)");
 static uint8_t        tx_frame[FRAME_SIZE];
 static uint16_t       tx_frame_id = 0;
 static int            drain_count = 0;

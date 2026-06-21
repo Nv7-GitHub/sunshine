@@ -48,18 +48,23 @@ Header (95 bytes, FILE_FORMAT_VER 2):
   source          = 0=live, 1=replay, 2=simulation (uint8)
   flags           = bit0=logging_complete (uint8)
   label[64]       = null-terminated UTF-8
-  num_inputs      = uint16 LE               ← VER 2 ONLY: inputs per frame (currently 6)
+  num_inputs      = uint16 LE               ← VER 2 ONLY: inputs per frame (now 20; early VER 2 logs were 6)
 
-Frame (295 bytes at schema v2, ~167 Hz):
-  frame_id        = uint32 LE, monotonic (gaps = dropped telemetry)
-  frame_flags     = bit0=vars_valid (uint8)
-  SunshineState   = 60 bytes (state at START of frame, before inputs)
-  SunshineInput×6 = 174 bytes (6 consecutive 1 kHz inputs)  ← was ×20 in VER 1
-  SunshineVars    = 56 bytes (computed after all 6 steps)
+Frame (701 bytes at num_inputs=20, 50 Hz):
+  frame_id         = uint32 LE, monotonic (gaps = dropped telemetry)
+  frame_flags      = bit0=vars_valid (uint8)
+  SunshineState    = 60 bytes (state at START of frame, before inputs)
+  SunshineInput×20 = 580 bytes (20 consecutive 1 kHz inputs)  ← was ×6 in early VER 2 logs
+  SunshineVars     = 56 bytes (computed after all 20 steps)
 ```
 
+The brain now sends one 50 Hz telemetry packet per 20 inputs over **ESP-NOW v2**
+(643-byte payload; the old 250-byte cap had forced 6-input/~167 Hz frames). The
+larger per-packet buffer also cuts the telemetry packet rate ~3.3×, relieving the
+ring-buffer backpressure that was dropping ~5% of 1 kHz inputs.
+
 **Frame size formula:** `5 + sizeof_state + sizeof_input × num_inputs + sizeof_vars`
-Always read `num_inputs` from the header (bytes [93..94]) — do NOT hardcode 20.
+Always read `num_inputs` from the header (bytes [93..94]) — do NOT hardcode it.
 
 **SunshineVars field order** (56 bytes packed):
 ```
@@ -76,7 +81,7 @@ float  heading_deg;         ← 4 bytes (added in schema v2; was not in 52-byte 
 
 All channels are available in the host app's channel selector when replaying. The same list is available to the replay-debug skill.
 
-**Inputs (1 kHz, 6 per frame in current VER 2 files):**
+**Inputs (1 kHz, 20 per frame in current VER 2 files):**
 - `inputs.time_us` — timestamp in µs
 - `inputs.accel_x/y/z` — raw ADXL375 counts
 - `inputs.mag_x/y/z` — raw LIS3MDL counts
@@ -176,3 +181,74 @@ The replay always uses the currently compiled `sunshine_step()` — changing con
 - **Zoom:** Ctrl+scroll
 - **Pan:** Scroll
 - **Time reference:** x-axis is `time_us` from `SunshineInput`, so it matches the robot's boot clock.
+
+---
+
+## Offline replay harness (`tools/replay/`) — CLI, no app required
+
+For quick command-line analysis of a `.sun` file (CI, scripts, ad-hoc debugging)
+without spinning up the Tauri app, use the standalone replay harness. It **links
+the real `sunshine_core` sources** (no logic is reimplemented) and re-runs the
+log's 1 kHz inputs through `sunshine_step()`, dumping every recomputed channel as
+CSV at the full 1 kHz rate. This is the same code path the app's replay uses;
+it's just a thin IO/glue layer so the parsing never has to be rewritten per task.
+
+**Files:**
+- `tools/replay/replay.c` — the harness (reads header-driven sizes + `num_inputs`,
+  so it adapts to schema/format changes; unpacks fields from the packed on-disk
+  offsets, never memcpy, so MSVC padding is irrelevant).
+- `tools/replay/CMakeLists.txt` — cross-platform build (Windows MSVC / macOS /
+  Linux). Also builds the `sunshine_core` unit tests on any toolchain.
+- `tools/replay/msvc_compat.h` — force-included **only on MSVC** to strip GCC's
+  `__attribute__((packed))` (native on gcc/clang).
+- `tools/replay/analyze.py` — example analyses over the CSV (validate / gaps /
+  precession). Reads only the CSV; reimplements no robot logic.
+
+**Build (cross-platform — needs CMake + any C compiler):**
+```bash
+cd tools/replay
+cmake -B build -S .          # configure (auto-detects MSVC / gcc / clang)
+cmake --build build          # -> build/replay(.exe)  (+ test_* exes)
+ctest --test-dir build       # run the sunshine_core unit tests
+```
+The `replay` binary lands in `build/` (or `build/Debug/` with the MSVC
+multi-config generator). Examples below write to `/tmp`; on Windows use any
+writable path.
+
+**Run:**
+```bash
+# Continuous replay (seed state ONCE, free-run) — faithful 1 kHz trajectory:
+build/replay LOG.sun > cont.csv
+# Per-frame replay (re-seed from each frame's stored state) — for validation:
+build/replay LOG.sun --reseed > reseed.csv
+# Restrict to a time window (boot-clock microseconds):
+build/replay LOG.sun --from-us 89628463 --to-us 90539463 > window.csv
+```
+
+CSV columns: `time_us, mode, kf_theta, kf_omega, omega_accel, mag_angle,
+est_theta, est_omega, derot_I, derot_Q, heading_deg, led_on, mag_valid,
+accel_sat, dshot_l, dshot_r, mag_x, mag_y, accel_x, accel_y, theta_offset,`
+and (frame-end rows only) `stored_est_theta, stored_mag_angle, stored_led_on`.
+The `stored_*` columns are the **real on-robot** values from the file — pair them
+with `--reseed` to validate replay reproduces the robot bit-for-bit.
+
+**`--reseed` vs continuous:** `--reseed` seeds state from each frame's logged
+"state at start" and should reproduce the stored vars *exactly* (replay
+determinism check). Continuous free-runs from the first frame; to keep that
+faithful when the log has dropped 1 kHz inputs, the harness **dead-reckons the
+filter across detected timestamp gaps** (the robot ran 1 kHz continuously — only
+the telemetry link dropped frames). Use `analyze.py gaps` to see the drop rate.
+
+**Example analyses:**
+```bash
+python ../analyze.py validate   reseed.csv  # replay == real? (~0 deg)   [path: tools/replay/analyze.py]
+python ../analyze.py gaps        cont.csv    # dropped-input check
+python ../analyze.py precession  cont.csv    # LED drift vs raw-mag truth
+```
+
+The `precession` check is a useful pattern: it derives **ground-truth spin rate
+straight from the raw magnetometer** (the field vector rotates once per
+revolution about its hard-iron centre), independent of the filter, and compares
+it to the LED heading-reference rate. Any difference is how fast the LED dot
+precesses. The same raw-mag trick gives a filter-independent reference for
+`est_omega` and `omega_from_accel` accuracy.

@@ -2,9 +2,9 @@
 // Core 0: ESP-NOW receive callback — stores latest brain telemetry frame
 // into a double buffer; signals Core 1 when a new frame is ready.
 //
-// Note: compiled against espressif32@6.0.0 (IDF 4.4). IDF 4.x recv callback
-// does not expose RSSI; call espnow_rx_update_rssi() from a promiscuous
-// sniffer task if receiver-side RSSI reporting is needed.
+// Note: compiled against the pioarduino IDF-5.x platform (ESP-NOW v2). The IDF-5
+// recv callback takes esp_now_recv_info_t and exposes RSSI directly via
+// info->rx_ctrl->rssi, so no promiscuous sniffer is needed.
 
 #include "config.h"
 #include "protocol.h"
@@ -28,10 +28,9 @@ static SemaphoreHandle_t rssi_mutex;    // protects brain_rssi
 static volatile uint32_t last_brain_frame_ms = 0;
 static volatile bool     brain_connected     = false;
 
-// ── Called from Core 0 ESP-NOW task ─────────────────────────────────────────
-static void on_espnow_recv(const uint8_t *mac_addr,
+// ── Called from Core 0 ESP-NOW task (IDF-5 recv callback signature) ──────────
+static void on_espnow_recv(const esp_now_recv_info_t *info,
                            const uint8_t *data, int len) {
-    (void)mac_addr;
     if (len != (int)ESPNOW_TELEM_SIZE) return;  // wrong size — ignore
 
     // Validate first 3 bytes: frame_id(2) + type=0x01
@@ -41,6 +40,9 @@ static void on_espnow_recv(const uint8_t *mac_addr,
     int next = 1 - write_idx;
     memcpy(telem_buf[next], data, ESPNOW_TELEM_SIZE);
     write_idx = next;
+
+    // Receiver-side RSSI is available directly in IDF 5.x
+    if (info && info->rx_ctrl) espnow_rx_update_rssi(info->rx_ctrl->rssi);
 
     // Track brain connection
     last_brain_frame_ms = (uint32_t)millis();

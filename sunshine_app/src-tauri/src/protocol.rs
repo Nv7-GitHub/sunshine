@@ -1,4 +1,5 @@
 use crate::ffi::{SunshineInput, SunshineState};
+use std::mem::size_of;
 
 pub const FRAME_START: u8 = 0xAA;
 pub const TYPE_TELEM_FRAME: u8 = 0x01;
@@ -11,10 +12,11 @@ pub const STATUS_OK:                 u8 = 0x00;
 pub const STATUS_BRAIN_CONNECTED:    u8 = 0x01;
 pub const STATUS_BRAIN_DISCONNECTED: u8 = 0x02;
 
-// Brain sends 6 inputs per ESP-NOW packet (250-byte ESP-NOW limit prevents 20).
-// 2 (frame_id) + 1 (type) + 60 (SunshineState) + 6×29 (SunshineInput) = 237
-pub const ESPNOW_TELEM_SIZE: usize = 237;
-pub const INPUTS_PER_FRAME:  usize = 6;
+// Brain sends 20 inputs per ESP-NOW v2 packet @ 50 Hz (IDF >= 5.4 lifts the old
+// 250-byte cap to 1490). Layout: 2 (frame_id) + 1 (type) + SunshineState +
+// 20×SunshineInput. Derived from the structs so it can never drift from the FFI.
+pub const INPUTS_PER_FRAME:  usize = 20;
+pub const ESPNOW_TELEM_SIZE: usize = 3 + size_of::<SunshineState>() + INPUTS_PER_FRAME * size_of::<SunshineInput>();
 const MAX_USB_PAYLOAD_SIZE: usize = ESPNOW_TELEM_SIZE;
 
 #[derive(Debug, Clone)]
@@ -124,17 +126,35 @@ pub fn parse_frame(frame_type: u8, payload: &[u8]) -> Option<ReceiverFrame> {
 
 fn parse_telem(payload: &[u8]) -> TelemetryFrame {
     let frame_id = u16::from_le_bytes(payload[0..2].try_into().unwrap());
+    let st = size_of::<SunshineState>();
+    let isz = size_of::<SunshineInput>();
     let state: SunshineState = unsafe {
-        std::ptr::read_unaligned(payload[3..3+60].as_ptr() as *const SunshineState)
+        std::ptr::read_unaligned(payload[3..3+st].as_ptr() as *const SunshineState)
     };
     let mut inputs = [SunshineInput::default(); INPUTS_PER_FRAME];
-    for i in 0..INPUTS_PER_FRAME {
-        let off = 63 + i * 29;
-        inputs[i] = unsafe {
-            std::ptr::read_unaligned(payload[off..off+29].as_ptr() as *const SunshineInput)
+    for (i, inp) in inputs.iter_mut().enumerate() {
+        let off = 3 + st + i * isz;
+        *inp = unsafe {
+            std::ptr::read_unaligned(payload[off..off+isz].as_ptr() as *const SunshineInput)
         };
     }
     TelemetryFrame { frame_id, state, inputs }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn telem_frame_size_matches_structs_and_parses_20_inputs() {
+        assert_eq!(INPUTS_PER_FRAME, 20);
+        let expect = 3 + size_of::<SunshineState>() + 20 * size_of::<SunshineInput>();
+        assert_eq!(ESPNOW_TELEM_SIZE, expect, "frame size constant must match structs");
+        let mut payload = vec![0u8; ESPNOW_TELEM_SIZE];
+        payload[0] = 0x34; payload[1] = 0x12;          // frame_id = 0x1234
+        let f = parse_telem(&payload);
+        assert_eq!(f.frame_id, 0x1234);
+        assert_eq!(f.inputs.len(), INPUTS_PER_FRAME);
+    }
 }
 
 pub fn encode_ctrl(mode: u8, x: i8, y: i8, theta: i8, throttle: u8) -> Vec<u8> {

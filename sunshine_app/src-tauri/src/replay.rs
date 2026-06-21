@@ -13,7 +13,7 @@ pub struct LogMetadata {
     pub sizeof_input:   u16,
     pub sizeof_state:   u16,
     pub sizeof_vars:    u16,
-    pub num_inputs:     u16,  // inputs per frame; 6 for VER 2, defaulted to 20 for VER 1
+    pub num_inputs:     u16,  // inputs per frame, read from header (20 now; was 6 in early VER 2 logs; VER 1 = 20)
     pub created_at_ms:  u64,
     pub source:         u8,
     pub label:          String,

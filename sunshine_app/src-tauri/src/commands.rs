@@ -272,8 +272,8 @@ pub async fn start_simulation(state: State<'_, AppState>, app: AppHandle) -> Res
             let update = build_live_update(&telem);
             let _ = app.emit("live_update", update);
 
-            // 6 inputs × 1 ms each → sleep 6 ms to run at 1:1 real-time
-            tokio::time::sleep(tokio::time::Duration::from_millis(6)).await;
+            // INPUTS_PER_FRAME inputs × 1 ms each → sleep that long for 1:1 real-time
+            tokio::time::sleep(tokio::time::Duration::from_millis(INPUTS_PER_FRAME as u64)).await;
         }
 
         let _ = app.emit("source_status", serde_json::json!({

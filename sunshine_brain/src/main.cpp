@@ -22,8 +22,8 @@ static void error_halt(int blink_count, const char *msg) {
     Serial.printf("FATAL INIT ERROR: %s (blink=%d)\n", msg, blink_count);
     while (true) {
         for (int i = 0; i < blink_count; i++) {
-            analogWrite(PIN_LED, LED_DUTY); delay(50);
-            analogWrite(PIN_LED, 0);        delay(50);
+            analogWrite(PIN_LED, LED_DUTY_IDLE); delay(50);
+            analogWrite(PIN_LED, 0);             delay(50);
         }
         delay(1000);
         Serial.printf("ERROR: %s\n", msg);  // repeat for late USB attach

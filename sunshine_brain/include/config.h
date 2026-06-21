@@ -33,12 +33,14 @@ static constexpr float BATT_ADC_SCALE = (3.3f / 4095.0f) * 3.0f;
 
 // ── LED ───────────────────────────────────────────────────────────────────────
 #define PIN_LED          38
-// Full brightness in production; 5% during bringup so it's not blinding at a desk.
-#if BRINGUP_LEVEL == 0
-#  define LED_DUTY  255
-#else
-#  define LED_DUTY  13
-#endif
+// Duty levels for analogWrite (8-bit, 0..255).
+// Heading flash (TANK/MELTY): ALWAYS full brightness — only shown while spinning,
+// where it must be visible in daylight, so it's never dimmed by bringup level.
+#define LED_DUTY_ACTIVE  255
+// DISABLED "breathe" and the sensor-init-error blink: a dim "board alive"
+// indicator. Kept low at all times (the robot is stationary on a desk when
+// these show), independent of bringup level. Tune to taste.
+#define LED_DUTY_IDLE    40
 
 // ── Timing ────────────────────────────────────────────────────────────────────
 static constexpr uint32_t LOOP_INTERVAL_US   = 1000;  // 1 kHz
