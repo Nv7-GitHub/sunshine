@@ -100,9 +100,12 @@ int main(int argc, char **argv){
     uint16_t sz_st    = rd_u16(hdr+15);
     uint16_t sz_var   = rd_u16(hdr+17);
     uint16_t num_in   = (file_ver>=2) ? rd_u16(hdr+93) : 20;
-    long frame_sz = 5 + sz_st + (long)sz_in*num_in + sz_var;
-    fprintf(stderr,"ver=%u header=%u sizeof(in/st/var)=%u/%u/%u num_inputs=%u frame_sz=%ld\n",
-            file_ver, header_sz, sz_in, sz_st, sz_var, num_in, frame_sz);
+    /* VER >= 3: two state snapshots per frame (start + midpoint → 100 Hz) and no
+       vars block. Earlier versions: one state + a vars block. */
+    uint16_t num_states = (file_ver>=3) ? 2 : 1;
+    long frame_sz = 5 + (long)sz_st*num_states + (long)sz_in*num_in + sz_var;
+    fprintf(stderr,"ver=%u header=%u sizeof(in/st/var)=%u/%u/%u num_states=%u num_inputs=%u frame_sz=%ld\n",
+            file_ver, header_sz, sz_in, sz_st, sz_var, num_states, num_in, frame_sz);
 
     fseek(f, header_sz, SEEK_SET);
     uint8_t *fb = (uint8_t*)malloc(frame_sz);
@@ -119,11 +122,14 @@ int main(int argc, char **argv){
            "stored_est_theta,stored_mag_angle,stored_led_on\n");
 
     while (fread(fb,1,frame_sz,f)==(size_t)frame_sz){
-        SunshineState frame_state; unpack_state(fb+5, &frame_state);
-        StoredVars sv; unpack_vars(fb+5+sz_st+(long)sz_in*num_in, &sv);
+        SunshineState frame_state; unpack_state(fb+5, &frame_state);   /* state_start */
+        /* Stored vars exist only in VER 2 (sz_var>0); VER 3 logs none, so the
+           stored_* validation columns are left at 0 there. */
+        StoredVars sv; memset(&sv, 0, sizeof(sv));
+        if (sz_var > 0) unpack_vars(fb + 5 + (long)sz_st*num_states + (long)sz_in*num_in, &sv);
         if (reseed) st = frame_state;
 
-        const uint8_t *inbase = fb + 5 + sz_st;
+        const uint8_t *inbase = fb + 5 + (long)sz_st*num_states;
         for (uint16_t k=0;k<num_in;k++){
             SunshineInput in; unpack_input(inbase + (long)k*sz_in, &in);
             if (from_us>=0 && (long long)in.time_us < from_us) continue;

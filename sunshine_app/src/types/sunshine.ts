@@ -23,13 +23,43 @@ export interface LogStatus {
   frame_count: number;
 }
 
+// Channels are grouped Inputs / Real / Replayed. State has separate real vs
+// replayed values, and so do the variables (vars are recomputed by the host from
+// state+inputs). REAL = filter re-anchored to the logged real state each frame
+// (+ midpoint, 100 Hz) → reproduces the robot. REPLAYED = filter free-running
+// from the first frame → what the current code does across the whole record.
+// Each real.X has a matching rep.X so the two series can be compared directly.
+const REAL_REP_FIELDS = [
+  { suffix: 'kf_theta',         label: 'θ',             unit: 'rad' },
+  { suffix: 'kf_omega',         label: 'ω',             unit: 'rad/s' },
+  { suffix: 'theta_offset',     label: 'θ offset',      unit: 'rad' },
+  { suffix: 'heading_deg',      label: 'Heading',       unit: '°' },
+  { suffix: 'dshot_left',       label: 'DShot L',       unit: '' },
+  { suffix: 'dshot_right',      label: 'DShot R',       unit: '' },
+  { suffix: 'omega_from_accel', label: 'ω from accel',  unit: 'rad/s' },
+  { suffix: 'centripetal_ms2',  label: 'Centripetal',   unit: 'm/s²' },
+  { suffix: 'mag_angle',        label: 'Mag angle',     unit: 'rad' },
+  { suffix: 'derot_i',          label: 'Derot I',       unit: 'µT' },
+  { suffix: 'derot_q',          label: 'Derot Q',       unit: 'µT' },
+  { suffix: 'erpm_left',        label: 'eRPM L',        unit: 'RPM' },
+  { suffix: 'erpm_right',       label: 'eRPM R',        unit: 'RPM' },
+  { suffix: 'batt_voltage',     label: 'Battery',       unit: 'V' },
+] as const;
+
+const realRep = (prefix: 'real' | 'rep') =>
+  REAL_REP_FIELDS.map(f => ({ key: `${prefix}.${f.suffix}`, label: f.label, unit: f.unit }));
+
 export const CHANNELS = {
   Inputs: [
     { key: 'input.accel_x',       label: 'Accel X',       unit: 'counts' },
     { key: 'input.accel_y',       label: 'Accel Y',       unit: 'counts' },
     { key: 'input.accel_z',       label: 'Accel Z',       unit: 'counts' },
+    { key: 'input.accel_x_ms2',   label: 'Accel X',       unit: 'm/s²' },
+    { key: 'input.accel_y_ms2',   label: 'Accel Y',       unit: 'm/s²' },
+    { key: 'input.accel_z_ms2',   label: 'Accel Z',       unit: 'm/s²' },
     { key: 'input.mag_x',         label: 'Mag X',         unit: 'counts' },
     { key: 'input.mag_y',         label: 'Mag Y',         unit: 'counts' },
+    { key: 'input.mag_magnitude', label: 'Mag |B|',       unit: 'µT' },
     { key: 'input.erpm_left',     label: 'eRPM L (raw)',  unit: 'counts' },
     { key: 'input.erpm_right',    label: 'eRPM R (raw)',  unit: 'counts' },
     { key: 'input.ctrl_x',        label: 'Ctrl X',        unit: '' },
@@ -39,33 +69,6 @@ export const CHANNELS = {
     { key: 'input.rssi',          label: 'RSSI (brain)',  unit: 'dBm' },
     { key: 'input.batt_offset',   label: 'Batt Offset',   unit: 'LSB' },
   ],
-  'State (Real)': [
-    { key: 'hw.kf_theta',         label: 'θ',             unit: 'rad' },
-    { key: 'hw.kf_omega',         label: 'ω',             unit: 'rad/s' },
-    { key: 'hw.theta_offset',     label: 'θ offset',      unit: 'rad' },
-    { key: 'hw.dshot_left',       label: 'DShot L',       unit: '' },
-    { key: 'hw.dshot_right',      label: 'DShot R',       unit: '' },
-  ],
-  'State (Replayed)': [
-    { key: 'rep.est_theta',       label: 'θ',             unit: 'rad' },
-    { key: 'rep.est_omega',       label: 'ω',             unit: 'rad/s' },
-    { key: 'rep.theta_offset',    label: 'θ offset',      unit: 'rad' },
-    { key: 'rep.dshot_left',      label: 'DShot L',       unit: '' },
-    { key: 'rep.dshot_right',     label: 'DShot R',       unit: '' },
-  ],
-  Variables: [
-    { key: 'input.accel_x_ms2',   label: 'Accel X',       unit: 'm/s²' },
-    { key: 'input.accel_y_ms2',   label: 'Accel Y',       unit: 'm/s²' },
-    { key: 'input.accel_z_ms2',   label: 'Accel Z',       unit: 'm/s²' },
-    { key: 'input.mag_magnitude', label: 'Mag |B|',       unit: 'µT' },
-    { key: 'rep.heading_deg',      label: 'Heading',      unit: '°' },
-    { key: 'rep.omega_from_accel', label: 'ω from accel', unit: 'rad/s' },
-    { key: 'rep.centripetal_ms2',  label: 'Centripetal',  unit: 'm/s²' },
-    { key: 'rep.mag_angle',        label: 'Mag angle',    unit: 'rad' },
-    { key: 'rep.derot_i',          label: 'Derot I',      unit: 'µT' },
-    { key: 'rep.derot_q',          label: 'Derot Q',      unit: 'µT' },
-    { key: 'rep.erpm_left',        label: 'eRPM L',       unit: 'RPM' },
-    { key: 'rep.erpm_right',       label: 'eRPM R',       unit: 'RPM' },
-    { key: 'rep.batt_voltage',     label: 'Battery',      unit: 'V' },
-  ],
+  Real:     realRep('real'),
+  Replayed: realRep('rep'),
 } as const;

@@ -33,89 +33,93 @@ The host app shows the current log file path in the logging status bar.
 
 ## Log file format (for reference)
 
-**Current format is FILE_FORMAT_VER 2 (95-byte header).** VER 1 files (93-byte header, 20 inputs/frame) are rare and from early sessions.
+**Current format is FILE_FORMAT_VER 3 (95-byte header).** Readers must still
+handle VER 2 (one state + a vars block) and VER 1 (93-byte header) for old logs.
 
 ```
-Header (95 bytes, FILE_FORMAT_VER 2):
+Header (95 bytes, FILE_FORMAT_VER 3):
   magic[5]        = "SHINE"
-  file_format     = 2 (uint16 LE)           ← was 1 in old files
-  header_size     = 95 (uint16 LE)          ← was 93 in old files
+  file_format     = 3 (uint16 LE)           ← 2 in older files
+  header_size     = 95 (uint16 LE)          ← was 93 in VER 1
   schema_version  = uint32 LE               (bumped when structs change)
   sizeof_input    = 29 (uint16 LE)
   sizeof_state    = 60 (uint16 LE)
-  sizeof_vars     = 56 (uint16 LE)          ← was 52 in old files (heading_deg added)
+  sizeof_vars     = 0  (uint16 LE)          ← VER 3: NO vars block (was 56 in VER 2)
   created_at_ms   = Unix timestamp ms (uint64 LE)
   source          = 0=live, 1=replay, 2=simulation (uint8)
   flags           = bit0=logging_complete (uint8)
   label[64]       = null-terminated UTF-8
-  num_inputs      = uint16 LE               ← VER 2 ONLY: inputs per frame (now 20; early VER 2 logs were 6)
+  num_inputs      = uint16 LE               ← inputs per frame (20)
 
-Frame (701 bytes at num_inputs=20, 50 Hz):
+Frame (821 bytes at num_inputs=20, schema v2): VER 3 carries TWO states, no vars
   frame_id         = uint32 LE, monotonic (gaps = dropped telemetry)
-  frame_flags      = bit0=vars_valid (uint8)
-  SunshineState    = 60 bytes (state at START of frame, before inputs)
-  SunshineInput×20 = 580 bytes (20 consecutive 1 kHz inputs)  ← was ×6 in early VER 2 logs
-  SunshineVars     = 56 bytes (computed after all 20 steps)
+  frame_flags      = uint8
+  SunshineState    = 60 bytes  (REAL state at the START of the frame)
+  SunshineState    = 60 bytes  (REAL state at the MIDPOINT input → 100 Hz state)
+  SunshineInput×20 = 580 bytes (20 consecutive 1 kHz inputs)
 ```
 
-The brain now sends one 50 Hz telemetry packet per 20 inputs over **ESP-NOW v2**
-(643-byte payload; the old 250-byte cap had forced 6-input/~167 Hz frames). The
-larger per-packet buffer also cuts the telemetry packet rate ~3.3×, relieving the
-ring-buffer backpressure that was dropping ~5% of 1 kHz inputs.
+Two state snapshots per 50 Hz frame give the **real filter state at 100 Hz**.
+**Vars are NOT logged** — they are a pure function of (state, inputs); the host
+recomputes them, both a *real* series (filter re-anchored to the logged state
+each frame + midpoint) and a *replayed* series (filter free-running from the
+first frame). The brain sends one 50 Hz packet per 20 inputs over **ESP-NOW v2**
+(703-byte payload = 3 + 2×60 + 20×29; the old 250-byte cap had forced
+6-input/~167 Hz frames). 50 Hz framing also cut the packet rate ~3.3×, relieving
+the ring-buffer backpressure that was dropping ~5% of 1 kHz inputs.
 
-**Frame size formula:** `5 + sizeof_state + sizeof_input × num_inputs + sizeof_vars`
+**Frame size formula:** `5 + sizeof_state × num_states + sizeof_input × num_inputs + sizeof_vars`
+where `num_states = 2` for VER ≥ 3 else 1, and `sizeof_vars = 0` for VER ≥ 3.
 Always read `num_inputs` from the header (bytes [93..94]) — do NOT hardcode it.
 
-**SunshineVars field order** (56 bytes packed):
+**VER 2 (legacy) frame** for reference: `frame_id(4) + flags(1) + SunshineState(60)
++ SunshineInput×N + SunshineVars(sizeof_vars)` — one state, a trailing vars block.
+
+**SunshineVars field order** (56 bytes packed) — recomputed by the host, **not
+stored** in VER 3 logs (kept here as the struct reference):
 ```
 float  omega_from_accel, derot_I, derot_Q, mag_angle, est_theta, est_omega,
        dshot_cmd_left, dshot_cmd_right, batt_voltage, erpm_left, erpm_right,
        centripetal_ms2;     ← 12 floats = 48 bytes
 uint8  led_on, accel_saturated, mag_valid, loop_overrun;  ← 4 bytes
-float  heading_deg;         ← 4 bytes (added in schema v2; was not in 52-byte vars)
+float  heading_deg;         ← 4 bytes (added in schema v2)
 ```
 
 ---
 
 ## Channels available for plotting / inspection
 
-All channels are available in the host app's channel selector when replaying. The same list is available to the replay-debug skill.
+The host app channel selector groups channels into **REAL** and **REPLAYED**
+series (plus shared **Inputs**). Both series are host-computed via `sunshine_step`:
 
-**Inputs (1 kHz, 20 per frame in current VER 2 files):**
-- `inputs.time_us` — timestamp in µs
-- `inputs.accel_x/y/z` — raw ADXL375 counts
-- `inputs.mag_x/y/z` — raw LIS3MDL counts
-- `inputs.erpm_left/right` — float16-encoded eRPM
-- `inputs.rssi` — brain-side RSSI (dBm)
-- `inputs.ctrl_x/y/theta` — driver inputs [-127, 127]
-- `inputs.ctrl_throttle` — [0, 255]
-- `inputs.batt_offset` — relative to 7.6V
-- `inputs.dshot_left_q/right_q` — previous-tick DShot, quantised [0, 255]
-- `inputs.mode` — 0=DISABLED, 1=TANK, 2=MELTY
+- **REAL** (`real.*`): a filter re-anchored to the logged real state at the start
+  of every frame and again at its midpoint (100 Hz). Reproduces the robot's own
+  1 kHz trajectory (given matching code).
+- **REPLAYED** (`rep.*`): a filter free-running continuously from the first frame.
+  Shows what the *current* `sunshine_step` produces across the whole record — diff
+  it against `real.*` to see the effect of a code/tuning change.
 
-**State (50 Hz, one per frame — the state at the START of the 20-input block):**
-- `state.kf_theta` — raw Kalman angle (rad, unwrapped)
-- `state.kf_omega` — raw Kalman omega (rad/s)
-- `state.kf_P[0..3]` — covariance matrix elements
-- `state.theta_offset` — heading reference offset (rad)
+**Inputs (1 kHz, shared — no real/replayed split):**
+- `input.accel_x/y/z`, `input.accel_x/y/z_ms2` — raw ADXL375 counts / m·s⁻²
+- `input.mag_x/y`, `input.mag_magnitude` — raw LIS3MDL counts / µT
+- `input.erpm_left/right`, `input.ctrl_x/y/theta`, `input.ctrl_throttle`
+- `input.rssi`, `input.batt_offset`
 
-**Vars (50 Hz from file, 1 kHz from replay):**
+**REAL state + vars** (`real.*`) — and the identical set under **`rep.*`**:
+- State: `kf_theta` (rad), `kf_omega` (rad/s), `theta_offset` (rad)
+- Vars: `est_theta`, `est_omega`, `heading_deg`, `mag_angle`, `derot_i`, `derot_q`,
+  `omega_from_accel`, `centripetal_ms2`, `dshot_left`, `dshot_right`,
+  `batt_voltage`, `erpm_left`, `erpm_right`
 
-In replay, `SunshineVars` is recomputed at 1 kHz (not just the 50 Hz snapshot in the file). The file's stored vars are available as `real.vars.*`; the recomputed vars are `replay.vars.*`.
+So e.g. `real.dshot_left` vs `rep.dshot_left` compares the real motor command to
+what the current code would output; `real.kf_theta` vs `rep.kf_theta` shows
+heading-estimate divergence.
 
-- `vars.omega_from_accel` — rad/s (inflated during spin-up)
-- `vars.derot_I/Q` — derotated LP-filtered mag components (µT)
-- `vars.mag_angle` — atan2(Q,I) in rad
-- `vars.est_theta/omega` — Kalman output
-- `vars.dshot_cmd_left/right` — full-precision DShot command [0, 2047]
-- `vars.batt_voltage` — actual voltage (V)
-- `vars.erpm_left/right` — decoded from float16
-- `vars.centripetal_ms2` — sqrt(ax²+ay²) × scale
-- `vars.led_on` — 1 within ±3° of heading zero
-- `vars.accel_saturated` — 1 when centripetal > 280g
-- `vars.mag_valid` — 1 when omega > 4π rad/s
-- `vars.loop_overrun` — 1 if 1 kHz loop exceeded budget
-- `vars.heading_deg` — robot heading [0, 360), matches LED zero (added in schema v2)
+**Offline `replay.exe` CSV columns** (single series; see the harness section
+below): `time_us, mode, kf_theta, kf_omega, omega_accel, mag_angle, est_theta,
+est_omega, derot_I, derot_Q, heading_deg, led_on, mag_valid, accel_sat, dshot_l,
+dshot_r, mag_x, mag_y, accel_x, accel_y, theta_offset` and (VER 2 logs only, at
+frame-end rows) `stored_est_theta, stored_mag_angle, stored_led_on`.
 
 ---
 

@@ -7,7 +7,7 @@ import GraphPanel from './components/GraphPanel';
 import DriverStation from './components/DriverStation';
 import './App.css';
 
-const DEFAULT_CHANNELS = ['rep.est_theta', 'rep.est_omega'];
+const DEFAULT_CHANNELS = ['real.kf_theta', 'real.kf_omega'];
 
 export default function App() {
   const state    = useAppState();
@@ -36,6 +36,7 @@ export default function App() {
         mode={state.mode}
         liveUpdate={state.liveUpdate}
         rxRssi={state.rxRssi}
+        droppedFrames={state.droppedFrames}
         loggingActive={state.loggingActive}
         logPath={state.logPath}
         isGraphLive={isGraphLive}
@@ -43,6 +44,13 @@ export default function App() {
         onEnableLogging={state.enableLogging}
         onDisableLogging={state.disableLogging}
       />
+      {state.error && (
+        <div className="error-banner" role="alert" onClick={state.clearError}>
+          <span className="error-banner-icon">⚠</span>
+          <span className="error-banner-msg">{state.error}</span>
+          <span className="error-banner-dismiss">✕</span>
+        </div>
+      )}
       <VariableTree selected={selected} onToggle={toggle} cursorUs={cursorUs} />
       <GraphPanel
         selected={selected}
@@ -61,6 +69,7 @@ export default function App() {
         inputRef={inputRef}
         loadReplay={state.loadReplay}
         stopSource={state.stopSource}
+        reportError={state.reportError}
       />
       {state.replayProgress !== null && (
         <div style={{

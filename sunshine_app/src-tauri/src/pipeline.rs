@@ -1,17 +1,24 @@
 use crate::ffi::{SunshineInput, SunshineState, SunshineVars, brain_step, state_init};
 use crate::logging::LogWriter;
-use crate::protocol::TelemetryFrame;
+use crate::protocol::{TelemetryFrame, INPUTS_PER_FRAME};
 use crate::replay::{LogMetadata, read_frame, read_metadata};
 use std::fs::File;
 use std::io::{Seek, SeekFrom};
 
 #[derive(Clone, Default)]
 pub struct DataPoint {
-    pub time_us:         u64,
-    pub input:           SunshineInput,
-    pub hw_state:        SunshineState,  // received from hardware/sim/log at 50 Hz
-    pub vars:            SunshineVars,   // always host-computed via brain_step
-    pub rep_theta_offset: f32,           // theta_offset from replay_state after brain_step
+    pub time_us:    u64,
+    pub input:      SunshineInput,
+    // REAL series: a filter re-anchored to the logged real state at the start of
+    // every frame (and again at its midpoint → 100 Hz). Reproduces the robot's
+    // own 1 kHz trajectory; `real_vars` are the vars the robot effectively had.
+    pub real_state: SunshineState,
+    pub real_vars:  SunshineVars,
+    // REPLAYED series: a filter free-running continuously from the first frame
+    // (never re-anchored). Shows what the (possibly modified) host code produces
+    // across the whole record — this is what you compare against the real series.
+    pub rep_state:  SunshineState,
+    pub rep_vars:   SunshineVars,
 }
 
 const RING_CAP: usize = 300_000;
@@ -20,7 +27,9 @@ pub struct Pipeline {
     ring:          Vec<DataPoint>,
     ring_head:     usize,
     ring_len:      usize,
-    replay_state:  SunshineState,
+    real_state:    SunshineState,   // re-anchored each frame (REAL)
+    rep_state:     SunshineState,   // continuous free-run (REPLAYED)
+    rep_seeded:    bool,            // rep_state seeded from the first frame yet?
     pub logger:    Option<LogWriter>,
     pub source:    SourceKind,
     history_log:   Option<LogMetadata>,
@@ -38,11 +47,13 @@ impl Pipeline {
     pub fn new() -> Self {
         let mut ring = Vec::with_capacity(RING_CAP);
         ring.resize(RING_CAP, DataPoint::default());
-        let mut replay_state = SunshineState::default();
-        state_init(&mut replay_state);
+        let mut real_state = SunshineState::default();
+        state_init(&mut real_state);
+        let mut rep_state = SunshineState::default();
+        state_init(&mut rep_state);
         Pipeline {
             ring, ring_head: 0, ring_len: 0,
-            replay_state,
+            real_state, rep_state, rep_seeded: false,
             logger: None,
             source: SourceKind::None,
             history_log: None,
@@ -62,33 +73,33 @@ impl Pipeline {
     }
 
     pub fn ingest_frame(&mut self, frame: &TelemetryFrame) {
-        // README: every telemetry packet carries the brain's filter state at the
-        // start of its inputs, precisely so the host can re-seed replay from it
-        // and reconstruct the 1 kHz detail between packets. For a LIVE source we
-        // re-anchor on every packet. This makes the replayed state a faithful
-        // high-res copy of the real 50 Hz state instead of a free-running
-        // estimate that slowly diverges: dead-reckoned theta has no absolute
-        // reference at rest (omega < mag threshold → no mag update), and host vs
-        // ESP32 float math differs in the last ULPs — both integrate into drift.
-        // Re-anchoring also self-heals dropped packets (the next one re-seeds).
-        // (File replay deliberately free-runs from the first frame — see
-        // load_replay_cache — so changed code can be validated across a whole log.)
-        if self.source == SourceKind::Live {
-            self.replay_state = frame.state;
-        }
+        // Two filters run per frame (see DataPoint):
+        //  REAL     — re-anchored to the logged real state at the frame start and
+        //             again at the midpoint (frame.state_mid → 100 Hz). This keeps
+        //             it a faithful high-res copy of the robot's own state instead
+        //             of a free-running estimate that drifts (dead-reckoned theta
+        //             has no absolute reference at rest, and host vs ESP32 float
+        //             math differs in the last ULPs). Re-anchoring also self-heals
+        //             dropped packets (the next one re-anchors).
+        //  REPLAYED — seeded once from the first frame, then free-runs. Lets a
+        //             changed sunshine_step be validated across the whole record.
+        self.real_state = frame.state;
+        if !self.rep_seeded { self.rep_state = frame.state; self.rep_seeded = true; }
 
-        let mut last_vars = SunshineVars::default();
-        for input in frame.inputs.iter() {
-            let time_us = self.expand_hw_time(input.time_us);
-            let vars    = brain_step(input, &mut self.replay_state);
-            last_vars = vars;
+        let mid = INPUTS_PER_FRAME / 2;
+        for (i, input) in frame.inputs.iter().enumerate() {
+            if i == mid { self.real_state = frame.state_mid; }  // 100 Hz re-anchor
+            let time_us   = self.expand_hw_time(input.time_us);
+            let real_vars = brain_step(input, &mut self.real_state);
+            let rep_vars  = brain_step(input, &mut self.rep_state);
 
             let dp = DataPoint {
                 time_us,
-                input:    *input,
-                hw_state: frame.state,
-                vars,
-                rep_theta_offset: self.replay_state.theta_offset,
+                input:      *input,
+                real_state: self.real_state,
+                real_vars,
+                rep_state:  self.rep_state,
+                rep_vars,
             };
 
             let idx = self.ring_head;
@@ -97,19 +108,11 @@ impl Pipeline {
             if self.ring_len < RING_CAP { self.ring_len += 1; }
         }
 
+        // Log only the real state (start + midpoint) and the inputs — no vars.
         if let Some(logger) = self.logger.as_mut() {
-            let _ = logger.write_frame(
-                self.frame_count,
-                &frame.state,
-                &frame.inputs,
-                &last_vars,
-            );
+            let _ = logger.write_frame(self.frame_count, &frame.state, &frame.state_mid, &frame.inputs);
         }
         self.frame_count += 1;
-    }
-
-    pub fn reset_replay_state(&mut self, state: &SunshineState) {
-        self.replay_state = *state;
     }
 
     /// Begin a live session. Clears stale ring data and resets timestamp state
@@ -123,6 +126,9 @@ impl Pipeline {
         self.hw_epoch_us = 0;
         self.last_hw_us  = 0;
         self.frame_count = 0;
+        self.rep_seeded  = false;
+        state_init(&mut self.real_state);
+        state_init(&mut self.rep_state);
     }
 
     /// Begin a simulation session. Identical ring/timestamp reset as begin_live
@@ -135,6 +141,9 @@ impl Pipeline {
         self.hw_epoch_us = 0;
         self.last_hw_us  = 0;
         self.frame_count = 0;
+        self.rep_seeded  = false;
+        state_init(&mut self.real_state);
+        state_init(&mut self.rep_state);
         self.replay_cache.clear();
         self.history_log = None;
     }
@@ -158,10 +167,10 @@ impl Pipeline {
     /// frames of INPUTS_PER_FRAME.  Called when logging is enabled mid-session
     /// so the log file starts with a complete history.
     pub fn backfill_log_from_ring(&self, logger: &mut LogWriter) {
-        use crate::protocol::INPUTS_PER_FRAME;
         if self.ring_len < INPUTS_PER_FRAME { return; }
 
         let start_idx = (self.ring_head + RING_CAP - self.ring_len) % RING_CAP;
+        let mid = INPUTS_PER_FRAME / 2;
         // Only write complete frames; the last partial group will be captured by the next
         // ingest_frame call so we don't write zero-padded inputs with broken time_us=0.
         let complete_frames = self.ring_len / INPUTS_PER_FRAME;
@@ -173,9 +182,10 @@ impl Pipeline {
             for i in 0..INPUTS_PER_FRAME {
                 inputs[i] = self.ring[(start_idx + chunk_start + i) % RING_CAP].input;
             }
-            let first = &self.ring[(start_idx + chunk_start) % RING_CAP];
-            let last  = &self.ring[(start_idx + chunk_start + INPUTS_PER_FRAME - 1) % RING_CAP];
-            let _ = logger.write_frame(frame_id, &first.hw_state, &inputs, &last.vars);
+            // Real state at this frame's start and midpoint (reconstructed in the ring).
+            let state_start = self.ring[(start_idx + chunk_start) % RING_CAP].real_state;
+            let state_mid   = self.ring[(start_idx + chunk_start + mid) % RING_CAP].real_state;
+            let _ = logger.write_frame(frame_id, &state_start, &state_mid, &inputs);
             frame_id += 1;
         }
     }
@@ -254,40 +264,30 @@ impl Pipeline {
         let mut file = File::open(&meta.path).ok()?;
         file.seek(SeekFrom::Start(meta.header_size)).ok()?;
 
-        let mut replay_state = SunshineState::default();
-        state_init(&mut replay_state);
+        let mut real_state = SunshineState::default(); state_init(&mut real_state);
+        let mut rep_state  = SunshineState::default(); state_init(&mut rep_state);
+        let mut rep_seeded = false;
+        let mid = INPUTS_PER_FRAME / 2;
         let mut raw: Vec<(u64, f32)> = Vec::new();
         let mut epoch_us = 0u64;
         let mut last_hw_us = 0u32;
 
-        let mut seeded = false;
         for _ in 0..meta.frame_count {
             let (frame, _) = read_frame(&mut file, meta).ok()?;
-            // Initialise replay from the first logged state (see ingest_frame).
-            if !seeded { replay_state = frame.state; seeded = true; }
-            for input in frame.inputs.iter() {
+            real_state = frame.state;                       // REAL: re-anchor each frame
+            if !rep_seeded { rep_state = frame.state; rep_seeded = true; }  // REPLAYED: seed once
+            for (i, input) in frame.inputs.iter().enumerate() {
+                if i == mid { real_state = frame.state_mid; }   // 100 Hz re-anchor
                 let hw = input.time_us;
                 if hw < last_hw_us && (last_hw_us - hw) > 0x8000_0000 {
                     epoch_us += 0x1_0000_0000;
                 }
                 last_hw_us = hw;
                 let time_us = epoch_us + hw as u64;
-                let vars = brain_step(input, &mut replay_state);
+                let dp = step_point(time_us, input, &mut real_state, &mut rep_state);
 
-                if time_us < start_us {
-                    continue;
-                }
-                if time_us > end_us {
-                    return Some(downsample_min_max(raw, max_points));
-                }
-
-                let dp = DataPoint {
-                    time_us,
-                    input: *input,
-                    hw_state: frame.state,
-                    vars,
-                    rep_theta_offset: replay_state.theta_offset,
-                };
+                if time_us < start_us { continue; }
+                if time_us > end_us { return Some(downsample_min_max(raw, max_points)); }
                 raw.push((time_us, accessor(&dp)));
             }
         }
@@ -374,6 +374,23 @@ impl Pipeline {
     }
 }
 
+/// Step both filters one input and build the DataPoint. `real_state` is expected
+/// to be re-anchored to the logged real state at frame boundaries by the caller;
+/// `rep_state` free-runs.
+fn step_point(time_us: u64, input: &SunshineInput,
+              real_state: &mut SunshineState, rep_state: &mut SunshineState) -> DataPoint {
+    let real_vars = brain_step(input, real_state);
+    let rep_vars  = brain_step(input, rep_state);
+    DataPoint {
+        time_us,
+        input:      *input,
+        real_state: *real_state,
+        real_vars,
+        rep_state:  *rep_state,
+        rep_vars,
+    }
+}
+
 /// Build the replay cache off the pipeline mutex. Calls `on_progress(0..=1)`
 /// periodically so the caller can forward progress to the UI.
 pub fn build_replay_cache(meta: &LogMetadata, mut on_progress: impl FnMut(f32)) -> Vec<DataPoint> {
@@ -383,37 +400,33 @@ pub fn build_replay_cache(meta: &LogMetadata, mut on_progress: impl FnMut(f32)) 
     };
     let _ = file.seek(SeekFrom::Start(meta.header_size));
 
-    let mut replay_state = SunshineState::default();
-    state_init(&mut replay_state);
+    let mut real_state = SunshineState::default(); state_init(&mut real_state);
+    let mut rep_state  = SunshineState::default(); state_init(&mut rep_state);
+    let mut rep_seeded = false;
+    let mid = INPUTS_PER_FRAME / 2;
     let mut epoch_us:   u64 = 0;
     let mut last_hw_us: u32 = 0;
 
     let total = meta.frame_count as usize;
     let cap   = total * meta.num_inputs as usize;
     let mut cache: Vec<DataPoint> = Vec::with_capacity(cap);
-    let mut seeded = false;
 
     for i in 0..total {
         let (frame, _) = match read_frame(&mut file, meta) {
             Ok(f) => f,
             Err(_) => break,
         };
-        if !seeded { replay_state = frame.state; seeded = true; }
-        for input in frame.inputs.iter() {
+        real_state = frame.state;                       // REAL: re-anchor each frame
+        if !rep_seeded { rep_state = frame.state; rep_seeded = true; }  // REPLAYED: seed once
+        for (j, input) in frame.inputs.iter().enumerate() {
+            if j == mid { real_state = frame.state_mid; }   // 100 Hz re-anchor
             let hw = input.time_us;
             if hw < last_hw_us && (last_hw_us - hw) > 0x8000_0000 {
                 epoch_us += 0x1_0000_0000;
             }
             last_hw_us = hw;
             let time_us = epoch_us + hw as u64;
-            let vars = brain_step(input, &mut replay_state);
-            cache.push(DataPoint {
-                time_us,
-                input:    *input,
-                hw_state: frame.state,
-                vars,
-                rep_theta_offset: replay_state.theta_offset,
-            });
+            cache.push(step_point(time_us, input, &mut real_state, &mut rep_state));
         }
         if i % 200 == 0 || i == total - 1 {
             on_progress((i + 1) as f32 / total as f32);
@@ -465,28 +478,41 @@ const MAG_SCALE_UT:   f32 = 0.058;
 
 fn channel_accessor(channel: &str) -> fn(&DataPoint) -> f32 {
     match channel {
-        /* Hardware state — received from brain at 50 Hz */
-        "hw.kf_theta"           => |dp: &DataPoint| dp.hw_state.kf_theta,
-        "hw.kf_omega"           => |dp| dp.hw_state.kf_omega,
-        "hw.theta_offset"       => |dp| dp.hw_state.theta_offset,
-        "hw.dshot_left"         => |dp| dp.input.dshot_left_q  as f32 * (2047.0 / 255.0),
-        "hw.dshot_right"        => |dp| dp.input.dshot_right_q as f32 * (2047.0 / 255.0),
-        /* Variables — always host-computed via brain_step */
-        "rep.est_theta"         => |dp| dp.vars.est_theta,
-        "rep.est_omega"         => |dp| dp.vars.est_omega,
-        "rep.theta_offset"      => |dp| dp.rep_theta_offset,
-        "rep.heading_deg"       => |dp| dp.vars.heading_deg,
-        "rep.dshot_left"        => |dp| dp.vars.dshot_cmd_left,
-        "rep.dshot_right"       => |dp| dp.vars.dshot_cmd_right,
-        "rep.batt_voltage"      => |dp| dp.vars.batt_voltage,
-        "rep.erpm_left"         => |dp| dp.vars.erpm_left,
-        "rep.erpm_right"        => |dp| dp.vars.erpm_right,
-        "rep.mag_angle"         => |dp| dp.vars.mag_angle,
-        "rep.derot_i"           => |dp| dp.vars.derot_i,
-        "rep.derot_q"           => |dp| dp.vars.derot_q,
-        "rep.omega_from_accel"  => |dp| dp.vars.omega_from_accel,
-        "rep.centripetal_ms2"   => |dp| dp.vars.centripetal_ms2,
-        /* Raw sensor inputs */
+        /* ── REAL: filter re-anchored to the logged real state (≈ the robot) ── */
+        "real.kf_theta"          => |dp: &DataPoint| dp.real_state.kf_theta,
+        "real.kf_omega"          => |dp| dp.real_state.kf_omega,
+        "real.theta_offset"      => |dp| dp.real_state.theta_offset,
+        "real.est_theta"         => |dp| dp.real_vars.est_theta,
+        "real.est_omega"         => |dp| dp.real_vars.est_omega,
+        "real.heading_deg"       => |dp| dp.real_vars.heading_deg,
+        "real.mag_angle"         => |dp| dp.real_vars.mag_angle,
+        "real.derot_i"           => |dp| dp.real_vars.derot_i,
+        "real.derot_q"           => |dp| dp.real_vars.derot_q,
+        "real.omega_from_accel"  => |dp| dp.real_vars.omega_from_accel,
+        "real.centripetal_ms2"   => |dp| dp.real_vars.centripetal_ms2,
+        "real.dshot_left"        => |dp| dp.real_vars.dshot_cmd_left,
+        "real.dshot_right"       => |dp| dp.real_vars.dshot_cmd_right,
+        "real.batt_voltage"      => |dp| dp.real_vars.batt_voltage,
+        "real.erpm_left"         => |dp| dp.real_vars.erpm_left,
+        "real.erpm_right"        => |dp| dp.real_vars.erpm_right,
+        /* ── REPLAYED: filter free-running from the first frame (current code) ── */
+        "rep.kf_theta"           => |dp| dp.rep_state.kf_theta,
+        "rep.kf_omega"           => |dp| dp.rep_state.kf_omega,
+        "rep.theta_offset"       => |dp| dp.rep_state.theta_offset,
+        "rep.est_theta"          => |dp| dp.rep_vars.est_theta,
+        "rep.est_omega"          => |dp| dp.rep_vars.est_omega,
+        "rep.heading_deg"        => |dp| dp.rep_vars.heading_deg,
+        "rep.mag_angle"          => |dp| dp.rep_vars.mag_angle,
+        "rep.derot_i"            => |dp| dp.rep_vars.derot_i,
+        "rep.derot_q"            => |dp| dp.rep_vars.derot_q,
+        "rep.omega_from_accel"   => |dp| dp.rep_vars.omega_from_accel,
+        "rep.centripetal_ms2"    => |dp| dp.rep_vars.centripetal_ms2,
+        "rep.dshot_left"         => |dp| dp.rep_vars.dshot_cmd_left,
+        "rep.dshot_right"        => |dp| dp.rep_vars.dshot_cmd_right,
+        "rep.batt_voltage"       => |dp| dp.rep_vars.batt_voltage,
+        "rep.erpm_left"          => |dp| dp.rep_vars.erpm_left,
+        "rep.erpm_right"         => |dp| dp.rep_vars.erpm_right,
+        /* Raw sensor inputs (shared — no real/replayed distinction) */
         "input.accel_x"         => |dp| dp.input.accel_x as f32,
         "input.accel_y"         => |dp| dp.input.accel_y as f32,
         "input.accel_z"         => |dp| dp.input.accel_z as f32,
@@ -520,7 +546,8 @@ mod tests {
     use crate::ffi::{SunshineInput, SunshineState};
 
     fn make_frame(inputs: [SunshineInput; INPUTS_PER_FRAME]) -> TelemetryFrame {
-        TelemetryFrame { frame_id: 0, state: SunshineState::default(), inputs }
+        TelemetryFrame { frame_id: 0, state: SunshineState::default(),
+                         state_mid: SunshineState::default(), inputs }
     }
 
     #[test]

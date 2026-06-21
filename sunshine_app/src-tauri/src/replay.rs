@@ -8,12 +8,14 @@ use std::path::PathBuf;
 #[derive(Debug, Clone)]
 pub struct LogMetadata {
     pub path:           PathBuf,
+    pub file_ver:       u16,
     pub header_size:    u64,
     pub schema_version: u32,
     pub sizeof_input:   u16,
     pub sizeof_state:   u16,
-    pub sizeof_vars:    u16,
-    pub num_inputs:     u16,  // inputs per frame, read from header (20 now; was 6 in early VER 2 logs; VER 1 = 20)
+    pub sizeof_vars:    u16,  // 0 for VER >= 3 (no vars block)
+    pub num_states:     u16,  // states per frame: 2 for VER >= 3 (start+mid), else 1
+    pub num_inputs:     u16,  // inputs per frame, read from header (20 now; 6 in early VER 2 logs; VER 1 = 20)
     pub created_at_ms:  u64,
     pub source:         u8,
     pub label:          String,
@@ -50,12 +52,18 @@ pub fn read_metadata(path: &PathBuf) -> std::io::Result<LogMetadata> {
         20
     };
 
+    // VER >= 3 carries two state snapshots per frame (start + midpoint) and no
+    // vars block; earlier versions carry one state and a vars block.
+    let num_states: u16 = if file_ver >= 3 { 2 } else { 1 };
+
     let file_size     = f.seek(SeekFrom::End(0))?;
-    let frame_size    = 5u64 + sizeof_state as u64 + sizeof_input as u64 * num_inputs as u64 + sizeof_vars as u64;
+    let frame_size    = 5u64 + sizeof_state as u64 * num_states as u64
+                            + sizeof_input as u64 * num_inputs as u64
+                            + sizeof_vars as u64;
     let frame_count   = if frame_size > 0 { ((file_size - header_size) / frame_size) as u32 } else { 0 };
 
-    Ok(LogMetadata { path: path.clone(), header_size, schema_version: schema_ver,
-                     sizeof_input, sizeof_state, sizeof_vars, num_inputs,
+    Ok(LogMetadata { path: path.clone(), file_ver, header_size, schema_version: schema_ver,
+                     sizeof_input, sizeof_state, sizeof_vars, num_states, num_inputs,
                      created_at_ms, source, label, frame_count })
 }
 
@@ -67,6 +75,13 @@ pub fn read_frame(f: &mut File, meta: &LogMetadata) -> std::io::Result<(Telemetr
     let frame_id = u32::from_le_bytes(id_flags[0..4].try_into().unwrap());
 
     let state = read_padded::<SunshineState>(f, meta.sizeof_state as usize)?;
+    // VER >= 3: a second (midpoint) state follows. Older logs have one state, so
+    // duplicate it (state_mid == state) — replay behaves identically.
+    let state_mid = if meta.num_states >= 2 {
+        read_padded::<SunshineState>(f, meta.sizeof_state as usize)?
+    } else {
+        state
+    };
 
     // Read meta.num_inputs from file; fit into INPUTS_PER_FRAME slots (0-pad if file has fewer)
     let mut inputs = [SunshineInput::default(); INPUTS_PER_FRAME];
@@ -80,9 +95,15 @@ pub fn read_frame(f: &mut File, meta: &LogMetadata) -> std::io::Result<(Telemetr
         f.read_exact(&mut skip)?;
     }
 
-    let vars = read_padded::<SunshineVars>(f, meta.sizeof_vars as usize)?;
+    // VER 2 has a vars block (sizeof_vars > 0); VER >= 3 has none. Skip/ignore it
+    // — vars are recomputed by the host.
+    let vars = if meta.sizeof_vars > 0 {
+        read_padded::<SunshineVars>(f, meta.sizeof_vars as usize)?
+    } else {
+        SunshineVars::default()
+    };
 
-    Ok((TelemetryFrame { frame_id: frame_id as u16, state, inputs }, vars))
+    Ok((TelemetryFrame { frame_id: frame_id as u16, state, state_mid, inputs }, vars))
 }
 
 /// Returns the (first_input_time_us, last_input_time_us) for a log file.

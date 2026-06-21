@@ -7,6 +7,7 @@ interface Props {
   mode:             Mode;
   liveUpdate:       LiveUpdate | null;
   rxRssi:           number;
+  droppedFrames:    number;
   loggingActive:    boolean;
   logPath:          string;
   isGraphLive:      boolean;
@@ -19,7 +20,7 @@ function battVoltage(offset: number): number {
   return 7.6 + offset * 0.0205;
 }
 
-export default function TopBar({ mode, liveUpdate, rxRssi, loggingActive, logPath, isGraphLive, onGoLive, onEnableLogging, onDisableLogging }: Props) {
+export default function TopBar({ mode, liveUpdate, rxRssi, droppedFrames, loggingActive, logPath, isGraphLive, onGoLive, onEnableLogging, onDisableLogging }: Props) {
   const [label, setLabel] = useState('');
 
   const batt   = liveUpdate ? battVoltage(liveUpdate.batt_offset).toFixed(2) : '--';
@@ -55,6 +56,12 @@ export default function TopBar({ mode, liveUpdate, rxRssi, loggingActive, logPat
         <span className="top-stat">
           <span className="k">RSSI·RX</span>
           <span className="v">{rxRssi} dBm</span>
+        </span>
+        <span className="top-stat" title="Dropped telemetry frames this session (frame_id gaps)">
+          <span className="k">DROPS</span>
+          <span className="v" style={droppedFrames > 0 ? { color: 'var(--warn, #e0a020)' } : undefined}>
+            {droppedFrames}
+          </span>
         </span>
       </div>
 

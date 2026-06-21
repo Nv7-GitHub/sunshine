@@ -24,9 +24,15 @@ static RingBuffer<TelemetryEntry, 64> telem_ring;  // >= INPUTS_PER_FRAME + jitt
 // ── ESP-NOW TX frame ──────────────────────────────────────────────────────────
 // ESP-NOW v2 (IDF >= 5.4) raises the max payload from 250 to 1490 bytes, which
 // lets us send the README-intended 50 Hz frame: one packet per 20 inputs.
-// Frame layout: frame_id(2) + type(1) + SunshineState(60) + SunshineInput[20](20*29=580) = 643 bytes.
+// We carry TWO filter-state snapshots per frame so the host gets the *real*
+// filter state at 100 Hz (one at the first input, one at the midpoint) — see the
+// host replay/logging code. vars are NOT sent: they are a pure function of
+// (state, inputs) and the host recomputes them.
+// Frame layout: frame_id(2) + type(1) + SunshineState×2(120) + SunshineInput[20](580) = 703 bytes.
 static constexpr int  INPUTS_PER_FRAME  = 20;
-static constexpr int  FRAME_SIZE        = 2 + 1 + (int)sizeof(SunshineState) + INPUTS_PER_FRAME * (int)sizeof(SunshineInput);
+static constexpr int  FRAME_MID_INPUT   = INPUTS_PER_FRAME / 2;   // 2nd state snapshot here
+static constexpr int  STATE_SIZE        = (int)sizeof(SunshineState);
+static constexpr int  FRAME_SIZE        = 2 + 1 + 2 * STATE_SIZE + INPUTS_PER_FRAME * (int)sizeof(SunshineInput);
 static_assert(FRAME_SIZE <= ESP_NOW_MAX_DATA_LEN_V2,
               "telemetry frame exceeds ESP-NOW v2 max payload (needs IDF >= 5.4)");
 static uint8_t        tx_frame[FRAME_SIZE];
@@ -90,15 +96,19 @@ void telemetry_task(void *) {
 
         if (drain_count == 0) {
             first_state = entry.state;
-            // Start building TX frame header
+            // Start building TX frame header + first (start-of-frame) state.
             tx_frame[0] = (uint8_t)(tx_frame_id & 0xFF);
             tx_frame[1] = (uint8_t)(tx_frame_id >> 8);
             tx_frame[2] = 0x01;  // type = telemetry
-            memcpy(tx_frame + 3, &first_state, sizeof(SunshineState));
+            memcpy(tx_frame + 3, &first_state, STATE_SIZE);  // state_start
+        }
+        if (drain_count == FRAME_MID_INPUT) {
+            // Second real-state snapshot at the frame midpoint → 100 Hz state.
+            memcpy(tx_frame + 3 + STATE_SIZE, &entry.state, STATE_SIZE);  // state_mid
         }
 
-        // Copy serialised input into frame slot
-        memcpy(tx_frame + 3 + sizeof(SunshineState) + drain_count * sizeof(SunshineInput),
+        // Copy serialised input into its slot (inputs start after both states).
+        memcpy(tx_frame + 3 + 2 * STATE_SIZE + drain_count * sizeof(SunshineInput),
                &entry.input, sizeof(SunshineInput));
         drain_count++;
 

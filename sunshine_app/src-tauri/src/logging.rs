@@ -1,4 +1,4 @@
-use crate::ffi::{SunshineInput, SunshineState, SunshineVars, schema_version};
+use crate::ffi::{SunshineInput, SunshineState, schema_version};
 use std::fs::File;
 use std::io::{BufWriter, Write, Seek, SeekFrom};
 use std::mem::size_of;
@@ -6,12 +6,18 @@ use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const MAGIC: &[u8; 5]  = b"SHINE";
-const FILE_FORMAT_VER: u16 = 2;
-// Header layout (95 bytes):
+// VER 3: two SunshineState snapshots per frame (start + midpoint → 100 Hz real
+// state) and NO vars block (vars are a pure function of state+inputs; the host
+// recomputes them). VER 2 logs (one state + a vars block) are still readable.
+const FILE_FORMAT_VER: u16 = 3;
+// Header layout (95 bytes), unchanged across VER 2/3:
 //  [0..4]   MAGIC (5)     [5..6]   FILE_FORMAT_VER (2)   [7..8]   HEADER_SIZE (2)
 //  [9..12]  schema_ver(4) [13..14] sizeof_input (2)       [15..16] sizeof_state (2)
 //  [17..18] sizeof_vars(2)[19..26] created_at_ms (8)      [27]     source (1)
 //  [28]     flags (1)     [29..92] label (64)              [93..94] num_inputs (2)
+// VER 3 writes sizeof_vars = 0 to signal "no vars block"; states-per-frame is 2
+// (implied by VER >= 3). VER 3 frame: frame_id(4) + flags(1) + state_start +
+// state_mid + num_inputs×input.
 const HEADER_SIZE: u16 = 95;
 
 pub struct LogWriter {
@@ -35,7 +41,7 @@ impl LogWriter {
         w.write_all(&schema_version().to_le_bytes())?;
         w.write_all(&(size_of::<SunshineInput>() as u16).to_le_bytes())?;
         w.write_all(&(size_of::<SunshineState>() as u16).to_le_bytes())?;
-        w.write_all(&(size_of::<SunshineVars>() as u16).to_le_bytes())?;
+        w.write_all(&0u16.to_le_bytes())?;  // sizeof_vars = 0: VER 3 logs no vars block
         w.write_all(&now_ms.to_le_bytes())?;
         w.write_all(&[source])?;
         w.write_all(&[0u8])?;  // flags: logging_complete=0 until close()
@@ -52,20 +58,24 @@ impl LogWriter {
         Ok(LogWriter { writer: w, frame_count: 0, flush_every: 10, path })
     }
 
+    /// Write one VER 3 frame: frame_id + flags + state_start + state_mid + inputs.
+    /// No vars block — vars are recomputed by the host from (state, inputs).
     pub fn write_frame(
         &mut self,
-        frame_id: u32,
-        state:    &SunshineState,
-        inputs:   &[SunshineInput],
-        vars:     &SunshineVars,
+        frame_id:  u32,
+        state:     &SunshineState,
+        state_mid: &SunshineState,
+        inputs:    &[SunshineInput],
     ) -> std::io::Result<()> {
         self.writer.write_all(&frame_id.to_le_bytes())?;
         self.writer.write_all(&[0x01u8])?;
 
-        let state_bytes = unsafe {
-            std::slice::from_raw_parts(state as *const _ as *const u8, size_of::<SunshineState>())
-        };
-        self.writer.write_all(state_bytes)?;
+        for st in [state, state_mid] {
+            let bytes = unsafe {
+                std::slice::from_raw_parts(st as *const _ as *const u8, size_of::<SunshineState>())
+            };
+            self.writer.write_all(bytes)?;
+        }
 
         for inp in inputs {
             let inp_bytes = unsafe {
@@ -73,11 +83,6 @@ impl LogWriter {
             };
             self.writer.write_all(inp_bytes)?;
         }
-
-        let vars_bytes = unsafe {
-            std::slice::from_raw_parts(vars as *const _ as *const u8, size_of::<SunshineVars>())
-        };
-        self.writer.write_all(vars_bytes)?;
 
         self.frame_count += 1;
         if self.frame_count % self.flush_every == 0 {

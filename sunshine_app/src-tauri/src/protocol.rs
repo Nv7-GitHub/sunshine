@@ -13,17 +13,19 @@ pub const STATUS_BRAIN_CONNECTED:    u8 = 0x01;
 pub const STATUS_BRAIN_DISCONNECTED: u8 = 0x02;
 
 // Brain sends 20 inputs per ESP-NOW v2 packet @ 50 Hz (IDF >= 5.4 lifts the old
-// 250-byte cap to 1490). Layout: 2 (frame_id) + 1 (type) + SunshineState +
-// 20×SunshineInput. Derived from the structs so it can never drift from the FFI.
+// 250-byte cap to 1490). Layout: 2 (frame_id) + 1 (type) + 2×SunshineState
+// (start + midpoint → 100 Hz real state) + 20×SunshineInput. No vars on the wire
+// (host recomputes them). Derived from the structs so it can never drift.
 pub const INPUTS_PER_FRAME:  usize = 20;
-pub const ESPNOW_TELEM_SIZE: usize = 3 + size_of::<SunshineState>() + INPUTS_PER_FRAME * size_of::<SunshineInput>();
+pub const ESPNOW_TELEM_SIZE: usize = 3 + 2 * size_of::<SunshineState>() + INPUTS_PER_FRAME * size_of::<SunshineInput>();
 const MAX_USB_PAYLOAD_SIZE: usize = ESPNOW_TELEM_SIZE;
 
 #[derive(Debug, Clone)]
 pub struct TelemetryFrame {
-    pub frame_id: u16,
-    pub state:    SunshineState,
-    pub inputs:   [SunshineInput; INPUTS_PER_FRAME],
+    pub frame_id:  u16,
+    pub state:     SunshineState,   // real filter state at the FIRST input of the frame
+    pub state_mid: SunshineState,   // real filter state at the MIDPOINT input → 100 Hz real state
+    pub inputs:    [SunshineInput; INPUTS_PER_FRAME],
 }
 
 #[derive(Debug)]
@@ -126,19 +128,23 @@ pub fn parse_frame(frame_type: u8, payload: &[u8]) -> Option<ReceiverFrame> {
 
 fn parse_telem(payload: &[u8]) -> TelemetryFrame {
     let frame_id = u16::from_le_bytes(payload[0..2].try_into().unwrap());
-    let st = size_of::<SunshineState>();
+    let st  = size_of::<SunshineState>();
     let isz = size_of::<SunshineInput>();
     let state: SunshineState = unsafe {
         std::ptr::read_unaligned(payload[3..3+st].as_ptr() as *const SunshineState)
     };
+    let state_mid: SunshineState = unsafe {
+        std::ptr::read_unaligned(payload[3+st..3+2*st].as_ptr() as *const SunshineState)
+    };
     let mut inputs = [SunshineInput::default(); INPUTS_PER_FRAME];
+    let base = 3 + 2 * st;
     for (i, inp) in inputs.iter_mut().enumerate() {
-        let off = 3 + st + i * isz;
+        let off = base + i * isz;
         *inp = unsafe {
             std::ptr::read_unaligned(payload[off..off+isz].as_ptr() as *const SunshineInput)
         };
     }
-    TelemetryFrame { frame_id, state, inputs }
+    TelemetryFrame { frame_id, state, state_mid, inputs }
 }
 
 #[cfg(test)]
@@ -147,7 +153,7 @@ mod tests {
     #[test]
     fn telem_frame_size_matches_structs_and_parses_20_inputs() {
         assert_eq!(INPUTS_PER_FRAME, 20);
-        let expect = 3 + size_of::<SunshineState>() + 20 * size_of::<SunshineInput>();
+        let expect = 3 + 2 * size_of::<SunshineState>() + 20 * size_of::<SunshineInput>();
         assert_eq!(ESPNOW_TELEM_SIZE, expect, "frame size constant must match structs");
         let mut payload = vec![0u8; ESPNOW_TELEM_SIZE];
         payload[0] = 0x34; payload[1] = 0x12;          // frame_id = 0x1234

@@ -126,9 +126,10 @@ interface Props {
   inputRef:       RefObject<InputState>;
   loadReplay:     (path: string) => Promise<void>;
   stopSource:     () => Promise<void>;
+  reportError:    (e: unknown) => void;
 }
 
-export default function DriverStation({ mode, setMode, sourceStatus, liveUpdate, inputRef, loadReplay, stopSource }: Props) {
+export default function DriverStation({ mode, setMode, sourceStatus, liveUpdate, inputRef, loadReplay, stopSource, reportError }: Props) {
   const [tab, setTab]               = useState<'live' | 'replay' | 'sim'>('live');
   const [ports, setPorts]           = useState<string[]>([]);
   const [port, setPort]             = useState('');
@@ -250,8 +251,9 @@ export default function DriverStation({ mode, setMode, sourceStatus, liveUpdate,
                     'open_replay', { path: selected }
                   );
                   setReplayMeta(meta);
-                } catch {
+                } catch (e) {
                   setReplayMeta(null);
+                  reportError(e);   // was silent — surface bad/corrupt file errors
                 }
               }}
             >
@@ -277,8 +279,9 @@ export default function DriverStation({ mode, setMode, sourceStatus, liveUpdate,
                 {sourceStatus.kind === 'Replay' ? (
                   <button className="source-btn source-btn-stop" onClick={stopSource}>Close Replay</button>
                 ) : (
-                  <button className="source-btn source-btn-start" onClick={async () => {
-                    try { await loadReplay(replayPath); } catch { /* ignore */ }
+                  <button className="source-btn source-btn-start" onClick={() => {
+                    // loadReplay surfaces its own errors via reportError.
+                    loadReplay(replayPath);
                   }}>Load</button>
                 )}
               </>
@@ -292,9 +295,11 @@ export default function DriverStation({ mode, setMode, sourceStatus, liveUpdate,
               <button className="source-btn source-btn-stop" onClick={stopSource}>Stop</button>
             ) : (
               <button className="source-btn source-btn-start" onClick={async () => {
-                await stopSource();
-                await invoke('start_simulation');
-                setMode(1);
+                try {
+                  await stopSource();
+                  await invoke('start_simulation');
+                  setMode(1);
+                } catch (e) { reportError(e); }
               }}>
                 Start Simulation
               </button>

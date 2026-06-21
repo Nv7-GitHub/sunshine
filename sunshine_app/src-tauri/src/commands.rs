@@ -245,9 +245,13 @@ pub async fn start_simulation(state: State<'_, AppState>, app: AppHandle) -> Res
             };
 
             let frame_initial_state = replay_state; // snapshot before this batch
+            let mut frame_mid_state = replay_state; // updated at the midpoint below
 
             let mut inputs = [SunshineInput::default(); INPUTS_PER_FRAME];
-            for slot in inputs.iter_mut() {
+            for (i, slot) in inputs.iter_mut().enumerate() {
+                // Capture the midpoint state BEFORE stepping input `mid`, matching
+                // the brain's state_mid semantics (pre-step state at tick mid).
+                if i == INPUTS_PER_FRAME / 2 { frame_mid_state = replay_state; }
                 let mut input = sim.tick(&prev_vars);
                 input.ctrl_x        = cx;
                 input.ctrl_y        = cy;
@@ -259,10 +263,12 @@ pub async fn start_simulation(state: State<'_, AppState>, app: AppHandle) -> Res
                 *slot = input;
             }
 
-            // Use the pre-batch state so hw_state == replayed state when viewed
+            // Both state snapshots come from the sim's own filter, so the real
+            // (re-anchored) series reproduces the sim exactly.
             let telem = TelemetryFrame {
-                frame_id: 0,
-                state:    frame_initial_state,
+                frame_id:  0,
+                state:     frame_initial_state,
+                state_mid: frame_mid_state,
                 inputs,
             };
             {
