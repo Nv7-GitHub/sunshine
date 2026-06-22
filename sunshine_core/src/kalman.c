@@ -37,10 +37,12 @@ void kalman_predict(SunshineState *s, float dt) {
     s->kf_P[3] = p11 + KF_Q_OMEGA;
 }
 
-/* Update with omega measurement: H = [0, 1] */
-void kalman_update_omega(SunshineState *s, float omega_meas) {
+/* Update with omega measurement: H = [0, 1].
+ * r_accel is passed in (not the constant) so the caller can down-weight the
+ * accelerometer once the magnetometer is locked — see brain.c / KF_R_ACCEL_LOCKED. */
+void kalman_update_omega(SunshineState *s, float omega_meas, float r_accel) {
     float inn   = omega_meas - s->kf_omega;
-    float S_inv = 1.0f / (s->kf_P[3] + KF_R_ACCEL);
+    float S_inv = 1.0f / (s->kf_P[3] + r_accel);
     float K0    = s->kf_P[1] * S_inv;   /* P[0,1]/S */
     float K1    = s->kf_P[3] * S_inv;   /* P[1,1]/S */
     s->kf_theta += K0 * inn;

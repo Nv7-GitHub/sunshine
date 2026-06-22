@@ -43,7 +43,7 @@ Header (95 bytes, FILE_FORMAT_VER 3):
   header_size     = 95 (uint16 LE)          ← was 93 in VER 1
   schema_version  = uint32 LE               (bumped when structs change)
   sizeof_input    = 29 (uint16 LE)
-  sizeof_state    = 60 (uint16 LE)
+  sizeof_state    = 44 (uint16 LE)          ← schema v3 (was 60); see SunshineState
   sizeof_vars     = 0  (uint16 LE)          ← VER 3: NO vars block (was 56 in VER 2)
   created_at_ms   = Unix timestamp ms (uint64 LE)
   source          = 0=live, 1=replay, 2=simulation (uint8)
@@ -51,11 +51,11 @@ Header (95 bytes, FILE_FORMAT_VER 3):
   label[64]       = null-terminated UTF-8
   num_inputs      = uint16 LE               ← inputs per frame (20)
 
-Frame (821 bytes at num_inputs=20, schema v2): VER 3 carries TWO states, no vars
+Frame (673 bytes at num_inputs=20, schema v3): VER 3 carries TWO states, no vars
   frame_id         = uint32 LE, monotonic (gaps = dropped telemetry)
   frame_flags      = uint8
-  SunshineState    = 60 bytes  (REAL state at the START of the frame)
-  SunshineState    = 60 bytes  (REAL state at the MIDPOINT input → 100 Hz state)
+  SunshineState    = 44 bytes  (REAL state at the START of the frame)
+  SunshineState    = 44 bytes  (REAL state at the MIDPOINT input → 100 Hz state)
   SunshineInput×20 = 580 bytes (20 consecutive 1 kHz inputs)
 ```
 
@@ -64,7 +64,7 @@ Two state snapshots per 50 Hz frame give the **real filter state at 100 Hz**.
 recomputes them, both a *real* series (filter re-anchored to the logged state
 each frame + midpoint) and a *replayed* series (filter free-running from the
 first frame). The brain sends one 50 Hz packet per 20 inputs over **ESP-NOW v2**
-(703-byte payload = 3 + 2×60 + 20×29; the old 250-byte cap had forced
+(671-byte payload = 3 + 2×44 + 20×29; the old 250-byte cap had forced
 6-input/~167 Hz frames). 50 Hz framing also cut the packet rate ~3.3×, relieving
 the ring-buffer backpressure that was dropping ~5% of 1 kHz inputs.
 
@@ -78,7 +78,7 @@ Always read `num_inputs` from the header (bytes [93..94]) — do NOT hardcode it
 **SunshineVars field order** (56 bytes packed) — recomputed by the host, **not
 stored** in VER 3 logs (kept here as the struct reference):
 ```
-float  omega_from_accel, derot_I, derot_Q, mag_angle, est_theta, est_omega,
+float  omega_from_accel, mag_x_filt, mag_y_filt, mag_angle, est_theta, est_omega,
        dshot_cmd_left, dshot_cmd_right, batt_voltage, erpm_left, erpm_right,
        centripetal_ms2;     ← 12 floats = 48 bytes
 uint8  led_on, accel_saturated, mag_valid, loop_overrun;  ← 4 bytes
@@ -107,7 +107,7 @@ series (plus shared **Inputs**). Both series are host-computed via `sunshine_ste
 
 **REAL state + vars** (`real.*`) — and the identical set under **`rep.*`**:
 - State: `kf_theta` (rad), `kf_omega` (rad/s), `theta_offset` (rad)
-- Vars: `est_theta`, `est_omega`, `heading_deg`, `mag_angle`, `derot_i`, `derot_q`,
+- Vars: `est_theta`, `est_omega`, `heading_deg`, `mag_angle`, `mag_x_filt`, `mag_y_filt`,
   `omega_from_accel`, `centripetal_ms2`, `dshot_left`, `dshot_right`,
   `batt_voltage`, `erpm_left`, `erpm_right`
 
@@ -117,7 +117,7 @@ heading-estimate divergence.
 
 **Offline `replay.exe` CSV columns** (single series; see the harness section
 below): `time_us, mode, kf_theta, kf_omega, omega_accel, mag_angle, est_theta,
-est_omega, derot_I, derot_Q, heading_deg, led_on, mag_valid, accel_sat, dshot_l,
+est_omega, mag_x_filt, mag_y_filt, heading_deg, led_on, mag_valid, accel_sat, dshot_l,
 dshot_r, mag_x, mag_y, accel_x, accel_y, theta_offset` and (VER 2 logs only, at
 frame-end rows) `stored_est_theta, stored_mag_angle, stored_led_on`.
 
@@ -130,13 +130,25 @@ frame-end rows) `stored_est_theta, stored_mag_angle, stored_led_on`.
 **What to look at:**
 1. `vars.mag_valid` — is it staying 1? If it drops, omega fell below 120 RPM.
 2. `vars.est_omega` vs `vars.omega_from_accel` — does omega track correctly?
-3. `vars.derot_I` and `vars.derot_Q` — are they near-constant DC? If they oscillate, the LP filter hasn't settled.
+3. `vars.mag_x_filt` and `vars.mag_y_filt` — the high-passed Earth sine; their magnitude `sqrt(x²+y²)` should be a steady ~22 µT. If it collapses, the spin is below the HP cutoff or the field is being lost.
 4. `state.kf_P[0]` — is the angle covariance decreasing? It should drop from 100 toward near-zero after the mag update engages.
 
 **Try:** Set `KF_R_MAG` lower and replay. Does theta converge faster?
 
+**Heading PRECESSION (LED rotates slowly) — the fix is the open-loop mag heading
+(Step 2 of FILTER_MATH.md) plus accel down-weighting.** Root cause: the old
+*closed-loop* synchronous demodulator derotated by `kf_theta`, so a biased
+`omega_from_accel` (~5–8% high) could drag the heading into a slow precession.
+The fix (implemented): the magnetometer heading (`mag_heading.c`) is now
+**open-loop** (high-pass + atan2, independent of the estimate → drift-free), the
+Kalman trusts it (`KF_R_MAG` lowered to 0.01), and the accel is down-weighted
+once locked (`KF_R_ACCEL_LOCKED`) so its bias doesn't set the rate. Measure with
+`analyze.py precession` (raw mag = filter-independent ground truth) and confirm
+the high-passed field magnitude is a steady ~22 µT. See
+`docs/superpowers/plans/melty-rate-bias-filter-fix.md`.
+
 **What to expect from real vs. simulated mag data:**
-- Real `inputs.mag_x/y`: large constant offset (~−95 µT X, ~+103 µT Y from motor hard-iron) plus a ~25 µT Earth-field sine wave. The LIS3MDL y-axis is physically inverted on the PCB, so `my = −E·sin(φ−θ)` (negated relative to the naive model). This is what makes the derotation algebra work — do not "fix" it.
+- Real `inputs.mag_x/y`: large constant offset (~−95 µT X, ~+103 µT Y from motor hard-iron) plus a ~25 µT Earth-field sine wave. The LIS3MDL y-axis is physically inverted on the PCB, so `my = −E·sin(φ−θ)` (negated relative to the naive model). This is what the `-my_hp` in the heading `atan2` accounts for (`mag_heading.c`) — do not "fix" it.
 - Sim `inputs.mag_x/y`: same convention with hard-iron and horizontal-only Earth field (25 µT, not 50 µT total).
 
 ### Scenario 2: omega_from_accel reads wrong
@@ -230,7 +242,7 @@ build/replay LOG.sun --from-us 89628463 --to-us 90539463 > window.csv
 ```
 
 CSV columns: `time_us, mode, kf_theta, kf_omega, omega_accel, mag_angle,
-est_theta, est_omega, derot_I, derot_Q, heading_deg, led_on, mag_valid,
+est_theta, est_omega, mag_x_filt, mag_y_filt, heading_deg, led_on, mag_valid,
 accel_sat, dshot_l, dshot_r, mag_x, mag_y, accel_x, accel_y, theta_offset,`
 and (frame-end rows only) `stored_est_theta, stored_mag_angle, stored_led_on`.
 The `stored_*` columns are the **real on-robot** values from the file — pair them

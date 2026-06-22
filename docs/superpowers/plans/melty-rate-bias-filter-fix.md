@@ -1,100 +1,88 @@
-# MELTY Heading Rate-Bias Filter Fix — Implementation Plan
+# MELTY Heading Rate-Bias Filter Fix — Validation & Tuning Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: use superpowers:systematic-debugging (find/confirm root cause before fixing) and superpowers:executing-plans. **This repo: do NOT run git operations** (the human commits). Build/run details for the offline replay harness and the `.sun` log format are in `docs/DEBUGGING.md` — read it first; this plan assumes it.
+> **For agentic workers:** REQUIRED SUB-SKILL: `superpowers:systematic-debugging` and `superpowers:executing-plans`. **Do NOT run git operations** (the human commits). The `.sun` log format and how to build/run the offline replay harness (`tools/replay/`) + `analyze.py` are in `docs/DEBUGGING.md` — read it first; this plan assumes it.
 
-**This plan is ONLY about fixing the MELTY heading LED precession (the navigation filter).** The telemetry format (50 Hz / ESP-NOW v2 / 100 Hz real state), the app's real-vs-replayed vars, dropped-frame display, and error handling are already implemented separately — do not touch them here.
+**The fix is already implemented and validated against the existing (imperfect) logs.** This plan is to **confirm and fine-tune it on a freshly captured clean log**, and to escalate to a second stage only if needed. It concerns ONLY the navigation filter / MELTY heading-LED precession — not telemetry format, app, etc.
 
-**Goal:** In MELTY mode the heading LED (lit only within ±3° of the zero heading) should stay visually *stationary*. Today it slowly precesses (rotates ~1–2 rev/s while the robot spins ~40 rev/s). Make it lock.
+> **What's implemented now (read this — supersedes the "approaches" framing below):**
+> 1. **Open-loop magnetometer heading** (`sunshine_core/src/mag_heading.c`): each mag axis is high-passed (2nd-order Butterworth, `MAG_HP_*`, fc=0.5 Hz) to strip the body-fixed DC (hard-iron + average ESC current), then `mag_angle = atan2(-my_hp, mx_hp)`. This is **open-loop** — independent of the estimate — so it cannot drift (replaced the old closed-loop synchronous demodulator). Full math in FILTER_MATH.md §Step 2.
+> 2. **Trust the (now clean, absolute) mag**: `KF_R_MAG` lowered 0.1 → **0.01**.
+> 3. **Accel rate down-weighting once locked**: `KF_R_ACCEL_LOCKED = 80` used when `mag_valid`, `KF_R_ACCEL = 0.5` during spin-up (`brain.c`).
+>
+> **Replay result on the old logs:** the high-passed field is a steady ~22 µT every window (clean), and precession on the longest window is ~+0.3 rev/s (was ~+2). Shorter windows scatter ±0.5 rev/s — but those are 0.3–0.9 s transient-contaminated chunks from gappy logs, so the **clean-log confirmation below is what matters**.
+>
+> **Remaining task:** capture a clean log (§3), confirm precession < 0.5 rad/s across all speeds, and fine-tune `KF_R_MAG` / `KF_R_ACCEL_LOCKED` (§ tuning). If a speed-dependent residual remains, escalate to the additive ω-bias state (§4). Schema is now v3, `SunshineState` = 44 bytes.
 
----
-
-## 1. What the robot is (minimum context)
-
-Sunshine is a 1 lb melty-brain combat robot: the whole body spins (up to ~2500+ RPM) and wheel speeds are modulated per-revolution to translate. An ESP32-S3 ("brain") runs a 1 kHz navigation+control loop. The navigation filter (a Kalman filter in `sunshine_core/`, shared C code that also runs on the host for replay) estimates the body heading `θ` and spin rate `ω`:
-
-- **Accelerometer (ADXL375, 11 mm from spin centre, 45° mount):** centripetal accel gives spin rate `ω_accel = sqrt(|a| / r)`. High bandwidth, always available, but **systematically biased** (see §2).
-- **Magnetometer (LIS3MDL, 1 kHz):** the Earth field rotates once per body revolution. A synchronous demodulator (`derot_filter.c`) derotates the field by the estimated `θ` and low-pass filters it; `mag_angle = atan2(Q, I)` is an **absolute** heading reference, valid only while spinning (`ω > 4π rad/s ≈ 120 RPM`, `SUNSHINE_MAG_MIN_OMEGA`).
-- The Kalman fuses them: accel → `ω`, mag → absolute `θ`. The LED lights when `wrap(kf_theta + theta_offset)` is within ±3°.
-
-Key files (all in `sunshine_core/`): `src/kalman.c` (predict + two update steps), `src/brain.c` (`sunshine_step` orchestration + accel/mag gating), `src/derot_filter.c`, `include/sunshine_core.h` (state struct + tuning `#define`s, most `#ifndef`-guarded so they can be overridden with `-D`). The Kalman tuning constants: `KF_Q_THETA`, `KF_Q_OMEGA`, `KF_R_ACCEL` (accel measurement variance — smaller = stronger/more-trusted accel), `KF_R_MAG`.
-
-The state struct `SunshineState` is **append-only** and shared with the Rust host via `sunshine_app/src-tauri/src/ffi.rs` (a mirrored `#[repr(C, packed)]` struct + a compile-time `size_of` assert) — **if you add/resize state fields you must update ffi.rs and bump `SUNSHINE_SCHEMA_VERSION`**, and the replay harness `tools/replay/replay.c` unpacks state by byte offset so it needs updating too.
+**Goal:** In MELTY the heading LED (lit within ±3° of zero heading) should look *stationary*. It used to precess ~2 rev/s while the robot spins ~40 rev/s. The implemented fix cut that to ~0.5 rev/s in replay; confirm it's visually stationary on hardware and fine-tune.
 
 ---
 
-## 2. Root cause (already investigated & confirmed — do not re-derive from scratch)
+## 1. Minimum robot context
 
-Confirmed from the two existing logs in `sunshine_brain/logs/` via the offline replay harness, using the **raw magnetometer as filter-independent ground truth** (the field vector rotates exactly once per revolution about its hard-iron centre; unwrap its angle to get true Ω):
+1 lb melty-brain combat robot: the whole body spins (~2000–2500 RPM) and wheel speeds modulate per-revolution to translate. An ESP32-S3 runs a 1 kHz nav+control loop. The navigation Kalman filter (`sunshine_core/`, shared C also run on the host for replay) estimates heading `θ` and spin rate `ω`:
+- **Accelerometer (ADXL375, ~11 mm from spin centre):** centripetal accel → `ω_accel = sqrt(|a|/r)`. High-bandwidth, always available, but **biased ~5–8% high** (effective radius ≠ assumed 11 mm + tangential accel from drive ripple; the bias also *varies with speed*).
+- **Magnetometer (LIS3MDL):** Earth field rotates once per body revolution; a synchronous demodulator (`derot_filter.c`) derotates by estimated `θ` → `mag_angle`, an **absolute** heading reference, valid only while spinning (`ω > SUNSHINE_MAG_MIN_OMEGA = 4π rad/s ≈ 120 RPM`).
+- The Kalman fuses accel→`ω`, mag→absolute `θ`. LED lights when `wrap(kf_theta + theta_offset)` is within ±3°.
 
-1. **`omega_from_accel` is biased high by ~5–8%** vs the raw-mag true Ω (e.g. 262.6 vs 250.1 rad/s in one window). Both numbers come from *real logged inputs*, so the bias is real, not a replay artifact. Likely causes: the effective IMU radius differs from the assumed 11 mm (best-fit ~12.1–12.8 mm, and it **varies between windows** → not a single fixed constant), plus tangential acceleration from the MELTY drive ripple and accel offset.
-2. **`kf_omega` locks onto that biased value during spin-up** (when the omega covariance `P_ωω` is still large, so the accel update dominates), then `P_ωω` collapses and **neither sensor strongly re-corrects ω**. The magnetometer corrects `θ` (angle) well — `derot |I,Q|` ≈ 18 µT vs ~22 µT ideal, a decent lock — but a persistent rate error of ~10 rad/s drifts faster than the mag's angle correction can null it → the LED precesses at roughly the residual bias.
-
-So: **the LED precesses because the heading integrates a biased rate that the magnetometer's angle-only correction can't fully remove.** Precession scales with speed, which is why it shows up in fast MELTY but seemed fine during slow TANK nav-tuning.
-
-### 2a. What was already tried and FAILED — do not repeat naively
-
-A 3-state EKF augmenting the state with an accelerometer **scale factor** `s` (`ω_accel = ω·(1+s)`, mag makes `s` observable) was implemented and **passed an idealized unit test** (constant biased accel + clean mag → ω→true, s→bias) but **railed/diverged on the real logs**: positive feedback (scale↑ → corrected ω↓ → `kf_theta` rotates too slow → demod reference slips off the field → derot collapses → `mag_angle` garbage → scale↑) drove `s` to its clamp. Two compounding reasons it couldn't be tuned: (a) the only logs drop ~5% of 1 kHz inputs, injecting spurious ~80° mag innovations that poison `s`; (b) there is **no gap-free window longer than ~0.9 s** in those logs — far too short for a slow bias estimator to converge. This was reverted; `git`/the current tree is back to the original stable 2-state filter.
-
-**Lesson:** any bias/scale state must be (i) tuned on *clean* data, (ii) stable against the demod-slip feedback loop (bound it tightly, adapt slowly, freeze it whenever the mag is invalid), and (iii) validated across multiple windows and both logs.
+Files: `sunshine_core/src/{kalman,brain,derot_filter}.c`, `include/sunshine_core.h` (tuning `#define`s, `#ifndef`-guarded → overridable with `-D`). Tuning constants: `KF_Q_THETA`, `KF_Q_OMEGA`, `KF_R_ACCEL`, **`KF_R_ACCEL_LOCKED`** (new), `KF_R_MAG`.
 
 ---
 
-## 3. Prerequisite: capture a clean log (the real blocker)
+## 2. Root cause (confirmed) and the implemented fix
 
-The existing logs are unusable for tuning (dropped inputs + no long gap-free window). The telemetry was since moved to **50 Hz / ESP-NOW v2** specifically to stop the input drops, so a fresh capture is now possible.
+**Root cause:** `ω_accel` is biased high. `kf_omega` locks onto that biased value during spin-up (when `P_ωω` is large and the accel update dominates); then `P_ωω` collapses and neither sensor strongly re-corrects `ω`. The magnetometer corrects the *angle* well (`derot |I,Q|` ≈ 20 µT of ~22) but a persistent ~10 rad/s rate error drifts faster than the angle correction can null → the LED precesses at roughly the residual bias. Confirmed against the raw magnetometer (filter-independent ground truth: the field vector rotates once per rev about its hard-iron centre).
 
-- [ ] **Flash both boards** (already build clean): brain `production` env and the receiver. From the repo root, invoking pio via the penv exe (NOT bare `pio`):
+**The fix (implemented):** keep the accelerometer as the high-bandwidth primary, but **down-weight it once the magnetometer is locked** so the absolute mag governs the steady-state rate (a type-2 PLL nulls the frequency error). Concretely, in `sunshine_core/`:
+- `kalman_update_omega(s, omega_meas, r_accel)` now takes the measurement variance as an argument.
+- `brain.c` computes `mag_valid` *before* the accel update and passes `KF_R_ACCEL_LOCKED` (weak) when locked, `KF_R_ACCEL` (strong) during spin-up so `ω` can still climb to the mag-valid threshold.
+- Constants: `KF_R_ACCEL = 0.5` (spin-up, unchanged), **`KF_R_ACCEL_LOCKED = 80.0`** (locked), `KF_Q_OMEGA` raised `1e-3 → 1e-2` (so `ω` stays correctable by the mag — alone it does nothing; it only helps once the accel is down-weighted).
+- Unit tests in `test_kalman.c` lock both behaviours (locked → mag pulls `ω` to truth despite biased accel; trusted → `ω` follows the biased accel for spin-up).
+
+### Validation on the EXISTING logs (already done)
+Using `tools/replay/replay.exe <log> | analyze.py precession` (the harness dead-reckons across logged input gaps so the filter is at steady-state by each gap-free window; precession = replayed heading rate − raw-mag true Ω):
+
+| window | baseline precession | with fix |
+|---|---|---|
+| 0.91 s @ 2388 RPM (longest, most reliable) | +12.4 rad/s (+1.97 rev/s) | **+2.8 rad/s (+0.44 rev/s)** |
+| other steady windows | +5…+6 rad/s | −0.5…−1 rev/s |
+| 0.34 s @ 2259 RPM (transient) | +27 rad/s | +20 rad/s ⚠ |
+
+Spin-up still reaches lock (`mag_valid` 99%+, `ω` 11→271 rad/s, no NaN/divergence). C unit tests 5/5 pass. So the fix is real and substantial (~4× reduction), and stable (no demod-collapse feedback like the abandoned approach in §5).
+
+---
+
+## 3. Confirm & fine-tune on a clean log (the main task)
+
+The existing logs drop ~5% of inputs and have **no gap-free window > ~0.9 s**, so the per-window scatter above is partly measurement noise and partly the *speed-varying* bias. A clean 50 Hz log (the telemetry was moved to ESP-NOW v2 to stop the drops) will let you confirm and refine.
+
+- [ ] **Flash both boards** (build clean; invoke pio via the penv exe, NOT bare `pio`):
   - `~/.platformio/penv/Scripts/pio.exe run -d sunshine_brain -e production -t upload`
   - `~/.platformio/penv/Scripts/pio.exe run -d sunshine_receiver -t upload`
-- [ ] **Capture a log** with the host app (logging writes to `~/Documents/sunshine_logs/*.sun`): spin up in MELTY and hold steady for **≥30 s continuous**, ideally at 2–3 throttle levels (e.g. ~1500, ~2000, ~2500 RPM), plus the spin-up/down transitions. Label it clearly.
-- [ ] **Verify it's clean:** build the replay harness (see DEBUGGING.md → "Offline replay harness") and run `python tools/replay/analyze.py gaps cont.csv`. The dropped-input count must be ≈ 0 (the old logs were ~5%). If drops persist, stop and fix telemetry before tuning — a poisoned log will mis-tune the filter.
+- [ ] **Capture** a MELTY log (host app logs to `~/Documents/sunshine_logs/*.sun`): spin-up + **≥30 s steady at 2–3 throttle levels** (~1500/2000/2500 RPM) + a spin-down. Label it.
+- [ ] **Confirm it's clean:** build the harness (DEBUGGING.md → "Offline replay harness"), then `python tools/replay/analyze.py gaps <log>.csv` → dropped inputs must be ≈ 0.
+- [ ] **Measure precession:** `python tools/replay/analyze.py precession <log>.csv`. **Pass: |precession| < 0.5 rad/s across ALL steady windows and all speeds**, derot lock > 20 µT, no flagged outliers (other than genuine throttle transitions).
+- [ ] **On the robot:** spin up in MELTY and look at the LED — it should be a near-stationary dot. (Heading flash is full brightness; idle is the dim breathe.)
 
-Without this clean log, **do not attempt to tune** — you'll repeat the §2a failure.
-
----
-
-## 4. The fix: let the magnetometer discipline the rate (chosen direction)
-
-The human's decision: **keep the accelerometer powerful (it does a good job — this is sensor fusion), but allow moderate down-weighting so the absolute magnetometer governs the steady-state rate.** Rationale: with a 2-state `[θ, ω]` Kalman, a persistent mag *angle* innovation already feeds back into `ω` through the cross-covariance `P_θω` — that is the integral action of a type-2 PLL, which can drive `ω` to the true rate with zero steady-state error *if the loop has enough authority*. Today it doesn't, because the strong accel update (`KF_R_ACCEL=0.5`) re-pins `ω` to the biased value every tick and `P_ωω`/`P_θω` collapse.
-
-Implement and A/B in replay, in this order (stop at the first that meets §5 criteria):
-
-- [ ] **Approach A — increase the mag's rate authority (no new state; lowest risk).** Tune two existing constants in `sunshine_core/include/sunshine_core.h` (both `#ifndef`-guarded → override with `-D` for A/B without editing source):
-  - Raise `KF_Q_OMEGA` (currently `1e-3`) so `P_ωω`/`P_θω` don't collapse and the mag keeps correcting `ω`. Sweep e.g. `1e-3 → 1e-2 → 1e-1`.
-  - And/or moderately raise `KF_R_ACCEL` (currently `0.5`) **after lock** so the accel is a high-bandwidth prior, not the steady-state authority. Sweep e.g. `0.5 → 5 → 50`. *Caution: too high broke spin-up in a quick test (ω never reached the mag-valid threshold), so prefer gating — see Approach B's gate — or keep R_ACCEL low until `mag_valid`.*
-  - Goal: find a `(KF_Q_OMEGA, KF_R_ACCEL)` pair where replayed precession → ~0 with stable lock AND spin-up still reaches `mag_valid`. Build per-variant: `cmake -B build-q -S . -DCMAKE_C_FLAGS="-DKF_Q_OMEGA=1e-2f -DKF_R_ACCEL=5.0f"` (or pass via the harness build), then run `analyze.py precession`.
-
-- [ ] **Approach B — gated, bounded accel-bias state (only if A is insufficient across speeds).** Because the bias varies with speed, a learned correction may beat fixed retuning. Add an **additive ω-bias** state `b` (simpler/more stable than the scale factor that failed): `ω_accel` measured as `ω + b`, linear (no EKF). Make it safe:
-  - Append `kf_omega_bias` (+ its covariance terms) to `SunshineState` (append-only; bump schema; update `ffi.rs` + `replay.c`).
-  - **Freeze `b` whenever `!mag_valid`** (spin-up/spin-down) — zero its covariance coupling that tick (the §2a divergence happened when it updated without an absolute reference).
-  - **Bound** `b` to a physically plausible range and use a **small** `Q` so it adapts over seconds, not ticks.
-  - Keep `KF_R_ACCEL` reasonably strong (accel stays primary); `b` only soaks up the slow systematic component.
-
-The detailed math for an augmented linear-bias Kalman: state `x=[θ,ω,b]`, predict `F=[[1,dt,0],[0,1,0],[0,0,1]]` with `Q=diag(Qθ,Qω,Qb)`; accel update `z=ω_accel`, `H=[0,1,1]`, `R=KF_R_ACCEL`; mag update `z=mag_angle`, `H=[1,0,0]`, `R=KF_R_MAG`. The mag's angle innovation makes `b` observable through `P_θb` (built via the predict `θ`-`ω` coupling and the accel update's `ω`-`b` coupling). This is standard gyro-bias estimation; the failure mode to guard is unobservability when the mag is off.
+### Fine-tuning `KF_R_ACCEL_LOCKED` (the main knob)
+Override without editing source via the harness build flags (constant is `#ifndef`-guarded), e.g. configure a build with `-DCMAKE_C_FLAGS="-DKF_R_ACCEL_LOCKED=120.0f -DKF_Q_OMEGA=1e-2f"` and re-run `analyze.py precession`. Behaviour observed on existing data:
+- **Higher `KF_R_ACCEL_LOCKED`** (weaker accel) → less precession, until it **overshoots negative** (~200 over-corrected to −1.8 rev/s and degraded the lock). The sweet spot was ~75–100; the longest window nulled at ~100.
+- **Lower** → precession returns toward the biased-accel value.
+- `KF_Q_OMEGA` alone does nothing — only matters paired with a down-weighted accel.
+- Pick the value that minimizes |precession| across **all** speeds in the clean log (the optimum may differ from 80 once the data is clean). Keep `KF_R_ACCEL` (spin-up) at 0.5 — verify spin-up still reaches `mag_valid` after any change.
+- Re-run `ctest --test-dir tools/replay/build` after every change.
 
 ---
 
-## 5. Validation (replay harness — see DEBUGGING.md for build/run)
+## 4. Escalation (only if §3 can't hit < 0.5 rad/s across speeds)
 
-For each candidate, rebuild the harness against the modified core and replay the **clean** log:
+If a single `KF_R_ACCEL_LOCKED` leaves a speed-dependent residual (because the accel bias varies with speed), add an **online ω-bias state** to absorb the slow systematic component:
+- Append `kf_omega_bias` (+ its covariance terms) to `SunshineState` — **append-only**, so bump `SUNSHINE_SCHEMA_VERSION`, update the Rust mirror `sunshine_app/src-tauri/src/ffi.rs` (struct + `size_of` assert) and the harness `tools/replay/replay.c` (unpacks state by byte offset).
+- Use an **additive** bias (linear: accel measures `ω + b`, `H=[0,1,1]`), NOT a scale factor (see §5).
+- **Freeze `b` whenever `!mag_valid`** (zero its covariance coupling that tick) and **bound** it with a **small** `Q` so it adapts over seconds. The mag's angle innovation makes `b` observable via the cross-covariance.
+- Validate exactly as §3, additionally confirming `b` converges and stays bounded (dump it from the replay CSV) and that it's stable across spin-up/down.
 
-- [ ] **Precession → ~0:** `python tools/replay/analyze.py precession cont.csv` reports `LED PRECESSION` (= replayed heading-reference rate − raw-mag true Ω). **Pass: |precession| < 0.5 rad/s** across **≥3 windows and at the different throttle levels** (today it's ~+12 rad/s). The bias varies with speed, so a single window passing is NOT enough.
-- [ ] **Lock quality:** `derot |I,Q|` improves toward the Earth-field magnitude (**> 20 µT**, up from ~18).
-- [ ] **Spin-up still works:** over the full log there is no NaN/divergence, `ω` reaches `mag_valid`, and (Approach B) the bias state stays bounded and converges — not railed. Quick check: dump `kf_omega`/bias min/max from the CSV.
-- [ ] **C unit tests pass:** `ctest --test-dir tools/replay/build` (the harness CMake also builds `sunshine_core`'s tests). Add a test asserting the fix's intended steady-state behaviour (e.g. biased-accel + clean-mag → ω converges to true, lock holds).
-- [ ] **No regression to TANK / DISABLED:** spot-check those modes in the log behave sanely.
+## 5. What NOT to do (already tried and failed)
+A 3-state EKF with an accelerometer **scale factor** `s` (`ω_accel = ω·(1+s)`) passed an idealized unit test but **railed/diverged on real data**: positive feedback (scale↑ → corrected ω↓ → demod reference slips off the field → derot collapses → `mag_angle` garbage → scale↑) drove `s` to its clamp. The gaps + lack of a long convergence window made it untunable. The implemented §2 fix (down-weighting, no learned multiplicative state in the demod loop) avoids that feedback entirely. If you add a bias state (§4), keep it additive, gated to mag-valid, and slow — and watch for the same demod-slip instability.
 
-The raw-mag ground truth in `analyze.py precession` is filter-independent, so it stays valid no matter how you change the filter.
-
----
-
-## 6. Workflow & guardrails
-
-- This touches the **safety-critical 1 kHz control/filter loop**. Per the repo workflow: tag the current state, branch, keep changes minimal, and do not merge until §5 all pass. (The human runs git.)
-- Prefer the smallest change that meets the criteria (Approach A before B).
-- If 3+ tuning attempts each reveal a new failure, **stop and question the model** (systematic-debugging §Phase 4.5) rather than piling on — that's exactly how the §2a scale-EKF went wrong.
-- Re-run the C unit tests after every core change; they build cross-platform via `tools/replay/CMakeLists.txt`.
-
-## 7. Done when
-
-The MELTY heading LED is visually stationary on hardware, and in replay the precession is < 0.5 rad/s across speeds with a stable lock (derot > 20 µT) and no spin-up regression, with the change validated on a freshly captured clean 50 Hz log.
+## 6. Done when
+The MELTY heading LED is visually stationary on hardware, and in replay on a clean log |precession| < 0.5 rad/s across all speeds with derot > 20 µT, no spin-up regression, and `ctest` green.

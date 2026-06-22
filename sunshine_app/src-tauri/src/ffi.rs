@@ -30,8 +30,8 @@ pub struct SunshineState {
     pub kf_omega:      f32,
     pub kf_p:          [f32; 4],
     pub theta_offset:  f32,
-    pub derot_lp_i:    [f32; 4],
-    pub derot_lp_q:    [f32; 4],
+    pub mag_hp_x:      [f32; 2],
+    pub mag_hp_y:      [f32; 2],
 }
 
 /// SunshineVars: 12 floats + 4 u8 flags + 1 float = 48 + 4 + 4 = 56 bytes packed
@@ -39,8 +39,8 @@ pub struct SunshineState {
 #[derive(Clone, Copy, Default, Debug)]
 pub struct SunshineVars {
     pub omega_from_accel:  f32,
-    pub derot_i:           f32,
-    pub derot_q:           f32,
+    pub mag_x_filt:        f32,
+    pub mag_y_filt:        f32,
     pub mag_angle:         f32,
     pub est_theta:         f32,
     pub est_omega:         f32,
@@ -59,7 +59,7 @@ pub struct SunshineVars {
 
 const _: () = {
     assert!(size_of::<SunshineInput>() == 29, "SunshineInput size mismatch");
-    assert!(size_of::<SunshineState>() == 60, "SunshineState size mismatch");
+    assert!(size_of::<SunshineState>() == 44, "SunshineState size mismatch");
     assert!(size_of::<SunshineVars>()  == 56, "SunshineVars size mismatch");
 };
 

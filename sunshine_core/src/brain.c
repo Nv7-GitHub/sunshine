@@ -5,9 +5,9 @@
 
 /* Forward declarations of internal functions */
 void kalman_predict      (SunshineState *s, float dt);
-void kalman_update_omega (SunshineState *s, float omega_meas);
+void kalman_update_omega (SunshineState *s, float omega_meas, float r_accel);
 void kalman_update_theta (SunshineState *s, float theta_meas);
-void derot_filter_step   (const SunshineInput *in, SunshineState *s, SunshineVars *v);
+void mag_heading_step    (const SunshineInput *in, SunshineState *s, SunshineVars *v);
 void control_step        (const SunshineInput *in, SunshineState *s, SunshineVars *v);
 
 #define ACCEL_SAT_THRESHOLD_MS2  (280.0f * 9.81f)   /* 280g */
@@ -39,15 +39,24 @@ void sunshine_step(const SunshineInput *in, SunshineState *state, SunshineVars *
     /* -- Kalman predict --------------------------------------------------- */
     kalman_predict(state, DT);
 
-    /* -- Kalman update - accelerometer ------------------------------------ */
-    if (!vars->accel_saturated && vars->omega_from_accel > 0.0f)
-        kalman_update_omega(state, vars->omega_from_accel);
+    /* The mag is the absolute reference only above the min spin rate. Compute
+       this BEFORE the accel update so we can down-weight the (biased) accel once
+       the mag can govern the rate — this is the heading-precession fix. */
+    vars->mag_valid = (state->kf_omega > SUNSHINE_MAG_MIN_OMEGA);
 
-    /* -- Synchronous demodulation -> mag_angle ---------------------------- */
-    derot_filter_step(in, state, vars);
+    /* -- Kalman update - accelerometer ------------------------------------ */
+    /* Strong accel during spin-up (mag invalid) so ω can climb to the mag-valid
+       threshold; weak accel once locked so the absolute mag sets the steady-state
+       rate instead of the biased accel. */
+    if (!vars->accel_saturated && vars->omega_from_accel > 0.0f) {
+        float r_accel = vars->mag_valid ? KF_R_ACCEL_LOCKED : KF_R_ACCEL;
+        kalman_update_omega(state, vars->omega_from_accel, r_accel);
+    }
+
+    /* -- Open-loop magnetometer absolute heading -> mag_angle ------------- */
+    mag_heading_step(in, state, vars);
 
     /* -- Kalman update - magnetometer ------------------------------------- */
-    vars->mag_valid = (state->kf_omega > SUNSHINE_MAG_MIN_OMEGA);
     if (vars->mag_valid)
         kalman_update_theta(state, vars->mag_angle);
 

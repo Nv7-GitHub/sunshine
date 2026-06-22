@@ -13,7 +13,7 @@ sunshine/
 │   └── src/
 │       ├── utils.c         # float16, wrap_to_pi, clampf, unit conversions
 │       ├── kalman.c        # 2-state Kalman filter (θ, ω): predict + two updates
-│       ├── derot_filter.c  # Synchronous demodulation + 4th-order LP biquad cascade
+│       ├── mag_heading.c   # Open-loop magnetometer heading (2nd-order HP + atan2)
 │       ├── control.c       # DISABLED / TANK / MELTY logic, trapezoid wave, LED
 │       └── brain.c         # sunshine_step() top-level, serialisation, state_init
 ├── sunshine_brain/         # PlatformIO ESP32-S3 brain firmware
@@ -105,7 +105,7 @@ SIMULATION: simulation.rs ticks at 1 kHz → SunshineInput
 1. Decode raw inputs → `vars->centripetal_ms2`, `omega_from_accel`, battery, eRPM
 2. `kalman_predict()` — dead-reckoning: θ += ω·dt, propagate covariance
 3. `kalman_update_omega()` — accel measurement update (skip if saturated)
-4. `derot_filter_step()` — synchronous demod → mag_angle
+4. `mag_heading_step()` — open-loop high-pass + atan2 → mag_angle (absolute)
 5. `kalman_update_theta()` — mag measurement update (skip if ω < 4π rad/s)
 6. `control_step()` — DISABLED/TANK/MELTY → dshot_cmd_left/right, led_on
 

@@ -6,7 +6,7 @@
 
 /* expose internal functions for testing */
 void kalman_predict      (SunshineState *s, float dt);
-void kalman_update_omega (SunshineState *s, float omega_meas);
+void kalman_update_omega (SunshineState *s, float omega_meas, float r_accel);
 void kalman_update_theta (SunshineState *s, float theta_meas);
 
 static SunshineState make_state(float theta, float omega) {
@@ -42,7 +42,7 @@ int main(void) {
     s = make_state(0.0f, 5.0f);
     s.kf_P[0] = 1.0f; s.kf_P[1] = 0.0f;
     s.kf_P[2] = 0.0f; s.kf_P[3] = 1.0f;
-    kalman_update_omega(&s, 20.0f);
+    kalman_update_omega(&s, 20.0f, KF_R_ACCEL);
     ASSERT(s.kf_omega > 5.0f && s.kf_omega < 20.0f, "omega update: between prior and meas");
 
     /* update theta: pulls kf_theta toward measurement, handles wrap */
@@ -56,9 +56,41 @@ int main(void) {
     sunshine_state_init(&s);
     for (int i = 0; i < 2000; i++) {
         kalman_predict(&s, 0.001f);
-        kalman_update_omega(&s, 100.0f);
+        kalman_update_omega(&s, 100.0f, KF_R_ACCEL);
     }
     ASSERT_NEAR(s.kf_omega, 100.0f, 1.0f, "omega converges to constant measurement");
+
+    /* ── Heading-precession fix: accelerometer rate down-weighting ──
+       With a biased accel (reads 108 for a true 100 rad/s) and a perfect absolute
+       mag reference, DOWN-WEIGHTING the accel (KF_R_ACCEL_LOCKED) lets the mag
+       pull omega to the TRUE rate — this is what stops the LED precessing. */
+    sunshine_state_init(&s);
+    s.kf_omega = 100.0f;
+    {
+        float theta_true = 0.0f;
+        for (int i = 0; i < 30000; i++) {
+            kalman_predict(&s, 0.001f);
+            kalman_update_omega(&s, 108.0f, KF_R_ACCEL_LOCKED);   /* weak accel (locked) */
+            theta_true += 100.0f * 0.001f;
+            kalman_update_theta(&s, remainderf(theta_true, 2.0f*3.14159265f));
+        }
+    }
+    ASSERT_NEAR(s.kf_omega, 100.0f, 5.0f, "locked: mag pulls omega to TRUE rate despite biased accel");
+
+    /* Conversely, with the accel TRUSTED (spin-up weighting) omega follows the
+       (biased) accelerometer — needed so omega can climb during spin-up. */
+    sunshine_state_init(&s);
+    s.kf_omega = 100.0f;
+    {
+        float theta_true = 0.0f;
+        for (int i = 0; i < 30000; i++) {
+            kalman_predict(&s, 0.001f);
+            kalman_update_omega(&s, 108.0f, KF_R_ACCEL);          /* strong accel (spin-up) */
+            theta_true += 100.0f * 0.001f;
+            kalman_update_theta(&s, remainderf(theta_true, 2.0f*3.14159265f));
+        }
+    }
+    ASSERT(s.kf_omega > 103.0f, "trusted: omega follows the (biased) accel measurement");
 
     TEST_RESULTS();
 }

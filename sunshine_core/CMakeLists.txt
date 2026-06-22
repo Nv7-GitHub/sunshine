@@ -6,7 +6,7 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CORE_SOURCES
     src/utils.c
     src/kalman.c
-    src/derot_filter.c
+    src/mag_heading.c
     src/control.c
     src/brain.c
 )
@@ -17,7 +17,7 @@ target_link_libraries(sunshine_core m)
 target_compile_options(sunshine_core PRIVATE -Wall -Wextra -Werror)
 
 enable_testing()
-foreach(t utils kalman derot_filter control brain)
+foreach(t utils kalman mag_heading control brain)
     add_executable(test_${t} test/test_${t}.c)
     target_link_libraries(test_${t} sunshine_core)
     add_test(NAME ${t} COMMAND test_${t})

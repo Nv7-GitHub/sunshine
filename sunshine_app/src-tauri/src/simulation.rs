@@ -15,9 +15,16 @@ const IMU_RADIUS:      f64 = 0.011;
 // EARTH_FIELD is the horizontal component only — the robot spins in a horizontal plane so
 // the vertical component is constant regardless of heading and creates no rotating signal.
 // Total field ≈ 50 µT; at ~60° magnetic inclination (typical US), horizontal = 50×cos(60°) = 25 µT.
-// Confirmed by spiritridge.sun: settled derot_I/Q magnitude ≈ 25 µT.
+// Confirmed by spiritridge.sun: high-passed mag magnitude (mag_x/y_filt) ≈ 22–25 µT.
 const EARTH_FIELD:     f64 = 25.0;          // µT, horizontal component only
 const EARTH_ANGLE:     f64 = 0.0;           // Earth field azimuth (rad, arbitrary reference)
+// LIS3MDL 1 kHz low-power-mode sampling artifact: a strong tone at fs/6 ≈ 167 Hz
+// (period-6 samples), measured ~7 µT on X and ~2 µT on Y in spiritridge.sun. The
+// tracking band-pass in mag_heading.c rejects it; modelling it here lets the sim
+// exercise that rejection.
+const MAG_LP_NOISE_HZ:   f64 = 1000.0 / 6.0;
+const MAG_LP_NOISE_X_UT: f64 = 7.0;
+const MAG_LP_NOISE_Y_UT: f64 = 2.0;
 // Hard-iron: constant body-frame bias from motor magnets and PCB traces.
 // The derotation LP filter rejects this (it becomes AC after derotation) but it is visible
 // in raw sensor data as the large offset between sim and real. Values from spiritridge.sun.
@@ -115,14 +122,15 @@ impl Simulation {
         let ay = (body_x + body_y) / 2.0f64.sqrt();
         let az = 9.81f64;
 
-        // The derotation algorithm (derot_filter.c) applies R(-θ) to [mx, my], which gives
-        // DC output for Earth's field only when the sensor y-axis is negated relative to the
-        // naive geometric model.  The LIS3MDL is physically mounted with its y-axis inverted,
-        // so my = -E·sin(φ−θ).  Without the minus sign the derotated signal oscillates at 2ω
-        // and the LP filter kills it → heading Kalman update receives atan2(0,0)=0 every tick.
+        // The open-loop heading (mag_heading.c) takes atan2(-my_hp, mx_hp). For that to give
+        // the true heading, the sensor y-axis must be negated relative to the naive geometric
+        // model. The LIS3MDL is physically mounted with its y-axis inverted, so we generate
+        // my = -E·sin(φ−θ) here to match the real hardware.
         let phi_minus_theta = EARTH_ANGLE - self.body_angle;
-        let mx = EARTH_FIELD * phi_minus_theta.cos() + HARD_IRON_X;
-        let my = -EARTH_FIELD * phi_minus_theta.sin() + HARD_IRON_Y;
+        // LP-mode HF sampling artifact (fs/6 tone); see consts above.
+        let hf = (2.0 * PI * MAG_LP_NOISE_HZ * (self.time_us as f64 * 1e-6)).sin();
+        let mx = EARTH_FIELD * phi_minus_theta.cos() + HARD_IRON_X + MAG_LP_NOISE_X_UT * hf;
+        let my = -EARTH_FIELD * phi_minus_theta.sin() + HARD_IRON_Y + MAG_LP_NOISE_Y_UT * hf;
 
         let i_total = self.supply_current(last_vars.dshot_cmd_left, last_vars.dshot_cmd_right, V_NOMINAL);
         let v_batt  = V_NOMINAL - i_total * R_INTERNAL;

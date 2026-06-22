@@ -10,7 +10,7 @@
 static constexpr uint8_t FRAME_START = 0xAA;
 
 // ── Type codes ───────────────────────────────────────────────────────────────
-static constexpr uint8_t TYPE_TELEM_FRAME = 0x01; // Receiver→Host, 703 B payload
+static constexpr uint8_t TYPE_TELEM_FRAME = 0x01; // Receiver→Host, 671 B payload
 static constexpr uint8_t TYPE_CTRL_PACKET = 0x02; // Host→Receiver, 5 B payload
 static constexpr uint8_t TYPE_STATUS      = 0x03; // Both,          1+≤32 B
 static constexpr uint8_t TYPE_HEARTBEAT   = 0x04; // Both,          4 B
@@ -27,9 +27,9 @@ static constexpr uint8_t STATUS_INIT_ERROR       = 0x04;
 // Brain sends 20 inputs per ESP-NOW v2 packet (50 Hz; IDF >= 5.4 lifts the old
 // 250-byte cap to 1490). Two SunshineState snapshots per frame give 100 Hz real
 // state; vars are not sent (host recomputes them). Layout: 2 (frame_id) + 1
-// (type) + 2*60 (SunshineState) + 20*29 (SunshineInput) = 703. Keep in sync with
+// (type) + 2*44 (SunshineState) + 20*29 (SunshineInput) = 671. Keep in sync with
 // brain telemetry.cpp FRAME_SIZE.
-static constexpr uint16_t ESPNOW_TELEM_SIZE  = 703;
+static constexpr uint16_t ESPNOW_TELEM_SIZE  = 671;
 static constexpr uint16_t CTRL_PAYLOAD_SIZE  = 5;   // mode+x+y+theta+throttle
 static constexpr uint16_t HEARTBEAT_SIZE     = 4;
 static constexpr uint16_t RSSI_SIZE          = 1;

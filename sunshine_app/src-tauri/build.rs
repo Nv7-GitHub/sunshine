@@ -8,7 +8,7 @@ fn main() {
         .files([
             format!("{}/src/utils.c",        core_dir),
             format!("{}/src/kalman.c",       core_dir),
-            format!("{}/src/derot_filter.c", core_dir),
+            format!("{}/src/mag_heading.c",  core_dir),
             format!("{}/src/control.c",      core_dir),
             format!("{}/src/brain.c",        core_dir),
         ])

@@ -60,15 +60,15 @@ static void unpack_state(const uint8_t *b, SunshineState *s){
     s->kf_omega     = rd_f32(b+4);
     for (int i=0;i<4;i++) s->kf_P[i]      = rd_f32(b+8 +4*i);
     s->theta_offset = rd_f32(b+24);
-    for (int i=0;i<4;i++) s->derot_lp_I[i]= rd_f32(b+28+4*i);
-    for (int i=0;i<4;i++) s->derot_lp_Q[i]= rd_f32(b+44+4*i);
+    for (int i=0;i<2;i++) s->mag_hp_x[i]= rd_f32(b+28+4*i);  /* state: 28..35 */
+    for (int i=0;i<2;i++) s->mag_hp_y[i]= rd_f32(b+36+4*i);  /* state: 36..43 (sizeof_state=44) */
 }
 /* stored vars (for --reseed validation): we only need a few fields */
-typedef struct { float mag_angle, est_theta, est_omega, derot_I, derot_Q,
+typedef struct { float mag_angle, est_theta, est_omega, mag_x_filt, mag_y_filt,
                        dshot_l, dshot_r, heading_deg; uint8_t led_on, mag_valid; } StoredVars;
 static void unpack_vars(const uint8_t *b, StoredVars *v){
-    v->derot_I     = rd_f32(b+4);
-    v->derot_Q     = rd_f32(b+8);
+    v->mag_x_filt  = rd_f32(b+4);
+    v->mag_y_filt  = rd_f32(b+8);
     v->mag_angle   = rd_f32(b+12);
     v->est_theta   = rd_f32(b+16);
     v->est_omega   = rd_f32(b+20);
@@ -117,7 +117,7 @@ int main(int argc, char **argv){
 
     /* CSV header */
     printf("time_us,mode,kf_theta,kf_omega,omega_accel,mag_angle,est_theta,est_omega,"
-           "derot_I,derot_Q,heading_deg,led_on,mag_valid,accel_sat,dshot_l,dshot_r,"
+           "mag_x_filt,mag_y_filt,heading_deg,led_on,mag_valid,accel_sat,dshot_l,dshot_r,"
            "mag_x,mag_y,accel_x,accel_y,theta_offset,"
            "stored_est_theta,stored_mag_angle,stored_led_on\n");
 
@@ -153,7 +153,7 @@ int main(int argc, char **argv){
             printf("%u,%u,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.4f,%.4f,%.4f,%u,%u,%u,%.1f,%.1f,"
                    "%d,%d,%d,%d,%.6f",
                    in.time_us, in.mode, st.kf_theta, st.kf_omega, v.omega_from_accel,
-                   v.mag_angle, v.est_theta, v.est_omega, v.derot_I, v.derot_Q,
+                   v.mag_angle, v.est_theta, v.est_omega, v.mag_x_filt, v.mag_y_filt,
                    v.heading_deg, v.led_on, v.mag_valid, v.accel_saturated,
                    v.dshot_cmd_left, v.dshot_cmd_right,
                    in.mag_x, in.mag_y, in.accel_x, in.accel_y, st.theta_offset);

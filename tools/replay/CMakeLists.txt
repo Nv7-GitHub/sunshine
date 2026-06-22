@@ -15,7 +15,7 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 
 get_filename_component(CORE "${CMAKE_CURRENT_SOURCE_DIR}/../../sunshine_core" ABSOLUTE)
 set(CORE_SRC
-    ${CORE}/src/utils.c ${CORE}/src/kalman.c ${CORE}/src/derot_filter.c
+    ${CORE}/src/utils.c ${CORE}/src/kalman.c ${CORE}/src/mag_heading.c
     ${CORE}/src/control.c ${CORE}/src/brain.c)
 set(COMPAT ${CMAKE_CURRENT_SOURCE_DIR}/msvc_compat.h)
 
@@ -34,7 +34,7 @@ add_executable(replay replay.c ${CORE_SRC})
 core_target(replay)
 
 enable_testing()
-foreach(t utils kalman derot_filter control brain)
+foreach(t utils kalman mag_heading control brain)
     add_executable(test_${t} ${CORE}/test/test_${t}.c ${CORE_SRC})
     core_target(test_${t})
     add_test(NAME ${t} COMMAND test_${t})

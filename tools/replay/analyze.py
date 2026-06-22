@@ -65,25 +65,37 @@ def cmd_gaps(path):
     print(f"  gaps >1.5ms: {big.sum()} (lost ~{int((dt[big]/1000 - 1).sum())} inputs)")
     print("  (each gap = dropped 1 kHz inputs => continuous replay diverges there)")
 
-def cmd_precession(path):
-    c = load(path); g = steady_melty_block(c, gap_free=True)
-    if g is None: print("no gap-free steady MELTY window found"); return
-    t = c('time_us')[g]/1e6
+def precession_of(c, g):
+    """(true_Omega, led_rate, precession, derot_uT, earth_uT) over index block g."""
+    t = c('time_us')[g] / 1e6
     mx, my = c('mag_x')[g], c('mag_y')[g]
     ox, oy = mx.mean(), my.mean()
-    # Body field rotates at -Omega; magnitude = true spin rate (ground truth).
-    Om_true = abs(phasor_rate(t, np.arctan2(my-oy, mx-ox)))
-    r_led = phasor_rate(t, wrap(c('kf_theta')[g] + c('theta_offset')[g]))
-    # LED rate sign may be ±; compare magnitudes for the precession size.
-    prec = abs(r_led) - Om_true
-    earth = np.hypot(mx-ox, my-oy).mean() * 0.058
-    print(f"PRECESSION over gap-free MELTY window: {len(g)} samples, {t[-1]-t[0]:.2f}s")
-    print(f"  true spin (raw mag)   = {Om_true:.2f} rad/s ({Om_true*60/2/np.pi:.0f} RPM)")
-    print(f"  omega_from_accel mean = {c('omega_accel')[g].mean():.2f} rad/s")
-    print(f"  LED heading-ref rate  = {abs(r_led):.2f} rad/s")
-    print(f"  ==> LED PRECESSION    = {prec:+.2f} rad/s = {prec/2/np.pi:+.3f} rev/s")
-    print(f"  derot lock |I,Q|      = {np.hypot(c('derot_I')[g], c('derot_Q')[g]).mean():.1f} uT "
-          f"(ideal ~{earth:.0f})")
+    # Body field rotates at ±Omega about its hard-iron centre → |rate| = true spin.
+    Om_true = abs(phasor_rate(t, np.arctan2(my - oy, mx - ox)))
+    r_led   = abs(phasor_rate(t, wrap(c('kf_theta')[g] + c('theta_offset')[g])))
+    derot   = np.hypot(c('mag_x_filt')[g], c('mag_y_filt')[g]).mean()
+    earth   = np.hypot(mx - ox, my - oy).mean() * 0.058
+    return Om_true, r_led, r_led - Om_true, derot, earth
+
+def cmd_precession(path):
+    """Report LED precession (heading rate − raw-mag ground-truth Ω) across the
+    longest gap-free MELTY windows. The bias varies with speed, so a single
+    window is not enough — check that ALL are small."""
+    c = load(path)
+    t = c('time_us'); mode = c('mode'); kfom = c('kf_omega')
+    ok = (mode == 2) & (kfom > 150)
+    dt = np.diff(t); ok[:-1] &= (dt >= 900) & (dt <= 1100); ok[-1] = False
+    idx = np.where(ok)[0]
+    if len(idx) < 50:
+        print("no gap-free steady MELTY window found"); return
+    blocks = [b for b in np.split(idx, np.where(np.diff(idx) > 1)[0] + 1) if len(b) >= 300]
+    blocks.sort(key=len, reverse=True)
+    print("LED precession = heading-ref rate - raw-mag true Omega  (target |.| < 0.5 rad/s):")
+    for b in blocks[:6]:
+        Om, rled, prec, derot, earth = precession_of(c, b)
+        flag = "  <-- transient/outlier?" if abs(prec) > 8 else ""
+        print(f"  {len(b)/1000:.2f}s @ {Om*60/2/np.pi:4.0f} RPM:  precession = {prec:+6.2f} rad/s "
+              f"({prec/2/np.pi:+.2f} rev/s)  derot {derot:.1f}/{earth:.0f}uT{flag}")
 
 if __name__ == '__main__':
     if len(sys.argv) < 3:
