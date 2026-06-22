@@ -34,33 +34,29 @@
 #define KF_Q_THETA   1e-6f
 #endif
 #ifndef KF_Q_OMEGA
-#define KF_Q_OMEGA   1e-2f          /* raised from 1e-3: keep ω correctable by the mag */
+#define KF_Q_OMEGA   1e-2f
 #endif
-/* Accelerometer omega-measurement variance. The accel rate is biased ~5–8%
- * (radius/scale + tangential), so once the magnetometer is locked we DOWN-WEIGHT
- * the accel (KF_R_ACCEL_LOCKED ≫ KF_R_ACCEL) and let the absolute mag govern the
- * steady-state rate — this is what stops the MELTY heading LED precessing. During
- * spin-up (mag invalid, ω < SUNSHINE_MAG_MIN_OMEGA) the accel must stay strong
- * (KF_R_ACCEL) so ω can rise to the mag-valid threshold. brain.c picks which. */
+/* Accelerometer omega-measurement variance. The accel (ω = √(a_c/r)) is the rate
+ * sensor at all times. Since the heading is recovered open-loop (mag_heading.c
+ * band-passes the Earth sine at the accel-derived spin frequency, independent of
+ * the estimate), the accel can't drag the heading into precession, so it is
+ * trusted fully and kf_omega tracks omega_from_accel. */
 #ifndef KF_R_ACCEL
-#define KF_R_ACCEL   0.5f           /* spin-up: trust the accel to build ω */
-#endif
-#ifndef KF_R_ACCEL_LOCKED
-#define KF_R_ACCEL_LOCKED  80.0f    /* mag locked: weak accel so the mag sets the rate */
+#define KF_R_ACCEL   0.5f
 #endif
 #ifndef KF_R_MAG
-#define KF_R_MAG     0.01f          /* the open-loop mag heading is a clean absolute
-                                     * reference — trust it (was 0.1 for the old demod) */
+#define KF_R_MAG     0.01f          /* open-loop mag heading is a clean absolute reference */
 #endif
 
 /* ── Magnetometer tracking band-pass (open-loop absolute heading) ──────────
  * The Earth field appears at the spin frequency; the body-fixed offset
  * (hard-iron + avg ESC current) is at DC; and 1 kHz low-power-mode sampling adds
  * tones well above the spin band (a strong one at fs/6 ≈ 167 Hz). A 2nd-order
- * RBJ band-pass CENTRED ON THE SPIN FREQUENCY (from kf_omega) isolates the Earth
- * sine: it has a transmission zero at DC (kills hard-iron) and rolls off above,
- * rejecting the HF sampling tones — which a fixed filter can't do because the
- * 167 Hz tone is only ~2.5–4× the 40–66 Hz spin. heading = atan2 of the
+ * RBJ band-pass CENTRED ON THE SPIN FREQUENCY (from omega_from_accel — a direct
+ * accel measurement, NOT the heading-coupled kf_omega; see mag_heading.c) isolates
+ * the Earth sine: it has a transmission zero at DC (kills hard-iron) and rolls off
+ * above, rejecting the HF sampling tones — which a fixed filter can't do because
+ * the 167 Hz tone is only ~2.5–4× the 40–66 Hz spin. heading = atan2 of the
  * band-passed axes (open-loop → cannot drift).
  *
  * The bandwidth is a FRACTION of the centre frequency (constant Q), NOT a fixed
@@ -68,9 +64,9 @@
  * would lose the signal at high spin. Bench bias was +2..+12% with ~3% per-sample
  * noise; combat adds linear acceleration + impacts, so we budget conservatively
  * (~2× that ≈ 30%) and set half-bandwidth = fc/(2·MAG_BP_Q) ≈ 33% of fc at Q=1.5.
- * That keeps the true spin in the band even when kf_omega is badly off, at the
+ * That keeps the true spin in the band even when the accel rate is biased, at the
  * cost of slightly weaker HF-tone rejection (a 4th-order band-pass would sharpen
- * it if needed). Coeffs are recomputed each tick from kf_omega (cheap). With
+ * it if needed). Coeffs are recomputed each tick from omega_from_accel (cheap). With
  * constant Q the group delay is a CONSTANT heading offset that theta_offset (the
  * driver zero) absorbs — no speed-dependent shift. Tunable: higher Q = narrower
  * = cleaner but riskier; lower Q = wider = more robust. */

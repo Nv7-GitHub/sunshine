@@ -23,3 +23,7 @@ CtrlInputs telemetry_get_ctrl(void);
 // Called from Core 1 to push a (SunshineInput, SunshineState) for TX
 // Returns false if ring buffer is full (item dropped)
 bool       telemetry_push(const SunshineInput *in, const SunshineState *state);
+
+// Cumulative count of 1 kHz inputs that telemetry_push could not enqueue (ring
+// full). Nonzero => replay will have input holes; diagnose via the PROF USB print.
+uint32_t   telemetry_dropped_count(void);

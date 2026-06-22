@@ -12,8 +12,8 @@ pub const STATUS_OK:                 u8 = 0x00;
 pub const STATUS_BRAIN_CONNECTED:    u8 = 0x01;
 pub const STATUS_BRAIN_DISCONNECTED: u8 = 0x02;
 
-// Brain sends 20 inputs per ESP-NOW v2 packet @ 50 Hz (IDF >= 5.4 lifts the old
-// 250-byte cap to 1490). Layout: 2 (frame_id) + 1 (type) + 2×SunshineState
+// Brain sends 20 inputs per ESP-NOW v2 packet @ 50 Hz (requires IDF >= 5.4 for the
+// >250-byte payload). Layout: 2 (frame_id) + 1 (type) + 2×SunshineState
 // (start + midpoint → 100 Hz real state) + 20×SunshineInput. No vars on the wire
 // (host recomputes them). Derived from the structs so it can never drift.
 pub const INPUTS_PER_FRAME:  usize = 20;

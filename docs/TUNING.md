@@ -39,7 +39,7 @@ Plot `vars.omega_from_accel` and `vars.est_omega` simultaneously.
 **If `est_omega` is too noisy / jumpy:**
 - Increase `KF_R_ACCEL` (trust accel less)
 
-**Typical good values:** `KF_R_ACCEL = 0.3–1.0` (spin-up), `KF_R_ACCEL_LOCKED ≈ 50–100` (weak, once the mag is locked), `KF_Q_OMEGA = 5e-3–1e-2`
+**Typical good values:** `KF_R_ACCEL = 0.3–1.0` (the accel is the rate sensor at all times), `KF_Q_OMEGA = 5e-3–1e-2`
 
 #### Step 2: Verify mag threshold
 
@@ -49,7 +49,7 @@ The threshold is defined by `SUNSHINE_MAG_MIN_OMEGA = 16π rad/s` in `sunshine_c
 
 #### Step 3: Tune angle (θ) tracking
 
-Plot `vars.est_theta`. With the mag filter active (above 480 RPM), θ should converge to a stable value rather than drifting. The open-loop mag heading is absolute, so it should not drift; a slow creep means the accel rate is biased and the mag isn't trusted/down-weighted enough (see `KF_R_MAG` / `KF_R_ACCEL_LOCKED`).
+Plot `vars.est_theta`. With the mag filter active (above 480 RPM), θ should converge to a stable value rather than drifting. The open-loop mag heading is absolute, so it should not drift; a slow creep means the mag isn't trusted enough (decrease `KF_R_MAG`).
 
 Also watch the LED: it should appear as a stationary dot at a fixed heading once the filter converges (~3-5 seconds after crossing the mag threshold).
 
@@ -61,9 +61,9 @@ Also watch the LED: it should appear as a stationary dot at a fixed heading once
 - Increase `KF_R_ACCEL` to reduce omega noise feeding into theta via the covariance matrix
 
 **If filter never converges (θ keeps sweeping):**
-- Check `mag_x_filt` and `mag_y_filt` — these are the band-passed Earth-field axes; they *oscillate* at the spin frequency, but their magnitude `sqrt(x²+y²)` should be a steady ~18–22 µT. If the magnitude collapses, `kf_omega` is so far off that the spin frequency has fallen outside the ±33% tracking band (or the spin is below the 480 RPM threshold) — fix `est_omega` first (Step 1).
+- Check `mag_x_filt` and `mag_y_filt` — these are the band-passed Earth-field axes; they *oscillate* at the spin frequency, but their magnitude `sqrt(x²+y²)` should be a steady ~18–22 µT. If the magnitude collapses, `omega_from_accel` is so far off that the spin frequency has fallen outside the ±33% tracking band (or the spin is below the 480 RPM threshold) — fix `est_omega`/`omega_from_accel` first (Step 1).
 
-**Typical good values:** `KF_R_MAG ≈ 0.01` (open-loop mag is a clean absolute reference, so trust it), `KF_Q_THETA = 1e-7–1e-5`, `KF_R_ACCEL_LOCKED ≈ 80` (down-weight the biased accel once the mag is locked).
+**Typical good values:** `KF_R_MAG ≈ 0.01` (open-loop mag is a clean absolute reference, so trust it), `KF_Q_THETA = 1e-7–1e-5`.
 
 #### Step 4: Pass/fail check
 

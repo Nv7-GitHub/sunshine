@@ -60,25 +60,12 @@ int main(void) {
     }
     ASSERT_NEAR(s.kf_omega, 100.0f, 1.0f, "omega converges to constant measurement");
 
-    /* ── Heading-precession fix: accelerometer rate down-weighting ──
-       With a biased accel (reads 108 for a true 100 rad/s) and a perfect absolute
-       mag reference, DOWN-WEIGHTING the accel (KF_R_ACCEL_LOCKED) lets the mag
-       pull omega to the TRUE rate — this is what stops the LED precessing. */
-    sunshine_state_init(&s);
-    s.kf_omega = 100.0f;
-    {
-        float theta_true = 0.0f;
-        for (int i = 0; i < 30000; i++) {
-            kalman_predict(&s, 0.001f);
-            kalman_update_omega(&s, 108.0f, KF_R_ACCEL_LOCKED);   /* weak accel (locked) */
-            theta_true += 100.0f * 0.001f;
-            kalman_update_theta(&s, remainderf(theta_true, 2.0f*3.14159265f));
-        }
-    }
-    ASSERT_NEAR(s.kf_omega, 100.0f, 5.0f, "locked: mag pulls omega to TRUE rate despite biased accel");
-
-    /* Conversely, with the accel TRUSTED (spin-up weighting) omega follows the
-       (biased) accelerometer — needed so omega can climb during spin-up. */
+    /* The accelerometer is the rate sensor at all times (KF_R_ACCEL): with a
+       biased accel (reads 108 for a true 100 rad/s), omega follows the accel — the
+       heading no longer depends on omega (it's recovered open-loop in
+       mag_heading.c), so trusting the accel for the rate is correct and there is no
+       down-weighting. (The removed KF_R_ACCEL_LOCKED used to weaken the accel once
+       the mag locked, a fix for the old closed-loop demodulator's precession.) */
     sunshine_state_init(&s);
     s.kf_omega = 100.0f;
     {

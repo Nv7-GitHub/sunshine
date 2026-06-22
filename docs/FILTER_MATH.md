@@ -112,10 +112,12 @@ kHz, and irrelevant — there is no spin-frequency ESC content.)
 
 To isolate the Earth sine we run a **2nd-order RBJ band-pass** (Robert
 Bristow-Johnson's "audio EQ cookbook" biquad) on each axis, **centred on the spin
-frequency** taken from `kf_omega`:
+frequency** taken from `omega_from_accel` — the accelerometer rate, which is
+**independent of the heading estimate** (the OPEN-LOOP note below explains why the
+centre must come from the accel and *not* from `kf_omega`):
 
 ```c
-float fc    = kf_omega / (2π);              // band centre = estimated spin freq (Hz)
+float fc    = omega_from_accel / (2π);      // band centre = accel spin freq (Hz)
 float w0    = 2π·fc / 1000;                 // fs = 1 kHz
 float alpha = sin(w0) / (2·MAG_BP_Q);       // MAG_BP_Q = 1.5  (constant Q)
 // RBJ band-pass, constant 0 dB peak gain (then divide all by a0):
@@ -130,7 +132,8 @@ Why this filter:
   is killed *exactly*, at any spin rate.
 - **Peak at `f_rot`** with a roll-off above → rejects the 167 Hz sampling tone,
   which a *fixed* filter cannot (167 Hz is only ~2.5–4× the 40–66 Hz spin).
-- **Tracks `kf_omega`**, so the pass-band follows the spin as it changes.
+- **Tracks `omega_from_accel`**, so the pass-band follows the spin as it changes
+  while staying independent of the heading the band-pass itself produces.
 
 **Constant-Q, not fixed-Hz bandwidth.** The accelerometer's spin-rate estimate is
 off by a *fraction* (measured +2…+12% on the bench; combat adds linear
@@ -156,13 +159,19 @@ continuously — strictly better than reading one axis' zero-crossings (which gi
 heading only twice per axis per rev). The `-my` matches the LIS3MDL y-axis
 inversion (DEBUGGING.md) so heading increases with `kf_theta` (CCW positive).
 
-**This is OPEN-LOOP** — the heading never uses the `θ` estimate (only the band
-*centre* uses `kf_omega`, and mis-centring merely attenuates the signal, never
-biases the angle), so it **cannot drift**. (The previous design was a *closed-loop*
-synchronous demodulator that derotated by `kf_theta`; its limited correction
-bandwidth let a biased rate slowly precess the heading — the original MELTY LED
-creep.) The constant declination offset `φ_earth` and the band-pass's constant
-group-delay phase are both absorbed by `theta_offset` (the driver zero).
+**This is OPEN-LOOP** — neither the heading nor the band centre uses the `θ`/`ω`
+*estimate*: the angle is a pure `atan2` of the band-passed axes, and the band
+centre comes from `omega_from_accel` (a direct accel measurement). So the heading
+**cannot drift**. This independence is essential, not incidental: an earlier
+revision centred the band on `kf_omega`, but because the band-pass output feeds
+`kf_omega` back, the per-tick coefficient retuning from that fed-back rate
+**parametrically false-locked the recovered heading at half the true spin rate**
+(verified in sim: true 201.7 rad/s → recovered 108.6). Centring on the
+loop-independent accel rate breaks that loop. Mis-centring (e.g. the accel's few-%
+bias) merely attenuates the signal — it never biases the angle, because a *fixed*
+band-pass is LTI and preserves the input frequency. The constant declination
+offset `φ_earth` and the band-pass's constant group-delay phase are both absorbed
+by `theta_offset` (the driver zero).
 
 ### Implementation, minimum speed, and the soft-iron wobble
 
@@ -260,27 +269,30 @@ State and covariance update:
 P -= K × H × P
 ```
 
-This update is skipped when `est_omega < SUNSHINE_MAG_MIN_OMEGA` (4π rad/s).
+This update is skipped when `est_omega < SUNSHINE_MAG_MIN_OMEGA` (16π rad/s ≈ 480 RPM).
 
-### Accelerometer down-weighting (heading-precession fix)
+### The accel is the rate sensor; the mag is the absolute angle
 
-The accel-derived ω is biased a few percent (effective IMU radius ≠ the assumed
-11 mm, plus tangential acceleration). If the accel is trusted strongly at all
-times, `ω` locks onto that biased value and the heading creeps. So `brain.c`
-passes `KF_R_ACCEL_LOCKED` (weak) to the omega update **once the mag is valid**,
-letting the absolute mag govern the steady-state rate; `KF_R_ACCEL` (strong) is
-used only during spin-up so `ω` can climb to the mag-valid threshold.
+The accelerometer is trusted for `ω` at all times (`KF_R_ACCEL`), so `kf_omega`
+tracks `omega_from_accel`. The accel-derived ω is biased a few percent (effective
+IMU radius ≠ the assumed 11 mm, plus tangential acceleration), but that bias no
+longer matters for the heading: Step 2 is open-loop and centred on the accel rate
+(not the estimate), so a biased rate only mis-centres the band-pass slightly
+(attenuation, never an angle bias). An earlier revision down-weighted the accel
+once the mag "locked" (a now-removed `KF_R_ACCEL_LOCKED`) to stop a heading
+precession — but that precession was a property of the old closed-loop
+demodulator, not of trusting the accel, so the down-weighting is gone.
 
 ### No derotation feedback
 
-Because Step 2 is now open-loop, the filter is genuinely linear: the mag update
-is a normal absolute-angle measurement, not a function of the estimate. There is
-no derot bootstrap and no closed-loop drift mode — the mag pins `θ` absolutely
-and the accel supplies the high-bandwidth rate.
+The filter is genuinely linear: the mag update is a normal absolute-angle
+measurement, not a function of the estimate, and the band-pass centre is a direct
+accel measurement. There is no derot bootstrap and no closed-loop drift mode — the
+mag pins `θ` absolutely and the accel supplies the high-bandwidth rate.
 
 At startup the filter has high uncertainty (`P = diag(100, …)`). The accel update
 locks in `ω` within a few seconds; the mag update corrects `θ` once the robot
-passes 120 RPM and the high-pass has settled (~1 s).
+passes the mag-valid threshold (480 RPM) and the band-pass has settled (~1 s).
 
 ---
 

@@ -64,9 +64,8 @@ Two state snapshots per 50 Hz frame give the **real filter state at 100 Hz**.
 recomputes them, both a *real* series (filter re-anchored to the logged state
 each frame + midpoint) and a *replayed* series (filter free-running from the
 first frame). The brain sends one 50 Hz packet per 20 inputs over **ESP-NOW v2**
-(671-byte payload = 3 + 2×44 + 20×29; the old 250-byte cap had forced
-6-input/~167 Hz frames). 50 Hz framing also cut the packet rate ~3.3×, relieving
-the ring-buffer backpressure that was dropping ~5% of 1 kHz inputs.
+(671-byte payload = 3 + 2×44 + 20×29; ESP-NOW v2 / IDF ≥ 5.4 is required for the
+>250-byte payload).
 
 **Frame size formula:** `5 + sizeof_state × num_states + sizeof_input × num_inputs + sizeof_vars`
 where `num_states = 2` for VER ≥ 3 else 1, and `sizeof_vars = 0` for VER ≥ 3.
@@ -130,22 +129,25 @@ frame-end rows) `stored_est_theta, stored_mag_angle, stored_led_on`.
 **What to look at:**
 1. `vars.mag_valid` — is it staying 1? If it drops, omega fell below the mag threshold (480 RPM).
 2. `vars.est_omega` vs `vars.omega_from_accel` — does omega track correctly?
-3. `vars.mag_x_filt` and `vars.mag_y_filt` — the band-passed Earth sine; their magnitude `sqrt(x²+y²)` should be a steady ~18–22 µT. If it collapses, the spin is below the mag threshold, or `kf_omega` is so far off that the spin frequency has fallen outside the ±33% tracking band.
+3. `vars.mag_x_filt` and `vars.mag_y_filt` — the band-passed Earth sine; their magnitude `sqrt(x²+y²)` should be a steady ~18–22 µT. If it collapses, the spin is below the mag threshold, or `omega_from_accel` is so far off that the spin frequency has fallen outside the ±33% tracking band.
 4. `state.kf_P[0]` — is the angle covariance decreasing? It should drop from 100 toward near-zero after the mag update engages.
 
 **Try:** Set `KF_R_MAG` lower and replay. Does theta converge faster?
 
-**Heading PRECESSION (LED rotates slowly) — the fix is the open-loop mag heading
-(Step 2 of FILTER_MATH.md) plus accel down-weighting.** Root cause: the old
-*closed-loop* synchronous demodulator derotated by `kf_theta`, so a biased
-`omega_from_accel` (~5–12% high) could drag the heading into a slow precession.
-The fix (implemented): the magnetometer heading (`mag_heading.c`) is now
-**open-loop** (spin-tracking RBJ band-pass + atan2, independent of the estimate →
-drift-free), the Kalman trusts it (`KF_R_MAG` lowered to 0.01), and the accel is
-down-weighted once locked (`KF_R_ACCEL_LOCKED`) so its bias doesn't set the rate.
-Measure with `analyze.py precession` (raw mag = filter-independent ground truth)
-and confirm the band-passed field magnitude is a steady ~18–22 µT. See
-`docs/superpowers/plans/melty-rate-bias-filter-fix.md`.
+**Heading PRECESSION (LED rotates slowly) — the band-pass must be centred on
+`omega_from_accel`, NOT `kf_omega`.** Root cause history: an earlier *closed-loop*
+synchronous demodulator derotated by `kf_theta`; a later revision used an
+open-loop band-pass but still took its centre frequency from `kf_omega`. Because
+the band-pass output feeds `kf_omega` back, the per-tick coefficient retuning from
+that fed-back rate **parametrically false-locked the recovered heading at half the
+true spin rate** (sim: true 201.7 rad/s → 108.6; `kf_theta` a curvy, not straight,
+sawtooth). The fix (implemented): `mag_heading.c` centres the band-pass on
+`omega_from_accel`, which is a direct accel measurement **independent of the
+estimate**, breaking the loop. The accel is therefore trusted fully for the rate
+again (`KF_R_ACCEL` always — the old `KF_R_ACCEL_LOCKED` down-weighting is gone),
+so `kf_omega` tracks `omega_from_accel`. Measure with `analyze.py precession` (raw
+mag = filter-independent ground truth): the LED rate should match the raw-mag rate,
+and the band-passed field magnitude should be a steady ~18–22 µT.
 
 **What to expect from real vs. simulated mag data:**
 - Real `inputs.mag_x/y`: large constant offset (~−95 µT X, ~+103 µT Y from motor hard-iron) plus a ~25 µT Earth-field sine wave. The LIS3MDL y-axis is physically inverted on the PCB, so `my = −E·sin(φ−θ)` (negated relative to the naive model). This is what the `-my_hp` in the heading `atan2` accounts for (`mag_heading.c`) — do not "fix" it.

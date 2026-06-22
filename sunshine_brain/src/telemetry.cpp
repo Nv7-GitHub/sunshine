@@ -8,6 +8,7 @@
 #include <esp_err.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
+#include <atomic>
 #include <string.h>
 
 // ── Control inputs (Core 0 writes via ESP-NOW callback, Core 1 reads) ────────
@@ -19,7 +20,14 @@ struct TelemetryEntry {
     SunshineInput  input;
     SunshineState  state;
 };
-static RingBuffer<TelemetryEntry, 64> telem_ring;  // >= INPUTS_PER_FRAME + jitter margin (power of 2)
+// Sized for transient Core-0/WiFi preemption: at 1 kHz, 256 entries = 256 ms of
+// slack. The WiFi task (Core 0, high prio) does 500 Hz control RX + 50 Hz telem TX
+// and can preempt this drain task for tens of ms under RF contention; the old
+// 64-entry ring (64 ms) overflowed once 50 Hz / 20-input framing made each TX a
+// longer Core-0 hog (~13% of inputs dropped). 256 × sizeof(TelemetryEntry≈73 B) ≈
+// 18 KB SRAM (ESP32-S3 has 512 KB). Power of 2 required.
+static RingBuffer<TelemetryEntry, 256> telem_ring;
+static std::atomic<uint32_t> dropped_inputs{0};
 
 // ── ESP-NOW TX frame ──────────────────────────────────────────────────────────
 // ESP-NOW v2 (IDF >= 5.4) raises the max payload from 250 to 1490 bytes, which
@@ -80,7 +88,13 @@ bool telemetry_push(const SunshineInput *in, const SunshineState *state) {
     TelemetryEntry e;
     e.input = *in;
     e.state = *state;
-    return telem_ring.push(e);
+    bool ok = telem_ring.push(e);
+    if (!ok) dropped_inputs.fetch_add(1, std::memory_order_relaxed);
+    return ok;
+}
+
+uint32_t telemetry_dropped_count(void) {
+    return dropped_inputs.load(std::memory_order_relaxed);
 }
 
 // ── Core 0 telemetry task ─────────────────────────────────────────────────────

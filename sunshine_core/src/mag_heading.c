@@ -5,15 +5,19 @@
  * current) and (b) high-frequency tones from the LIS3MDL's 1 kHz low-power-mode
  * sampling (a strong one near fs/6 ≈ 167 Hz). To isolate the Earth sine we run a
  * 2nd-order RBJ band-pass on each axis, CENTRED ON THE SPIN FREQUENCY taken from
- * kf_omega and ±MAG_BP_HALF_BW_HZ wide. The band-pass has a transmission zero at
- * DC (kills hard-iron regardless of speed) and rolls off above the band
- * (rejecting the HF sampling tones). The heading is atan2 of the band-passed
- * axes — OPEN-LOOP (the estimate only picks the band centre, never the angle),
- * so it cannot drift; mis-centering only attenuates the signal, and the ±3 Hz
- * band (3× the accel rate uncertainty) keeps the true spin inside it.
+ * omega_from_accel (a direct accelerometer measurement, NOT kf_omega). The band-
+ * pass has a transmission zero at DC (kills hard-iron regardless of speed) and
+ * rolls off above the band (rejecting the HF sampling tones). The heading is atan2
+ * of the band-passed axes — fully OPEN-LOOP: neither the angle nor the band centre
+ * uses the estimate, so it cannot drift. This independence is the whole point:
+ * centring the band on kf_omega (which the band-pass output feeds back into) closes
+ * a loop whose per-tick coefficient modulation parametrically FALSE-LOCKS at half
+ * the true spin rate. omega_from_accel is loop-independent, so it breaks that loop;
+ * mis-centering from the accel's few-% bias only attenuates the signal (a fixed
+ * band-pass is LTI → preserves frequency), never biases the angle.
  *
- * Coeffs are recomputed each tick from kf_omega (a few transcendental ops — fine
- * at 1 kHz; the spin rate changes slowly so the coeffs do too). Filter state is
+ * Coeffs are recomputed each tick from omega_from_accel (a few transcendental ops —
+ * fine at 1 kHz; the spin rate changes slowly so the coeffs do too). Filter state is
  * SunshineState.mag_hp_x / mag_hp_y (two biquad delay elements per axis).
  */
 #include "sunshine_core.h"
@@ -36,10 +40,20 @@ void mag_heading_step(const SunshineInput *in, SunshineState *s, SunshineVars *v
     float mx = (float)in->mag_x * MAG_SCALE_UT;
     float my = (float)in->mag_y * MAG_SCALE_UT;
 
-    /* Band-pass centre = estimated spin frequency (Hz), clamped to the min so the
-     * coeffs stay sane below the mag-valid threshold (the mag update is gated off
-     * there anyway by brain.c). */
-    float fc = s->kf_omega * (0.5f / M_PI_F);
+    /* Band-pass centre = spin frequency. Use the LOOP-INDEPENDENT accelerometer
+     * rate (omega_from_accel), NOT kf_omega: the heading this band-pass produces
+     * sets kf_theta, which feeds kf_omega back via the Kalman update's cross-
+     * covariance, so centring on kf_omega closes a feedback loop whose per-tick coeff
+     * modulation parametrically FALSE-LOCKS the recovered heading at half the true
+     * spin rate. omega_from_accel is measured straight from the accelerometer
+     * (independent of the heading), so it breaks the loop. During accel saturation
+     * it is 0 → fall back to kf_omega for those brief ticks (far too short to
+     * develop a false lock). brain.c sets omega_from_accel + accel_saturated on v
+     * before calling this. Clamp to the min so coeffs stay sane below the mag-valid
+     * threshold (the mag update is gated off there by brain.c anyway). */
+    float spin_omega = (!v->accel_saturated && v->omega_from_accel > 0.0f)
+                       ? v->omega_from_accel : s->kf_omega;
+    float fc = spin_omega * (0.5f / M_PI_F);
     if (fc < MAG_BP_MIN_FC_HZ) fc = MAG_BP_MIN_FC_HZ;
 
     /* RBJ band-pass (constant 0 dB peak): zero at DC, peak at fc, constant Q. */

@@ -311,14 +311,13 @@ Summary of what each parameter controls:
 | Parameter | Effect |
 |-----------|--------|
 | `KF_Q_OMEGA` | Higher → faster omega tracking, more noise |
-| `KF_R_ACCEL` | Higher → less influence from accelerometer (spin-up) |
-| `KF_R_ACCEL_LOCKED` | Accel weight once mag-locked; higher → mag governs the rate |
+| `KF_R_ACCEL` | Accel ω weight (always); higher → less influence from accelerometer |
 | `KF_Q_THETA` | Higher → faster angle tracking, more drift |
 | `KF_R_MAG` | Higher → less influence from magnetometer |
 
 ### Step 5: LED check
 
-While spinning above the mag threshold (~480 RPM), the LED should appear as a stationary dot (a few degrees of wobble from the soft-iron ellipse is fine — see FILTER_MATH.md). If it *sweeps/precesses* around, the heading is drifting — the open-loop mag should prevent that, so trust the mag more (`KF_R_MAG` down) and/or down-weight the accel more once locked (`KF_R_ACCEL_LOCKED` up).
+While spinning above the mag threshold (~480 RPM), the LED should appear as a stationary dot (a few degrees of wobble from the soft-iron ellipse is fine — see FILTER_MATH.md). If it *sweeps/precesses* around, the heading is drifting — the open-loop mag (band-pass centred on `omega_from_accel`) should prevent that, so trust the mag more (`KF_R_MAG` down). Confirm `omega_from_accel` is sane: if it is wildly wrong the band-pass mis-centres and the heading attenuates.
 
 ### Pass criteria
 

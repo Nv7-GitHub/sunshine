@@ -24,8 +24,8 @@ static constexpr uint8_t STATUS_LOGGING_STOPPED  = 0x03;
 static constexpr uint8_t STATUS_INIT_ERROR       = 0x04;
 
 // ── Payload sizes ─────────────────────────────────────────────────────────────
-// Brain sends 20 inputs per ESP-NOW v2 packet (50 Hz; IDF >= 5.4 lifts the old
-// 250-byte cap to 1490). Two SunshineState snapshots per frame give 100 Hz real
+// Brain sends 20 inputs per ESP-NOW v2 packet (50 Hz; requires IDF >= 5.4 for the
+// >250-byte payload). Two SunshineState snapshots per frame give 100 Hz real
 // state; vars are not sent (host recomputes them). Layout: 2 (frame_id) + 1
 // (type) + 2*44 (SunshineState) + 20*29 (SunshineInput) = 671. Keep in sync with
 // brain telemetry.cpp FRAME_SIZE.

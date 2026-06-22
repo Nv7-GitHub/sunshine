@@ -39,24 +39,24 @@ void sunshine_step(const SunshineInput *in, SunshineState *state, SunshineVars *
     /* -- Kalman predict --------------------------------------------------- */
     kalman_predict(state, DT);
 
-    /* The mag is the absolute reference only above the min spin rate. Compute
-       this BEFORE the accel update so we can down-weight the (biased) accel once
-       the mag can govern the rate — this is the heading-precession fix. */
+    /* The mag is the absolute reference only above the min spin rate. */
     vars->mag_valid = (state->kf_omega > SUNSHINE_MAG_MIN_OMEGA);
 
     /* -- Kalman update - accelerometer ------------------------------------ */
-    /* Strong accel during spin-up (mag invalid) so ω can climb to the mag-valid
-       threshold; weak accel once locked so the absolute mag sets the steady-state
-       rate instead of the biased accel. */
-    if (!vars->accel_saturated && vars->omega_from_accel > 0.0f) {
-        float r_accel = vars->mag_valid ? KF_R_ACCEL_LOCKED : KF_R_ACCEL;
-        kalman_update_omega(state, vars->omega_from_accel, r_accel);
-    }
+    /* The accelerometer is the rate sensor at all times: ω = √(a_c/r). The
+       heading is recovered open-loop by mag_heading.c (band-pass centred on this
+       same accel rate, independent of the estimate), so the accel can no longer
+       drag the heading into precession — therefore we trust it fully always and
+       kf_omega tracks omega_from_accel. (The old code down-weighted the accel once
+       the mag "locked" to stop a precession that only existed in the previous
+       closed-loop demodulator; that machinery is gone.) */
+    if (!vars->accel_saturated && vars->omega_from_accel > 0.0f)
+        kalman_update_omega(state, vars->omega_from_accel, KF_R_ACCEL);
 
     /* -- Open-loop magnetometer absolute heading -> mag_angle ------------- */
     mag_heading_step(in, state, vars);
 
-    /* -- Kalman update - magnetometer ------------------------------------- */
+    /* -- Kalman update - magnetometer (absolute heading reference) -------- */
     if (vars->mag_valid)
         kalman_update_theta(state, vars->mag_angle);
 
