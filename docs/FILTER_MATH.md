@@ -101,62 +101,92 @@ mag_y = B × sin(φ_earth - θ)
 
 So mag_x and mag_y oscillate at the rotation frequency. We want to extract φ_earth − θ (i.e., the absolute angle θ, given φ_earth is constant).
 
-### The solution: high-pass each axis, then atan2
+### The solution: a spin-tracking band-pass, then atan2 of the two axes
 
-The body-fixed contributions to the magnetometer — hard-iron from the motor
-magnets and PCB traces, plus the roughly-constant average ESC supply current —
-are **DC in the spinning body frame** (they don't rotate with the body). Earth's
-field rotates *with* the body, so it appears at the spin frequency. A high-pass
-filter on each axis therefore removes the body-fixed offset and keeps the Earth
-sine:
+Three things sit in the magnetometer signal: (a) the **Earth field**, at the spin
+frequency `f_rot`; (b) a **body-fixed DC offset** (hard-iron + the roughly
+constant average ESC current — DC because it doesn't rotate with the body); and
+(c) **high-frequency tones** from the LIS3MDL's 1 kHz low-power-mode sampling — a
+strong one at `f_s/6 ≈ 167 Hz`, measured ~7 µT. (ESC *switching* is far higher,
+kHz, and irrelevant — there is no spin-frequency ESC content.)
 
-```c
-float mx = mag_x * MAG_SCALE_UT;   // µT
-float my = mag_y * MAG_SCALE_UT;
-float mx_hp = biquad(mx, state.mag_hp_x, MAG_HP_*);   // 2nd-order Butterworth HP
-float my_hp = biquad(my, state.mag_hp_y, MAG_HP_*);
-```
-
-The absolute heading is then just the angle of the high-passed vector:
+To isolate the Earth sine we run a **2nd-order RBJ band-pass** (Robert
+Bristow-Johnson's "audio EQ cookbook" biquad) on each axis, **centred on the spin
+frequency** taken from `kf_omega`:
 
 ```c
-mag_angle = atan2(-my_hp, mx_hp);
+float fc    = kf_omega / (2π);              // band centre = estimated spin freq (Hz)
+float w0    = 2π·fc / 1000;                 // fs = 1 kHz
+float alpha = sin(w0) / (2·MAG_BP_Q);       // MAG_BP_Q = 1.5  (constant Q)
+// RBJ band-pass, constant 0 dB peak gain (then divide all by a0):
+b0 =  alpha;  b1 = 0;  b2 = -alpha;
+a0 =  1 + alpha;  a1 = -2·cos(w0);  a2 = 1 - alpha;
+float mx_bp = biquad(mx, state.mag_hp_x, b0,b1,b2,a1,a2);   // coeffs recomputed each tick
+float my_bp = biquad(my, state.mag_hp_y, b0,b1,b2,a1,a2);
 ```
 
-(The `-my` matches the LIS3MDL y-axis inversion — see DEBUGGING.md. The absolute
-declination offset `φ_earth` is absorbed by `theta_offset`, the driver's zero.)
+Why this filter:
+- **Transmission zero at DC** (`b0+b1+b2 = 0`) → hard-iron / average-current offset
+  is killed *exactly*, at any spin rate.
+- **Peak at `f_rot`** with a roll-off above → rejects the 167 Hz sampling tone,
+  which a *fixed* filter cannot (167 Hz is only ~2.5–4× the 40–66 Hz spin).
+- **Tracks `kf_omega`**, so the pass-band follows the spin as it changes.
 
-**This is OPEN-LOOP** — it does not use the filter's own `θ` estimate, so
-`mag_angle` is a true absolute reference and **cannot drift**. (The previous
-design was a *closed-loop* synchronous demodulator that derotated the field by
-`kf_theta` and low-pass filtered the result; its limited correction bandwidth let
-a biased integration rate slowly precess the heading. That is why the heading LED
-crept in MELTY.)
+**Constant-Q, not fixed-Hz bandwidth.** The accelerometer's spin-rate estimate is
+off by a *fraction* (measured +2…+12% on the bench; combat adds linear
+acceleration + impacts, so budget ~2× ≈ 30%). A fixed ±N Hz band would slide off
+the true signal at high spin. With constant `Q`, the −3 dB half-bandwidth is a
+fixed fraction of the centre: `fc/(2Q) = fc/3 ≈ ±33%` at `Q = 1.5`. So the band is
+≈ `0.67·f_rot … 1.33·f_rot`, comfortably wider than the bias even in messy combat,
+and the true Earth sine always stays in-band (worst case only −3 dB at the edge).
+Lower `Q` = wider/more robust; higher `Q` = narrower/cleaner.
 
-### Why high-pass, and the minimum speed
+**Combining the two axes (atan2).** `mx_bp` and `my_bp` are *not* two independent
+references — they are the **quadrature (cos / −sin) components of one rotating
+vector**: `mx_bp ≈ E·cos(φ−θ)`, `my_bp ≈ −E·sin(φ−θ)`. `atan2` returns that
+vector's angle, i.e. the absolute heading, using **both** axes every sample:
 
-The HP cutoff is `fc = 0.5 Hz` (2nd-order Butterworth, `MAG_HP_*` in
-`sunshine_core.h`). The Earth sine is at the spin frequency — 2 Hz at the 120 RPM
-minimum, up to ~40 Hz in MELTY — well above `fc`, so it passes at ~unity gain.
-The body-fixed DC and slow average-current drift are below `fc` and removed. ESC
-*switching* noise is far above the spin band (kHz), so there is no
-spin-frequency ESC content to separate. Below `SUNSHINE_MAG_MIN_OMEGA` (4π rad/s
-≈ 120 RPM) the spin frequency approaches `fc`, DC leaks through, and the heading
-is unreliable — so the mag Kalman update is gated off there.
-
-### HP filter implementation
-
-One 2nd-order Direct Form II biquad per axis. State is in
-`SunshineState.mag_hp_x[2]` / `mag_hp_y[2]` (two delay elements per axis):
-```
-w[n] = x[n] - a1×w[n-1] - a2×w[n-2]
-y[n] = b0×w[n] + b1×w[n-1] + b2×w[n-2]
+```c
+mag_angle = atan2(-my_bp, mx_bp);
 ```
 
-The per-sample heading is noisy (the LIS3MDL runs in 1 kHz low-power mode); the
-Kalman's mag update (`KF_R_MAG`, lowered to trust this clean absolute reference)
-averages it down. Because the measurement is absolute and open-loop, that
-denoising **cannot** introduce drift.
+They are 90° apart (X is at its zero where Y is at its peak and vice-versa), which
+is exactly what `atan2` needs to resolve a full, unambiguous 0–360° heading
+continuously — strictly better than reading one axis' zero-crossings (which give
+heading only twice per axis per rev). The `-my` matches the LIS3MDL y-axis
+inversion (DEBUGGING.md) so heading increases with `kf_theta` (CCW positive).
+
+**This is OPEN-LOOP** — the heading never uses the `θ` estimate (only the band
+*centre* uses `kf_omega`, and mis-centring merely attenuates the signal, never
+biases the angle), so it **cannot drift**. (The previous design was a *closed-loop*
+synchronous demodulator that derotated by `kf_theta`; its limited correction
+bandwidth let a biased rate slowly precess the heading — the original MELTY LED
+creep.) The constant declination offset `φ_earth` and the band-pass's constant
+group-delay phase are both absorbed by `theta_offset` (the driver zero).
+
+### Implementation, minimum speed, and the soft-iron wobble
+
+One 2nd-order Direct Form II biquad per axis; state in
+`SunshineState.mag_hp_x[2]` / `mag_hp_y[2]`. The coefficients are recomputed each
+tick from `kf_omega` (a few transcendental ops — negligible at 1 kHz; the spin
+rate, hence the coeffs, changes slowly).
+
+The mag update is gated off below `SUNSHINE_MAG_MIN_OMEGA = 16π rad/s` (8 Hz spin
+= **480 RPM**). The band's lower edge is ≈ `0.75·f_rot`; below 8 Hz that edge sinks
+toward the slow average-current band where the 2nd-order skirt (~6 dB/oct, not a
+brick wall) no longer rejects it well, and the tangential-acceleration inflation
+of `omega_from_accel` becomes large. (Hard-iron DC itself never constrains the
+minimum — the band-pass zeros it at any speed.)
+
+The per-sample heading is noisy (1 kHz low-power mode), so the Kalman trusts it
+moderately (`KF_R_MAG = 0.01`) and averages it down; because the measurement is
+absolute, that denoising cannot add drift. One real imperfection: the two mag axes
+are not equal-gain (measured amplitude ratio ≈ 1.44 → the `(x,y)` locus is an
+**ellipse**, not a circle), which gives `atan2` a **±~10° 2/rev error**. It is
+**zero-mean**, so it does *not* move the LED (no drift) — it just adds a few
+degrees of wobble to the otherwise-stationary lit point. A soft-iron calibration
+(ellipse fit → rescale/de-skew the axes before `atan2`) would sharpen it but isn't
+required.
 
 ---
 

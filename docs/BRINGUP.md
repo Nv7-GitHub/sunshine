@@ -282,7 +282,7 @@ Let the system run for 2 minutes without touching anything. Pass if:
 **Setup:** Full robot assembled, **props off** initially.  
 **Firmware environment:** `bringup_4_navigation`
 
-In this environment **TANK mode drives the motors** so you can spin the robot to tune the filters. DISABLED and MELTY keep the motors zeroed (MELTY isn't tuned until Level 5). The Kalman and derotation filters run in all modes. **Props off.**
+In this environment **TANK mode drives the motors** so you can spin the robot to tune the filters. DISABLED and MELTY keep the motors zeroed (MELTY isn't tuned until Level 5). The Kalman and magnetometer-heading filters run in all modes. **Props off.**
 
 ### Step 1: Flash and connect
 
@@ -298,9 +298,9 @@ Spin the robot slowly by hand (without motors). In the graph:
 - `omega_from_accel` should rise as you spin faster
 - During spin-up, `omega_from_accel` reads high (tangential acceleration adds to centripetal magnitude — this is expected and normal, documented in `FILTER_MATH.md`)
 
-### Step 3: Verify magnetometer derotation
+### Step 3: Verify magnetometer heading
 
-Spin the robot at > 300 RPM by hand or with light motor power (with props off it's safe). Plot `vars.derot_I` and `vars.derot_Q`. They should be near-constant (DC values). If they oscillate, the derotation filter needs time to settle — wait ~3 seconds after reaching speed.
+Spin the robot above the mag threshold (~480 RPM) by hand or with light motor power (with props off it's safe). Plot `vars.mag_x_filt` and `vars.mag_y_filt` — the band-passed Earth-field axes. They *oscillate* at the spin frequency (they're the rotating Earth sine), but their magnitude `sqrt(x²+y²)` should settle to a steady ~18–22 µT within ~1 s. If the magnitude is near zero, the spin is below threshold or `est_omega` is far off (so the spin frequency is outside the ±33% tracking band — fix Step 2 first). Also plot `vars.mag_angle` (the absolute heading) — it should rotate smoothly with the body.
 
 ### Step 4: Tune Kalman parameters
 
@@ -311,13 +311,14 @@ Summary of what each parameter controls:
 | Parameter | Effect |
 |-----------|--------|
 | `KF_Q_OMEGA` | Higher → faster omega tracking, more noise |
-| `KF_R_ACCEL` | Higher → less influence from accelerometer |
+| `KF_R_ACCEL` | Higher → less influence from accelerometer (spin-up) |
+| `KF_R_ACCEL_LOCKED` | Accel weight once mag-locked; higher → mag governs the rate |
 | `KF_Q_THETA` | Higher → faster angle tracking, more drift |
 | `KF_R_MAG` | Higher → less influence from magnetometer |
 
 ### Step 5: LED check
 
-While spinning at > 300 RPM (above the 120 RPM mag threshold), the LED should appear as a stationary dot at a fixed heading. If it sweeps around, the theta estimate is drifting — tune `KF_R_MAG` down or `KF_Q_THETA` down.
+While spinning above the mag threshold (~480 RPM), the LED should appear as a stationary dot (a few degrees of wobble from the soft-iron ellipse is fine — see FILTER_MATH.md). If it *sweeps/precesses* around, the heading is drifting — the open-loop mag should prevent that, so trust the mag more (`KF_R_MAG` down) and/or down-weight the accel more once locked (`KF_R_ACCEL_LOCKED` up).
 
 ### Pass criteria
 

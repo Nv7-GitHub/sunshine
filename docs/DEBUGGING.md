@@ -128,9 +128,9 @@ frame-end rows) `stored_est_theta, stored_mag_angle, stored_led_on`.
 ### Scenario 1: LED sweeping — theta not locking
 
 **What to look at:**
-1. `vars.mag_valid` — is it staying 1? If it drops, omega fell below 120 RPM.
+1. `vars.mag_valid` — is it staying 1? If it drops, omega fell below the mag threshold (480 RPM).
 2. `vars.est_omega` vs `vars.omega_from_accel` — does omega track correctly?
-3. `vars.mag_x_filt` and `vars.mag_y_filt` — the high-passed Earth sine; their magnitude `sqrt(x²+y²)` should be a steady ~22 µT. If it collapses, the spin is below the HP cutoff or the field is being lost.
+3. `vars.mag_x_filt` and `vars.mag_y_filt` — the band-passed Earth sine; their magnitude `sqrt(x²+y²)` should be a steady ~18–22 µT. If it collapses, the spin is below the mag threshold, or `kf_omega` is so far off that the spin frequency has fallen outside the ±33% tracking band.
 4. `state.kf_P[0]` — is the angle covariance decreasing? It should drop from 100 toward near-zero after the mag update engages.
 
 **Try:** Set `KF_R_MAG` lower and replay. Does theta converge faster?
@@ -138,13 +138,13 @@ frame-end rows) `stored_est_theta, stored_mag_angle, stored_led_on`.
 **Heading PRECESSION (LED rotates slowly) — the fix is the open-loop mag heading
 (Step 2 of FILTER_MATH.md) plus accel down-weighting.** Root cause: the old
 *closed-loop* synchronous demodulator derotated by `kf_theta`, so a biased
-`omega_from_accel` (~5–8% high) could drag the heading into a slow precession.
+`omega_from_accel` (~5–12% high) could drag the heading into a slow precession.
 The fix (implemented): the magnetometer heading (`mag_heading.c`) is now
-**open-loop** (high-pass + atan2, independent of the estimate → drift-free), the
-Kalman trusts it (`KF_R_MAG` lowered to 0.01), and the accel is down-weighted
-once locked (`KF_R_ACCEL_LOCKED`) so its bias doesn't set the rate. Measure with
-`analyze.py precession` (raw mag = filter-independent ground truth) and confirm
-the high-passed field magnitude is a steady ~22 µT. See
+**open-loop** (spin-tracking RBJ band-pass + atan2, independent of the estimate →
+drift-free), the Kalman trusts it (`KF_R_MAG` lowered to 0.01), and the accel is
+down-weighted once locked (`KF_R_ACCEL_LOCKED`) so its bias doesn't set the rate.
+Measure with `analyze.py precession` (raw mag = filter-independent ground truth)
+and confirm the band-passed field magnitude is a steady ~18–22 µT. See
 `docs/superpowers/plans/melty-rate-bias-filter-fix.md`.
 
 **What to expect from real vs. simulated mag data:**
