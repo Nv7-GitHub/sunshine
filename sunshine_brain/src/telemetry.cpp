@@ -55,6 +55,14 @@ static inline bool mac_is_broadcast(const uint8_t *m) {
 // while the half-duplex receiver is transmitting. Cuts first-try collisions →
 // fewer retransmits. Fail-safe: a timeout sends anyway if the control link drops.
 static SemaphoreHandle_t ctrl_edge_sem = nullptr;
+// Given by the send callback when a frame's TX completes (ACK or retries-exhausted).
+// The task waits on this before queuing the next frame so esp_now_send never
+// overflows the ESP-NOW TX queue (ESP_ERR_ESPNOW_NO_MEM) when the ring backs up.
+static SemaphoreHandle_t tx_done_sem  = nullptr;
+// millis() of the last control packet from our receiver. If control is flowing the
+// receiver is present (and listening); if it stops, the receiver is off → don't
+// transmit telemetry (nowhere to send), just keep draining the ring.
+static volatile uint32_t last_ctrl_ms = 0;
 
 // ── ESP-NOW TX frame ──────────────────────────────────────────────────────────
 // ESP-NOW v2 (IDF >= 5.4) raises the max payload from 250 to 1490 bytes, which
@@ -110,7 +118,9 @@ static void on_espnow_recv(const esp_now_recv_info_t *info,
     }
     // else: drop this packet; next will arrive within ~2ms at 500Hz
 
-    // Mark the control edge for the telemetry task's gap-aligned send.
+    // Receiver is present (and just finished a control TX → now listening): mark
+    // the link alive and signal the telemetry task to send in this gap.
+    last_ctrl_ms = (uint32_t)millis();
     if (ctrl_edge_sem) xSemaphoreGive(ctrl_edge_sem);
 }
 
@@ -149,6 +159,7 @@ uint32_t telemetry_tx_fail_count(void) {
 static void on_telem_sent(const wifi_tx_info_t * /*info*/, esp_now_send_status_t status) {
     if (status != ESP_NOW_SEND_SUCCESS)
         tx_fail.fetch_add(1, std::memory_order_relaxed);
+    if (tx_done_sem) xSemaphoreGive(tx_done_sem);   // unblock the next send
 }
 
 // ── Core 0 telemetry task ─────────────────────────────────────────────────────
@@ -194,18 +205,40 @@ void telemetry_task(void *) {
         }
         const uint8_t *dest = peer_unicast ? target_mac : receiver_peer.peer_addr;
 
+        // ── Only transmit while the receiver is present ─────────────────────────
+        // We know it is when its control stream is arriving (last_ctrl_ms fresh).
+        // With the receiver OFF there is nowhere to send: we already drained this
+        // frame's inputs above (so the ring can't overflow), so just DROP it rather
+        // than hammer esp_now_send at an unACKing peer — that backs up the ESP-NOW
+        // TX queue (→ ESP_ERR_ESPNOW_NO_MEM) and would stall the drain.
+        bool link_alive = (last_ctrl_ms != 0) &&
+                          ((uint32_t)((uint32_t)millis() - last_ctrl_ms) < 200u);
+        if (!link_alive) { tx_frame_id++; continue; }
+
+        // ── Flow control: wait for the PREVIOUS send to finish ──────────────────
+        // One frame in flight at a time → esp_now_send can't overflow the ESP-NOW
+        // TX queue. The send callback gives this; timeout is a fail-safe.
+        if (tx_done_sem) xSemaphoreTake(tx_done_sem, pdMS_TO_TICKS(50));
+
         // ── Gap-align the send to just after a control RX ───────────────────────
         // Drain any stale edge, then wait for the NEXT control edge (≤ ~2 ms at
-        // 500 Hz) so our frame arrives while the half-duplex receiver is listening,
-        // not mid-control-TX. Timeout = fail-safe if the control link is down.
+        // 500 Hz) so our frame arrives while the half-duplex receiver is listening.
+        // Short timeout so a momentary control gap never throttles the drain.
         if (ctrl_edge_sem) {
-            xSemaphoreTake(ctrl_edge_sem, 0);                    // clear stale give
-            xSemaphoreTake(ctrl_edge_sem, pdMS_TO_TICKS(25));    // next edge or timeout
+            xSemaphoreTake(ctrl_edge_sem, 0);                   // clear stale give
+            xSemaphoreTake(ctrl_edge_sem, pdMS_TO_TICKS(5));    // next edge or timeout
         }
 
         esp_err_t send_err = esp_now_send(dest, tx_frame, FRAME_SIZE);
-        if (send_err != ESP_OK)
-            Serial.printf("TELEM TX err: %s\n", esp_err_to_name(send_err));
+        if (send_err != ESP_OK) {
+            static uint32_t last_err_ms = 0;
+            uint32_t now_ms = (uint32_t)millis();
+            if (now_ms - last_err_ms > 1000) {                 // rate-limit the print
+                Serial.printf("TELEM TX err: %s\n", esp_err_to_name(send_err));
+                last_err_ms = now_ms;
+            }
+            if (tx_done_sem) xSemaphoreGive(tx_done_sem);       // no send-cb → unblock now
+        }
         tx_frame_id++;
     }
 }
@@ -217,6 +250,9 @@ void telemetry_init(void) {
     configASSERT(ctrl_mutex != NULL);
     ctrl_edge_sem = xSemaphoreCreateBinary();   // control-RX edge for gap-aligned TX
     configASSERT(ctrl_edge_sem != NULL);
+    tx_done_sem = xSemaphoreCreateBinary();     // TX-complete flow control
+    configASSERT(tx_done_sem != NULL);
+    xSemaphoreGive(tx_done_sem);                // prime: first send proceeds immediately
 
     WiFi.mode(WIFI_STA);
     WiFi.disconnect();
