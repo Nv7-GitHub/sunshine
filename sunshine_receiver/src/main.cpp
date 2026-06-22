@@ -38,6 +38,11 @@ void setup() {
     esp_wifi_set_channel(ESPNOW_CHANNEL, WIFI_SECOND_CHAN_NONE);
     esp_wifi_set_max_tx_power(84); // 21 dBm, maximum
 
+    // Print this receiver's STA MAC so it can be hard-coded as RECEIVER_MAC in the
+    // brain's config.h (deterministic unicast pairing for a multi-device arena).
+    Serial.printf("RECEIVER STA MAC: %s  (set as RECEIVER_MAC in brain config.h)\n",
+                  WiFi.macAddress().c_str());
+
     // ── ESP-NOW init ──────────────────────────────────────────────────────────
     if (esp_now_init() != ESP_OK) {
         Serial.println("ESP-NOW init failed");

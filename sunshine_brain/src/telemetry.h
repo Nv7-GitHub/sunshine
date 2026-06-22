@@ -27,3 +27,8 @@ bool       telemetry_push(const SunshineInput *in, const SunshineState *state);
 // Cumulative count of 1 kHz inputs that telemetry_push could not enqueue (ring
 // full). Nonzero => replay will have input holes; diagnose via the PROF USB print.
 uint32_t   telemetry_dropped_count(void);
+
+// Cumulative count of telemetry frames that failed delivery even after ESP-NOW
+// unicast MAC retries (no ACK). This is true frame loss; with a good link it
+// should stay 0. Printed in the PROF USB line.
+uint32_t   telemetry_tx_fail_count(void);

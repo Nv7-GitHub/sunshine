@@ -58,5 +58,10 @@ static constexpr bool MOTOR_RIGHT_INVERT = true;
 
 // ── ESP-NOW ───────────────────────────────────────────────────────────────────
 static constexpr uint8_t ESPNOW_CHANNEL      = 1;
-// Receiver MAC — fill in after running receiver and noting its WiFi STA MAC
+// Receiver MAC — AUTO-LEARNED at runtime from the receiver's control packets
+// (telemetry.cpp), so this does NOT need to be filled in. It is only the
+// pre-pairing bootstrap: broadcast (FF:..) until the first control packet arrives,
+// after which telemetry switches to UNICAST to the learned MAC (→ MAC ACK +
+// hardware retransmit = no lost frames). Leave as broadcast unless you want to
+// hard-pin a specific receiver.
 static const uint8_t RECEIVER_MAC[6]         = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};

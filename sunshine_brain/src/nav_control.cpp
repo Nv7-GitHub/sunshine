@@ -160,9 +160,9 @@ void nav_control_task(void *) {
             static uint32_t mx_total = 0, prof_n = 0;
             if (elapsed > mx_total) mx_total = elapsed;
             if (++prof_n % 500 == 0) {
-                Serial.printf("PROF us: adxl=%u mag=%u batt=%u ctrl=%u step=%u dshot=%u rest=%u | total=%u max=%u | telem_drop=%u\n",
+                Serial.printf("PROF us: adxl=%u mag=%u batt=%u ctrl=%u step=%u dshot=%u rest=%u | total=%u max=%u | telem_drop=%u tx_fail=%u\n",
                               adxl_us, mag_us, batt_us, ctrl_us, step_us, dshot_us, rest_us, elapsed, mx_total,
-                              telemetry_dropped_count());
+                              telemetry_dropped_count(), telemetry_tx_fail_count());
                 mx_total = 0;
             }
         }

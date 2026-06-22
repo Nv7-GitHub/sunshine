@@ -3,4 +3,5 @@
 *.pdb
 __pycache__/
 _tmp/
+dbg/
 build/

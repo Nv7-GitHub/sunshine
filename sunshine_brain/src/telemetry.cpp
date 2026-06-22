@@ -29,6 +29,33 @@ struct TelemetryEntry {
 static RingBuffer<TelemetryEntry, 256> telem_ring;
 static std::atomic<uint32_t> dropped_inputs{0};
 
+// ── Unicast pairing + delivery tracking + send-timing ────────────────────────
+// Telemetry is sent UNICAST so the WiFi MAC ACKs it and retransmits in hardware
+// on collision — broadcast (the old FF:FF:.. peer) has no ACK/retry, so any
+// collision (incl. the half-duplex receiver being mid-control-TX) was a permanent
+// lost frame → broke replay.
+//
+// Identity: prefer the HARD-CODED RECEIVER_MAC (config.h) — deterministic, and we
+// then reject control from any other MAC (target_locked). If RECEIVER_MAC is left
+// broadcast (FF:..), fall back to AUTO-LEARNING the receiver's MAC from the source
+// address of the control packets it unicasts to us (convenient for bench bring-up,
+// but a foreign broadcast could in principle be learned — hard-code it for comp).
+static uint8_t        target_mac[6];
+static volatile bool  target_known  = false;   // do we have a unicast destination yet?
+static bool           target_locked = false;   // RECEIVER_MAC was hard-coded → filter control to it
+static std::atomic<uint32_t> tx_fail{0};         // frames that failed even after MAC retries
+
+static inline bool mac_is_broadcast(const uint8_t *m) {
+    for (int i = 0; i < 6; i++) if (m[i] != 0xFF) return false;
+    return true;
+}
+// Send-timing: a binary semaphore given on EVERY control RX (500 Hz). The telem
+// task waits for the next control edge before sending, so its frame lands in the
+// gap right after the receiver finishes a control TX (when it's listening), not
+// while the half-duplex receiver is transmitting. Cuts first-try collisions →
+// fewer retransmits. Fail-safe: a timeout sends anyway if the control link drops.
+static SemaphoreHandle_t ctrl_edge_sem = nullptr;
+
 // ── ESP-NOW TX frame ──────────────────────────────────────────────────────────
 // ESP-NOW v2 (IDF >= 5.4) raises the max payload from 250 to 1490 bytes, which
 // lets us send the README-intended 50 Hz frame: one packet per 20 inputs.
@@ -56,6 +83,18 @@ static void on_espnow_recv(const esp_now_recv_info_t *info,
     // seq_id(2) + type(1) + mode(1) + ctrl_x(1) + ctrl_y(1) + ctrl_theta(1) + throttle(1)
     if (len != 8 || data[2] != 0x02) return;
 
+    // Identity: if RECEIVER_MAC is hard-coded (target_locked), accept control ONLY
+    // from that MAC — in a multi-device arena this rejects every other ESP-NOW
+    // device's traffic. If not locked, auto-pair off the first valid control packet.
+    if (info && info->src_addr) {
+        if (target_locked) {
+            if (memcmp(info->src_addr, target_mac, 6) != 0) return;   // not our receiver
+        } else if (!target_known) {
+            memcpy(target_mac, info->src_addr, 6);
+            target_known = true;
+        }
+    }
+
     CtrlInputs c;
     c.mode          = data[3];
     c.ctrl_x        = (int8_t)data[4];
@@ -70,6 +109,9 @@ static void on_espnow_recv(const esp_now_recv_info_t *info,
         xSemaphoreGive(ctrl_mutex);
     }
     // else: drop this packet; next will arrive within ~2ms at 500Hz
+
+    // Mark the control edge for the telemetry task's gap-aligned send.
+    if (ctrl_edge_sem) xSemaphoreGive(ctrl_edge_sem);
 }
 
 CtrlInputs telemetry_get_ctrl(void) {
@@ -97,43 +139,74 @@ uint32_t telemetry_dropped_count(void) {
     return dropped_inputs.load(std::memory_order_relaxed);
 }
 
+uint32_t telemetry_tx_fail_count(void) {
+    return tx_fail.load(std::memory_order_relaxed);
+}
+
+// MAC TX-complete callback: SUCCESS = receiver ACKed (delivered); FAIL = no ACK
+// after all hardware retries (a genuinely lost frame). Counting this tells us
+// whether unicast retransmit alone achieves zero loss at the current link.
+static void on_telem_sent(const wifi_tx_info_t * /*info*/, esp_now_send_status_t status) {
+    if (status != ESP_NOW_SEND_SUCCESS)
+        tx_fail.fetch_add(1, std::memory_order_relaxed);
+}
+
 // ── Core 0 telemetry task ─────────────────────────────────────────────────────
 static esp_now_peer_info_t receiver_peer;
 
 void telemetry_task(void *) {
+    bool peer_unicast = false;
     for (;;) {
-        TelemetryEntry entry;
-        if (!telem_ring.pop(entry)) {
-            vTaskDelay(1);   // ring empty — yield 1 tick
-            continue;
-        }
+        // ── Assemble exactly one 50 Hz frame (20 consecutive 1 kHz inputs) ──────
+        // Popping one-at-a-time as inputs arrive; this paces the loop at ~50 Hz
+        // without an extra timer. Every input is sent exactly once → replay-safe.
+        for (drain_count = 0; drain_count < INPUTS_PER_FRAME; ) {
+            TelemetryEntry entry;
+            if (!telem_ring.pop(entry)) { vTaskDelay(1); continue; }  // ring empty — yield
 
-        if (drain_count == 0) {
-            first_state = entry.state;
-            // Start building TX frame header + first (start-of-frame) state.
-            tx_frame[0] = (uint8_t)(tx_frame_id & 0xFF);
-            tx_frame[1] = (uint8_t)(tx_frame_id >> 8);
-            tx_frame[2] = 0x01;  // type = telemetry
-            memcpy(tx_frame + 3, &first_state, STATE_SIZE);  // state_start
-        }
-        if (drain_count == FRAME_MID_INPUT) {
-            // Second real-state snapshot at the frame midpoint → 100 Hz state.
-            memcpy(tx_frame + 3 + STATE_SIZE, &entry.state, STATE_SIZE);  // state_mid
-        }
-
-        // Copy serialised input into its slot (inputs start after both states).
-        memcpy(tx_frame + 3 + 2 * STATE_SIZE + drain_count * sizeof(SunshineInput),
-               &entry.input, sizeof(SunshineInput));
-        drain_count++;
-
-        if (drain_count == INPUTS_PER_FRAME) {
-            esp_err_t send_err = esp_now_send(receiver_peer.peer_addr, tx_frame, FRAME_SIZE);
-            if (send_err != ESP_OK) {
-                Serial.printf("TELEM TX drop: %s\n", esp_err_to_name(send_err));
+            if (drain_count == 0) {
+                first_state = entry.state;
+                tx_frame[0] = (uint8_t)(tx_frame_id & 0xFF);
+                tx_frame[1] = (uint8_t)(tx_frame_id >> 8);
+                tx_frame[2] = 0x01;  // type = telemetry
+                memcpy(tx_frame + 3, &first_state, STATE_SIZE);          // state_start
             }
-            tx_frame_id++;
-            drain_count = 0;
+            if (drain_count == FRAME_MID_INPUT)
+                memcpy(tx_frame + 3 + STATE_SIZE, &entry.state, STATE_SIZE);  // state_mid (100 Hz)
+
+            memcpy(tx_frame + 3 + 2 * STATE_SIZE + drain_count * sizeof(SunshineInput),
+                   &entry.input, sizeof(SunshineInput));
+            drain_count++;
         }
+
+        // ── Switch broadcast → UNICAST once the receiver MAC is known ───────────
+        // Unicast gets MAC-layer ACK + hardware retransmit (no app reorder; each
+        // frame delivered once or retried). Broadcast (bring-up fallback) does not.
+        // Add the unicast peer ALONGSIDE the broadcast one (harmless to keep) so
+        // there's never a window with no usable peer.
+        if (target_known && !peer_unicast) {
+            esp_now_peer_info_t up = {};
+            memcpy(up.peer_addr, target_mac, 6);
+            up.channel = ESPNOW_CHANNEL;
+            up.encrypt = false;
+            if (esp_now_add_peer(&up) == ESP_OK || esp_now_is_peer_exist(target_mac))
+                peer_unicast = true;
+        }
+        const uint8_t *dest = peer_unicast ? target_mac : receiver_peer.peer_addr;
+
+        // ── Gap-align the send to just after a control RX ───────────────────────
+        // Drain any stale edge, then wait for the NEXT control edge (≤ ~2 ms at
+        // 500 Hz) so our frame arrives while the half-duplex receiver is listening,
+        // not mid-control-TX. Timeout = fail-safe if the control link is down.
+        if (ctrl_edge_sem) {
+            xSemaphoreTake(ctrl_edge_sem, 0);                    // clear stale give
+            xSemaphoreTake(ctrl_edge_sem, pdMS_TO_TICKS(25));    // next edge or timeout
+        }
+
+        esp_err_t send_err = esp_now_send(dest, tx_frame, FRAME_SIZE);
+        if (send_err != ESP_OK)
+            Serial.printf("TELEM TX err: %s\n", esp_err_to_name(send_err));
+        tx_frame_id++;
     }
 }
 
@@ -142,6 +215,8 @@ void telemetry_init(void) {
     tx_frame_id = 0;
     ctrl_mutex = xSemaphoreCreateMutex();
     configASSERT(ctrl_mutex != NULL);
+    ctrl_edge_sem = xSemaphoreCreateBinary();   // control-RX edge for gap-aligned TX
+    configASSERT(ctrl_edge_sem != NULL);
 
     WiFi.mode(WIFI_STA);
     WiFi.disconnect();
@@ -151,10 +226,24 @@ void telemetry_init(void) {
 
     esp_now_init();
     esp_now_register_recv_cb(on_espnow_recv);
+    esp_now_register_send_cb(on_telem_sent);   // track unicast ACK / retry-exhausted
 
     memset(&receiver_peer, 0, sizeof(receiver_peer));
     memcpy(receiver_peer.peer_addr, RECEIVER_MAC, 6);
     receiver_peer.channel = ESPNOW_CHANNEL;
     receiver_peer.encrypt = false;
     esp_now_add_peer(&receiver_peer);
+
+    // If RECEIVER_MAC is hard-coded, lock onto it: telemetry unicasts straight to
+    // it and control from any other MAC is rejected (multi-device arena). If left
+    // broadcast, we auto-pair from the first control packet (bench bring-up).
+    if (!mac_is_broadcast(RECEIVER_MAC)) {
+        memcpy(target_mac, RECEIVER_MAC, 6);
+        target_known  = true;
+        target_locked = true;
+        Serial.println("TELEM: unicast to hard-coded RECEIVER_MAC (control filtered to it)");
+    } else {
+        Serial.println("TELEM: RECEIVER_MAC unset — auto-pairing + broadcast until paired "
+                       "(hard-code RECEIVER_MAC for comp)");
+    }
 }

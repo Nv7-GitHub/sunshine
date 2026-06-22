@@ -146,9 +146,10 @@ void usb_bridge_tick(void) {
             process_host_frame(out_type, out_payload, out_len);
     }
 
-    // TX: forward new telemetry frames to host
+    // TX: forward ALL queued telemetry frames to host (drain the queue each tick
+    // so a backlog from a brief USB/host stall can't build up or be overwritten).
     static uint8_t telem_buf[ESPNOW_TELEM_SIZE];
-    if (espnow_rx_get_frame(telem_buf, 0)) {  // non-blocking
+    while (espnow_rx_get_frame(telem_buf, 0)) {  // non-blocking, drain all
         usb_send_telem(telem_buf);
         led_status_note_frame();  // activity blip on the status LED
     }
