@@ -123,11 +123,14 @@ int main(int argc, char **argv){
            "input_dshot_l,input_dshot_r,input_dshot_l_q,input_dshot_r_q,"
            "kf_theta,kf_omega,omega_accel,mag_angle,est_theta,est_omega,"
            "mag_x_filt,mag_y_filt,heading_deg,led_on,mag_valid,accel_sat,dshot_l,dshot_r,"
-           "mag_x,mag_y,accel_x,accel_y,theta_offset,"
+           "erpm_left,erpm_right,mag_x,mag_y,accel_x,accel_y,theta_offset,"
+           "stored_kf_theta,stored_kf_omega,stored_theta_offset,"
            "stored_est_theta,stored_mag_angle,stored_led_on\n");
 
     while (fread(fb,1,frame_sz,f)==(size_t)frame_sz){
         SunshineState frame_state; unpack_state(fb+5, &frame_state);   /* state_start */
+        SunshineState frame_mid_state; memset(&frame_mid_state, 0, sizeof(frame_mid_state));
+        if (num_states >= 2) unpack_state(fb+5+(long)sz_st, &frame_mid_state);
         /* Stored vars exist only in VER 2 (sz_var>0); VER 3 logs none, so the
            stored_* validation columns are left at 0 there. */
         StoredVars sv; memset(&sv, 0, sizeof(sv));
@@ -157,7 +160,7 @@ int main(int argc, char **argv){
             int last = (k==num_in-1);
             printf("%u,%u,%d,%d,%d,%u,%.1f,%.1f,%u,%u,"
                    "%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.4f,%.4f,%.4f,%u,%u,%u,%.1f,%.1f,"
-                   "%d,%d,%d,%d,%.6f",
+                   "%.1f,%.1f,%d,%d,%d,%d,%.6f",
                    in.time_us, in.mode, in.ctrl_x, in.ctrl_y, in.ctrl_theta, in.ctrl_throttle,
                    dequantize_dshot(in.dshot_left_q), dequantize_dshot(in.dshot_right_q),
                    in.dshot_left_q, in.dshot_right_q,
@@ -165,7 +168,14 @@ int main(int argc, char **argv){
                    v.mag_angle, v.est_theta, v.est_omega, v.mag_x_filt, v.mag_y_filt,
                    v.heading_deg, v.led_on, v.mag_valid, v.accel_saturated,
                    v.dshot_cmd_left, v.dshot_cmd_right,
+                   v.erpm_left, v.erpm_right,
                    in.mag_x, in.mag_y, in.accel_x, in.accel_y, st.theta_offset);
+            if (k == 0) printf(",%.6f,%.6f,%.6f",
+                               frame_state.kf_theta, frame_state.kf_omega, frame_state.theta_offset);
+            else if (num_states >= 2 && k == num_in/2)
+                printf(",%.6f,%.6f,%.6f",
+                       frame_mid_state.kf_theta, frame_mid_state.kf_omega, frame_mid_state.theta_offset);
+            else printf(",,,");
             /* stored vars only meaningful at frame end */
             if (last) printf(",%.6f,%.6f,%u\n", sv.est_theta, sv.mag_angle, sv.led_on);
             else      printf(",,,\n");

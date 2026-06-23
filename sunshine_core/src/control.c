@@ -15,14 +15,25 @@ static float wrap_to_pi(float a) {
     return remainderf(a, 2.0f * M_PI_F);
 }
 
-/* Trapezoidal wave: +1 at |phase|<half_flat, linear ramp, -1 at bottom */
-static float trapezoid(float phase, float pulse_width, float ramp_width) {
-    float ap        = fabsf(phase);
-    float half_flat = pulse_width * M_PI_F;
-    float half_edge = (pulse_width + ramp_width) * M_PI_F;
-    if (ap <= half_flat)  return  1.0f;
-    if (ap >= half_edge)  return -1.0f;
-    return 1.0f - 2.0f * (ap - half_flat) / (ramp_width * M_PI_F);
+/* Balanced bipolar trapezoid for MELTY translation.
+ * The + and - plateaus are 180° apart and equal area, so the differential has
+ * zero mean and wave(phase+pi) == -wave(phase). DRIFT_PLATEAU_WIDTH is the
+ * fraction of a full rotation spent on each plateau; the two ramps fill the
+ * rest of the cycle to preserve half-wave symmetry. */
+static float drift_wave(float phase) {
+    float p = wrap_to_pi(phase);
+    float plateau = clampf(DRIFT_PLATEAU_WIDTH, 0.0f, 0.49f);
+    float half_flat = plateau * M_PI_F;
+    float ramp = M_PI_F - 2.0f * half_flat;
+    float ap = fabsf(p);
+
+    if (ap <= half_flat) return 1.0f;
+    if (ap >= M_PI_F - half_flat) return -1.0f;
+    if (ramp <= 1e-6f) return p >= 0.0f ? -1.0f : 1.0f;
+
+    if (p > 0.0f)
+        return 1.0f - 2.0f * (p - half_flat) / ramp;
+    return 1.0f + 2.0f * (p + half_flat) / ramp;
 }
 
 static float map_to_dshot(float v) {
@@ -84,10 +95,15 @@ void control_step(const SunshineInput *in, SunshineState *s, SunshineVars *v) {
     float drive_mag = sqrtf(cx*cx + cy*cy) / 127.0f;
     drive_mag       = clampf(drive_mag, 0.0f, 1.0f);
 
-    float phase = wrap_to_pi(robot_angle - drive_dir);
-    float diff  = trapezoid(phase, DRIFT_PULSE_WIDTH, DRIFT_RAMP_WIDTH)
-                  * drive_mag * DRIFT_AMPLITUDE * spin_span;
+    float base = DSHOT_NEUTRAL + spin_span;
+    float headroom = fminf(base - DSHOT_NEUTRAL, DSHOT_MAX - base);
+    if (headroom < 0.0f) headroom = 0.0f;
 
-    v->dshot_cmd_left  = clampf(DSHOT_NEUTRAL + spin_span + diff, DSHOT_NEUTRAL, DSHOT_MAX);
-    v->dshot_cmd_right = clampf(DSHOT_NEUTRAL + spin_span - diff, DSHOT_NEUTRAL, DSHOT_MAX);
+    float phase = wrap_to_pi(robot_angle - drive_dir
+                             + DRIFT_PHASE_OFFSET_RADS
+                             + s->kf_omega * DRIFT_PHASE_LEAD_S);
+    float diff = drift_wave(phase) * drive_mag * DRIFT_AMPLITUDE * headroom;
+
+    v->dshot_cmd_left  = clampf(base + diff, DSHOT_NEUTRAL, DSHOT_MAX);
+    v->dshot_cmd_right = clampf(base - diff, DSHOT_NEUTRAL, DSHOT_MAX);
 }

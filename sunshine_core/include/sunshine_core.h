@@ -74,10 +74,11 @@
 #define MAG_BP_MIN_FC_HZ  8.0f    /* clamp centre to the mag-valid speed (480 RPM) */
 
 /* ── Control tuning ────────────────────────────────────────────────────── */
-#define DRIFT_PULSE_WIDTH   0.25f   /* fraction of rotation at peak diff   */
-#define DRIFT_RAMP_WIDTH    0.10f   /* fraction for linear ramp            */
-#define DRIFT_AMPLITUDE     0.40f   /* max diff as fraction of base        */
-#define THETA_RATE_RADS     3.14159265f  /* rad/s per full ctrl_theta      */
+#define DRIFT_PLATEAU_WIDTH 0.35f   /* fraction of rotation at each +/- peak diff */
+#define DRIFT_AMPLITUDE     0.40f   /* max diff as fraction of available headroom */
+#define DRIFT_PHASE_OFFSET_RADS 0.0f /* fixed motor timing offset, rad             */
+#define DRIFT_PHASE_LEAD_S  0.0f    /* ESC/traction lag compensation, seconds     */
+#define THETA_RATE_RADS     3.14159265f  /* rad/s per full ctrl_theta              */
 #define MAX_DSHOT_SPIN      DSHOT_MAX
 #define DSHOT_NEUTRAL       1048.0f
 #define DSHOT_MAX           2047.0f

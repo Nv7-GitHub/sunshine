@@ -177,10 +177,12 @@ All physical/tuning constants are in `sunshine_core/include/sunshine_core.h`. Fi
 | `MAG_SCALE_UT` | 0.058 µT/count | sunshine_core.h |
 | `IMU_RADIUS_M` | 0.011 m | sunshine_core.h |
 | `SUNSHINE_MAG_MIN_OMEGA` | 16π rad/s (~480 RPM) | sunshine_core.h |
-| `KF_Q_THETA/OMEGA` | 1e-6 / 1e-3 | sunshine_core.h |
-| `KF_R_ACCEL/MAG` | 0.5 / 0.1 | sunshine_core.h |
-| `DRIFT_PULSE_WIDTH` | 0.25 | sunshine_core.h |
+| `KF_Q_THETA/OMEGA` | 1e-6 / 1e-2 | sunshine_core.h |
+| `KF_R_ACCEL/MAG` | 0.5 / 0.01 | sunshine_core.h |
+| `DRIFT_PLATEAU_WIDTH` | 0.35 | sunshine_core.h |
 | `DRIFT_AMPLITUDE` | 0.40 | sunshine_core.h |
+| `DRIFT_PHASE_OFFSET_RADS` | 0.0 rad | sunshine_core.h |
+| `DRIFT_PHASE_LEAD_S` | 0.0 s | sunshine_core.h |
 | Loop interval | 1000 µs (1 kHz) | config.h (brain) |
 | ESP-NOW TX rate (brain→rx) | 50 Hz | Derived: 20 inputs/frame over ESP-NOW v2 (671 B) |
 | ESP-NOW TX rate (rx→brain) | 500 Hz | config.h (receiver) |

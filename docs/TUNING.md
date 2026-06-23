@@ -15,9 +15,9 @@ The Kalman filter estimates two states: `θ` (absolute angle, rad) and `ω` (ang
 | Constant | Default | Units | What it controls |
 |----------|---------|-------|-----------------|
 | `KF_Q_THETA` | 1e-6 | rad²/step | How much the filter expects θ to drift on its own between steps |
-| `KF_Q_OMEGA` | 1e-3 | rad²/s²/step | How much ω is expected to change between steps |
+| `KF_Q_OMEGA` | 1e-2 | rad²/s²/step | How much ω is expected to change between steps |
 | `KF_R_ACCEL` | 0.5 | rad²/s² | How noisy the accelerometer omega measurement is |
-| `KF_R_MAG` | 0.1 | rad² | How noisy the magnetometer angle measurement is |
+| `KF_R_MAG` | 0.01 | rad² | How noisy the magnetometer angle measurement is |
 
 **Rule of thumb:** Q values control process noise (model uncertainty). R values control measurement noise. Higher R = trust the measurement less. Higher Q = assume the model drifts more = update faster.
 
@@ -76,34 +76,43 @@ At 500+ RPM, run the robot for 30 seconds:
 
 ## MELTY Drift Tuning
 
-MELTY mode applies a differential DShot command that pulses as the robot rotates, biasing it toward the commanded direction. Three constants control the pulse shape; one controls heading rate.
+MELTY mode applies a differential DShot command that changes with robot angle. The left and right wheels receive equal-and-opposite offsets around the base spin command, so the body keeps spinning while the average world-frame force points in the commanded direction.
 
 ### Parameter Reference
 
 | Constant | Default | What it controls |
 |----------|---------|-----------------|
-| `DRIFT_AMPLITUDE` | 0.40 | Max differential as a fraction of base spin throttle. 0.40 = ±40% at full drive input. |
-| `DRIFT_PULSE_WIDTH` | 0.25 | Fraction of full rotation where the differential is at its peak value. 0.25 = 90° of the 360°. |
-| `DRIFT_RAMP_WIDTH` | 0.10 | Fraction of rotation used for the linear ramp between peak and trough. 0.10 = 36°. |
+| `DRIFT_AMPLITUDE` | 0.40 | Max differential as a fraction of available symmetric DShot headroom. |
+| `DRIFT_PLATEAU_WIDTH` | 0.35 | Fraction of full rotation spent at each +1 and -1 plateau. 0.35 gives two 126° plateaus and two 54° ramps. |
+| `DRIFT_PHASE_OFFSET_RADS` | 0.0 | Fixed motor-timing offset between the LED/driver heading and the wheel-force waveform. |
+| `DRIFT_PHASE_LEAD_S` | 0.0 | ESC/traction lag compensation. Added phase is `kf_omega * DRIFT_PHASE_LEAD_S`. |
 | `THETA_RATE_RADS` | π rad/s | Heading offset rate per full left/right arrow deflection (ctrl_theta = ±127). |
 
 ### How the pulse works
 
-At each tick, the robot's current angle relative to the commanded drive direction gives a `phase` value. A trapezoidal wave converts phase to a differential multiplier:
+At each tick, the robot's current angle relative to the commanded drive direction gives a `phase` value. A balanced bipolar trapezoid converts that phase to a differential multiplier:
 
 ```
-+1.0  ┌────────┐
-      │        │
-  0.0 ┤        ├─── ramps ───┤
-      │                       │
--1.0  └───────────────────────┘
-      0        ←pulse_width→  π  ←ramp→  2π
++1.0     flat push
+         ┌──────────────┐
+ 0.0  ───┘              └── ramps
+                         ┌──────────────┐
+-1.0                    flat pull/opposite side
+      0                 pi              2pi
 ```
 
-`diff = trapezoid(phase) × drive_magnitude × DRIFT_AMPLITUDE × base_throttle`
+The waveform has zero mean over a revolution and satisfies `wave(phase + pi) = -wave(phase)`. That symmetry matters: the robot gets one push direction for half the cycle and the opposite wheel differential 180° later, instead of a one-sided bias that mostly loads one wheel.
+
+`phase = robot_angle - drive_dir + DRIFT_PHASE_OFFSET_RADS + kf_omega * DRIFT_PHASE_LEAD_S`
+
+`headroom = min(base - DSHOT_NEUTRAL, DSHOT_MAX - base)`
+
+`diff = wave(phase) × drive_magnitude × DRIFT_AMPLITUDE × headroom`
 
 `dshot_left  = base + diff`
 `dshot_right = base - diff`
+
+`headroom` prevents clipping. At low throttle there is little room above neutral; at very high throttle there is little room below max. Translation authority is strongest at moderate spin commands and intentionally fades near full throttle.
 
 ### Tuning Procedure
 
@@ -121,22 +130,26 @@ In MELTY mode, bring throttle up slowly with arrow keys until the robot spins at
 
 Press W briefly. The robot should drift forward (toward the LED heading when W is pressed).
 
-**If the robot barely moves:** Increase `DRIFT_AMPLITUDE` (e.g. 0.40 → 0.55).
+**If the robot barely moves:** First make sure throttle is not near max, because headroom shrinks there. If direction is repeatable but weak, increase `DRIFT_AMPLITUDE` (e.g. 0.40 → 0.55).
 
-**If the robot moves sideways or backwards:** The heading reference is off. Tune Kalman first. Or check `THETA_RATE_RADS` — the heading offset may have accumulated from left/right arrow presses.
+**If the robot moves sideways or backwards:** If the LED is stationary, tune `DRIFT_PHASE_OFFSET_RADS`. Start with 15-30° steps (`0.26f` to `0.52f` rad). If a positive change makes the direction worse, use the opposite sign.
 
-**If the robot translates too aggressively and loses spin speed:** Decrease `DRIFT_AMPLITUDE`. At high drive magnitudes, the weaker side approaches neutral (1048) or below — if the pulse is too strong, one ESC brakes instead of driving.
+**If the direction is correct at one RPM but wrong at another:** Tune `DRIFT_PHASE_LEAD_S`. A time lag turns into phase error as `omega * lag`; at 240 rad/s, 1 ms is about 14°. Estimate the needed lead from two speeds:
+
+`DRIFT_PHASE_LEAD_S ≈ (offset_high - offset_low) / (omega_high - omega_low)`
+
+**If the robot translates too aggressively and loses spin speed:** Decrease `DRIFT_AMPLITUDE`. The controller now scales by available DShot headroom, but large differential still modulates traction and spin energy.
 
 #### Step 4: Test all four directions
 
 Test N/S/E/W at the same throttle level. Pass if all four directions produce consistent, controllable translation in the correct direction.
 
-#### Step 5: Tune pulse shape (optional)
+#### Step 5: Tune waveform shape (optional)
 
-If translation is jerky or inconsistent, adjust `DRIFT_PULSE_WIDTH` and `DRIFT_RAMP_WIDTH`:
-- Wider `DRIFT_PULSE_WIDTH` (e.g. 0.35): longer push phase per rotation, smoother at lower RPM
-- Wider `DRIFT_RAMP_WIDTH` (e.g. 0.15): softer transition, less abrupt force changes
-- Narrower values: more precise heading control but requires accurate theta estimation
+If translation is jerky or inconsistent, adjust `DRIFT_PLATEAU_WIDTH`:
+- Higher values, up to about `0.45`, give longer max-output dwell and behave more like a rectangle.
+- Lower values, down toward about `0.25`, widen the ramps and are gentler for the ESC/wheel.
+- Keep the waveform balanced; do not reintroduce unequal positive/negative dwell.
 
 #### Step 6: Heading rate
 
@@ -148,8 +161,10 @@ Increase if the driver needs to re-orient heading quickly. Decrease if small arr
 
 | Symptom | Likely cause | Fix |
 |---------|-------------|-----|
-| Robot spins in place, doesn't translate | LED is sweeping (theta not locked) | Fix Kalman tuning first |
-| Translation direction wrong by ~180° | Heading reference flipped | Check IMU orientation; may need to negate `ctrl_x` or `ctrl_y` in control.c |
+| Robot spins in place, doesn't translate | No DShot headroom, phase very wrong, or too little amplitude | Use moderate throttle, tune `DRIFT_PHASE_OFFSET_RADS`, then increase `DRIFT_AMPLITUDE` |
+| Translation direction wrong by a fixed angle | Motor timing phase offset | Tune `DRIFT_PHASE_OFFSET_RADS` |
+| Translation direction changes with RPM | ESC/motor/traction lag | Tune `DRIFT_PHASE_LEAD_S` |
+| Translation direction wrong by ~180° | Sign/geometry convention flipped | Try phase offset near ±π; then check motor/axis conventions |
 | Robot wobbles during translation | Pulse too strong for this speed | Decrease `DRIFT_AMPLITUDE` |
 | Translation only works at high RPM | Mag filter settling time too long | Check `KF_R_MAG`, ensure smooth spin-up |
-| One wheel braking during drift | `DRIFT_AMPLITUDE` too high | The weak side is crossing neutral; decrease amplitude or raise base throttle |
+| Translation disappears near full throttle | No symmetric DShot headroom remains | Use lower spin throttle; full throttle prioritizes spin energy |

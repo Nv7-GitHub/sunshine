@@ -350,7 +350,7 @@ At low spin throttle, verify the LED appears stationary at a fixed heading befor
 
 In the host app:
 1. Set mode to **MELTY** (green button)
-2. Bring throttle up slowly with arrow keys until the robot is spinning steadily
+2. Bring throttle up slowly with arrow keys until the robot is spinning steadily. Do not start near full throttle: MELTY translation uses the symmetric DShot headroom above and below the spin command, so very high throttle intentionally leaves little translation authority.
 3. Press W briefly → robot should drift forward
 4. Press A/D → robot should drift left/right
 5. The direction the robot drifts should match the driver's reference frame (LED-defined forward = W)
@@ -361,10 +361,19 @@ See `TUNING.md` for the full drift tuning procedure. Constants are in `sunshine_
 
 | Parameter | Effect |
 |-----------|--------|
-| `DRIFT_AMPLITUDE` | Overall translation strength. Increase if robot barely moves. |
-| `DRIFT_PULSE_WIDTH` | Fraction of rotation at peak differential. Wider = more consistent push. |
-| `DRIFT_RAMP_WIDTH` | Smoothness of the transition. Wider = smoother, less abrupt. |
-| `THETA_RATE_RADS` | How fast the heading reference rotates with left/right arrow. |
+| `DRIFT_AMPLITUDE` | Translation strength as a fraction of available DShot headroom. Increase only after phase is roughly correct. |
+| `DRIFT_PLATEAU_WIDTH` | Fraction of each rotation spent at each +1/-1 differential plateau. Higher is more rectangle-like; lower gives wider ramps. |
+| `DRIFT_PHASE_OFFSET_RADS` | Fixed motor timing offset between the LED/driver heading and the wheel-force waveform. Default `0.0f`. |
+| `DRIFT_PHASE_LEAD_S` | Speed-dependent ESC/traction lag compensation. Added phase is `kf_omega * DRIFT_PHASE_LEAD_S`. Default `0.0f`. |
+| `THETA_RATE_RADS` | How fast the driver heading reference rotates with left/right arrow. This rotates the LED reference, not motor timing. |
+
+Tune in this order:
+
+1. Leave `DRIFT_PHASE_OFFSET_RADS = 0.0f` and `DRIFT_PHASE_LEAD_S = 0.0f` for the first run. Use a moderate spin throttle where the robot is stable but not near max.
+2. If W produces a consistent sideways/backwards drift, adjust `DRIFT_PHASE_OFFSET_RADS` in 15-30 degree steps (`0.26f` to `0.52f` rad). Positive values advance the motor waveform in the code's CCW-positive phase convention; if the correction gets worse, use the opposite sign.
+3. If the correct offset changes with spin speed, tune `DRIFT_PHASE_LEAD_S`. At 240 rad/s, `0.001f` seconds is about 0.24 rad / 14 degrees of phase lead. Start with 1-2 ms changes, not large jumps.
+4. After direction is repeatable, raise or lower `DRIFT_AMPLITUDE`. If the robot still barely moves but the direction is correct, increase it. If spin speed collapses or it chatters, decrease it.
+5. Adjust `DRIFT_PLATEAU_WIDTH` only after amplitude/phase are sane. Higher values dwell longer at max command and approach a rectangle; lower values widen the ramps and are gentler for the ESC/wheel.
 
 ### Pass criteria
 
