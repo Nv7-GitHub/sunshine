@@ -38,7 +38,17 @@ void control_step(const SunshineInput *in, SunshineState *s, SunshineVars *v) {
     float wrapped     = wrap_to_pi(robot_angle);
     float hd          = wrapped * (180.0f / M_PI_F);
     v->heading_deg    = hd < 0.0f ? hd + 360.0f : hd;
-    v->led_on         = fabsf(wrapped) < (3.0f * M_PI_F / 180.0f);
+    /* LED beacon: lit within ±LED_HALF_ARC of the zero heading. At high spin the
+     * heading advances more than the 6° window per 1 kHz tick (e.g. ~14° at 250
+     * rad/s), so a fixed ±3° point-test would step OVER the window between samples
+     * and the dot would vanish for whole revolutions. Widen the half-window to at
+     * least half the per-tick sweep (ω·dt/2) so a sample always lands in it: the
+     * dot is then never narrower than one tick (the 1 kHz limit) and never skipped.
+     * At low spin it stays the crisp ±3°. */
+    float led_half = 3.0f * M_PI_F / 180.0f;
+    float sweep_half = 0.6f * fabsf(s->kf_omega) * 0.001f;   /* >½·ω·dt (dt=1 ms) + margin */
+    if (led_half < sweep_half) led_half = sweep_half;
+    v->led_on = fabsf(wrapped) < led_half;
 
     if (in->mode == SUNSHINE_MODE_DISABLED) {
         v->dshot_cmd_left  = 0.0f;

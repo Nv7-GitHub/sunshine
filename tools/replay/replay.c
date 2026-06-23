@@ -55,6 +55,9 @@ static void unpack_input(const uint8_t *b, SunshineInput *in){
     in->dshot_right_q = b[27];
     in->mode          = b[28];
 }
+static float dequantize_dshot(uint8_t q){
+    return (float)q * (2047.0f / 255.0f);
+}
 static void unpack_state(const uint8_t *b, SunshineState *s){
     s->kf_theta     = rd_f32(b+0);
     s->kf_omega     = rd_f32(b+4);
@@ -116,7 +119,9 @@ int main(int argc, char **argv){
     long long prev_us = -1;   /* for gap-fill dead reckoning */
 
     /* CSV header */
-    printf("time_us,mode,kf_theta,kf_omega,omega_accel,mag_angle,est_theta,est_omega,"
+    printf("time_us,mode,ctrl_x,ctrl_y,ctrl_theta,ctrl_throttle,"
+           "input_dshot_l,input_dshot_r,input_dshot_l_q,input_dshot_r_q,"
+           "kf_theta,kf_omega,omega_accel,mag_angle,est_theta,est_omega,"
            "mag_x_filt,mag_y_filt,heading_deg,led_on,mag_valid,accel_sat,dshot_l,dshot_r,"
            "mag_x,mag_y,accel_x,accel_y,theta_offset,"
            "stored_est_theta,stored_mag_angle,stored_led_on\n");
@@ -150,9 +155,13 @@ int main(int argc, char **argv){
             prev_us = (long long)in.time_us;
             sunshine_step(&in, &st, &v);
             int last = (k==num_in-1);
-            printf("%u,%u,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.4f,%.4f,%.4f,%u,%u,%u,%.1f,%.1f,"
+            printf("%u,%u,%d,%d,%d,%u,%.1f,%.1f,%u,%u,"
+                   "%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.4f,%.4f,%.4f,%u,%u,%u,%.1f,%.1f,"
                    "%d,%d,%d,%d,%.6f",
-                   in.time_us, in.mode, st.kf_theta, st.kf_omega, v.omega_from_accel,
+                   in.time_us, in.mode, in.ctrl_x, in.ctrl_y, in.ctrl_theta, in.ctrl_throttle,
+                   dequantize_dshot(in.dshot_left_q), dequantize_dshot(in.dshot_right_q),
+                   in.dshot_left_q, in.dshot_right_q,
+                   st.kf_theta, st.kf_omega, v.omega_from_accel,
                    v.mag_angle, v.est_theta, v.est_omega, v.mag_x_filt, v.mag_y_filt,
                    v.heading_deg, v.led_on, v.mag_valid, v.accel_saturated,
                    v.dshot_cmd_left, v.dshot_cmd_right,

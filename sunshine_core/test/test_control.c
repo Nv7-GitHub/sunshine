@@ -86,5 +86,32 @@ int main(void) {
     control_step(&in, &s, &v);
     ASSERT_EQ(v.led_on, false, "LED off at 5.7°");
 
+    /* LED must fire EVERY revolution even at high spin. At 250 rad/s the heading
+       advances ~14.3°/tick — larger than the ±3° (6°) window — so a fixed point-
+       test would step over the window between 1 kHz samples and skip whole revs
+       (the dot visibly vanishes). The window must widen to ≥ half the per-tick
+       sweep so a sample always lands in it. */
+    in = make_input(SUNSHINE_MODE_MELTY, 200, 0, 0, 0);
+    const float DT_TEST = 0.001f, TWO_PI = 2.0f * 3.14159265f;
+    /* Sweep a range of high spin rates; at each, the LED must never stay dark for
+       more than ~1 revolution (the real "dot doesn't vanish" requirement — robust
+       to where the per-tick samples fall relative to the window). */
+    for (float omega = 110.0f; omega <= 349.0f; omega += 17.0f) {
+        sunshine_state_init(&s);
+        s.kf_omega = omega; s.theta_offset = 0.0f;
+        float rev_ticks = TWO_PI / (omega * DT_TEST);     /* 1 kHz ticks per revolution */
+        int last_on = -1, max_gap = 0;
+        float ph = 0.0f;
+        for (int i = 0; i < 8000; i++) {
+            s.kf_theta = ph;
+            control_step(&in, &s, &v);
+            if (v.led_on) { if (last_on >= 0 && i - last_on > max_gap) max_gap = i - last_on; last_on = i; }
+            ph += omega * DT_TEST;
+            if (ph >= TWO_PI) ph -= TWO_PI;
+        }
+        ASSERT(last_on >= 0 && (float)max_gap < 1.5f * rev_ticks,
+               "LED never dark for more than ~1 revolution at high spin");
+    }
+
     TEST_RESULTS();
 }

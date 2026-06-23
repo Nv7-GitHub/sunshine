@@ -59,8 +59,13 @@ void setup() {
     // ── Level 3+ : init telemetry and start tasks ─────────────────────────────
 #if FEATURE_TELEMETRY
     telemetry_init();
-    if (xTaskCreatePinnedToCore(telemetry_task, "telemetry", 8192, nullptr, 5, nullptr, 0) != pdPASS) {
-        error_halt(4, "telemetry task create failed");
+    // Stage A (assemble/drain) and Stage B (send) decoupled via an internal FIFO —
+    // a slow send can't stall the 1 kHz input-ring drain. Both on Core 0.
+    if (xTaskCreatePinnedToCore(telemetry_task, "telem_asm", 8192, nullptr, 5, nullptr, 0) != pdPASS) {
+        error_halt(4, "telemetry assemble task create failed");
+    }
+    if (xTaskCreatePinnedToCore(telemetry_send_task, "telem_tx", 8192, nullptr, 5, nullptr, 0) != pdPASS) {
+        error_halt(4, "telemetry send task create failed");
     }
 #endif
 

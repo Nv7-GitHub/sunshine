@@ -14,8 +14,12 @@ struct CtrlInputs {
 
 void       telemetry_init(void);
 
-// Core 0 task entry point — pass to xTaskCreatePinnedToCore
+// Core 0 task entry points — pass to xTaskCreatePinnedToCore.
+// telemetry_task  = Stage A: drains the 1 kHz input ring, assembles frames, enqueues.
+// telemetry_send_task = Stage B: dequeues frames, gap-aligns, unicast-sends.
+// Decoupled via an internal frame FIFO so a slow send can't stall the ring drain.
 void       telemetry_task(void *arg);
+void       telemetry_send_task(void *arg);
 
 // Called from Core 1 to get latest control inputs (thread-safe, uses mutex)
 CtrlInputs telemetry_get_ctrl(void);
@@ -32,3 +36,7 @@ uint32_t   telemetry_dropped_count(void);
 // unicast MAC retries (no ACK). This is true frame loss; with a good link it
 // should stay 0. Printed in the PROF USB line.
 uint32_t   telemetry_tx_fail_count(void);
+
+// Cumulative count of assembled frames dropped because the send FIFO was full
+// (sustained link-up congestion beyond the FIFO depth). Should stay 0.
+uint32_t   telemetry_frames_dropped(void);

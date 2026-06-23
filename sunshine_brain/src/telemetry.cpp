@@ -8,6 +8,7 @@
 #include <esp_err.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
+#include <freertos/queue.h>
 #include <atomic>
 #include <string.h>
 
@@ -78,7 +79,6 @@ static constexpr int  STATE_SIZE        = (int)sizeof(SunshineState);
 static constexpr int  FRAME_SIZE        = 2 + 1 + 2 * STATE_SIZE + INPUTS_PER_FRAME * (int)sizeof(SunshineInput);
 static_assert(FRAME_SIZE <= ESP_NOW_MAX_DATA_LEN_V2,
               "telemetry frame exceeds ESP-NOW v2 max payload (needs IDF >= 5.4)");
-static uint8_t        tx_frame[FRAME_SIZE];
 static uint16_t       tx_frame_id = 0;
 static int            drain_count = 0;
 static SunshineState  first_state;
@@ -162,39 +162,79 @@ static void on_telem_sent(const wifi_tx_info_t * /*info*/, esp_now_send_status_t
     if (tx_done_sem) xSemaphoreGive(tx_done_sem);   // unblock the next send
 }
 
-// ── Core 0 telemetry task ─────────────────────────────────────────────────────
+// ── Frame FIFO (assemble stage → send stage) ─────────────────────────────────
+// Decouples draining the 1 kHz input ring from transmitting. The assemble task
+// drains telem_ring continuously into complete frames and enqueues them here; the
+// send task drains this FIFO with flow-control + gap-align. A slow unicast send
+// (RF congestion / retries) can therefore NEVER back up the input ring — the
+// congestion is absorbed here as queued whole frames instead of dropped inputs.
+// 48 frames ≈ 1 s of buffer at 50 Hz, enough to ride out transient motor-noise
+// fades; the longest gap seen in real data was ~0.4 s.
+static constexpr int  FRAME_Q_DEPTH = 48;
+static QueueHandle_t  frame_q = nullptr;
+static std::atomic<uint32_t> frames_dropped{0};   // FIFO full (sustained link-up congestion)
+
+uint32_t telemetry_frames_dropped(void) {
+    return frames_dropped.load(std::memory_order_relaxed);
+}
+
 static esp_now_peer_info_t receiver_peer;
 
+// ── Stage A (Core 0): drain the input ring → assemble frames → enqueue ────────
+// NEVER blocks on TX, so the 1 kHz input ring stays drained regardless of link
+// state. This is the fix for input loss under RF congestion.
 void telemetry_task(void *) {
-    bool peer_unicast = false;
+    static uint8_t frame[FRAME_SIZE];
     for (;;) {
-        // ── Assemble exactly one 50 Hz frame (20 consecutive 1 kHz inputs) ──────
-        // Popping one-at-a-time as inputs arrive; this paces the loop at ~50 Hz
-        // without an extra timer. Every input is sent exactly once → replay-safe.
+        // Assemble exactly one 50 Hz frame (20 consecutive 1 kHz inputs). Popping
+        // one-at-a-time as inputs arrive paces this at ~50 Hz; every input is used
+        // exactly once → replay-safe.
         for (drain_count = 0; drain_count < INPUTS_PER_FRAME; ) {
             TelemetryEntry entry;
             if (!telem_ring.pop(entry)) { vTaskDelay(1); continue; }  // ring empty — yield
 
             if (drain_count == 0) {
                 first_state = entry.state;
-                tx_frame[0] = (uint8_t)(tx_frame_id & 0xFF);
-                tx_frame[1] = (uint8_t)(tx_frame_id >> 8);
-                tx_frame[2] = 0x01;  // type = telemetry
-                memcpy(tx_frame + 3, &first_state, STATE_SIZE);          // state_start
+                frame[0] = (uint8_t)(tx_frame_id & 0xFF);
+                frame[1] = (uint8_t)(tx_frame_id >> 8);
+                frame[2] = 0x01;  // type = telemetry
+                memcpy(frame + 3, &first_state, STATE_SIZE);            // state_start
             }
             if (drain_count == FRAME_MID_INPUT)
-                memcpy(tx_frame + 3 + STATE_SIZE, &entry.state, STATE_SIZE);  // state_mid (100 Hz)
+                memcpy(frame + 3 + STATE_SIZE, &entry.state, STATE_SIZE);  // state_mid (100 Hz)
 
-            memcpy(tx_frame + 3 + 2 * STATE_SIZE + drain_count * sizeof(SunshineInput),
+            memcpy(frame + 3 + 2 * STATE_SIZE + drain_count * sizeof(SunshineInput),
                    &entry.input, sizeof(SunshineInput));
             drain_count++;
         }
+        tx_frame_id++;
 
-        // ── Switch broadcast → UNICAST once the receiver MAC is known ───────────
-        // Unicast gets MAC-layer ACK + hardware retransmit (no app reorder; each
-        // frame delivered once or retried). Broadcast (bring-up fallback) does not.
-        // Add the unicast peer ALONGSIDE the broadcast one (harmless to keep) so
-        // there's never a window with no usable peer.
+        // Enqueue for sending only while the receiver is present (control stream
+        // fresh). With the receiver OFF there is nowhere to send: drop the frame
+        // (the ring is already drained above, so it can't overflow).
+        bool link_alive = (last_ctrl_ms != 0) &&
+                          ((uint32_t)((uint32_t)millis() - last_ctrl_ms) < 200u);
+        if (!link_alive) continue;
+
+        // Non-blocking enqueue: if the FIFO is full (sustained link-up congestion
+        // beyond ~1 s) drop this frame rather than block the drain — bounded + counted.
+        if (xQueueSend(frame_q, frame, 0) != pdTRUE)
+            frames_dropped.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+
+// ── Stage B (Core 0): dequeue frames → gap-align → unicast send ───────────────
+// May block on TX completion / control edge freely — it can't stall Stage A's
+// draining, since they communicate only through frame_q.
+void telemetry_send_task(void *) {
+    static uint8_t frame[FRAME_SIZE];
+    bool peer_unicast = false;
+    for (;;) {
+        if (xQueueReceive(frame_q, frame, portMAX_DELAY) != pdTRUE) continue;
+
+        // Switch broadcast → UNICAST once the receiver MAC is known (MAC ACK +
+        // hardware retransmit; in-order, delivered once or retried). Add the unicast
+        // peer alongside the broadcast one so there's never a window with no peer.
         if (target_known && !peer_unicast) {
             esp_now_peer_info_t up = {};
             memcpy(up.peer_addr, target_mac, 6);
@@ -205,31 +245,18 @@ void telemetry_task(void *) {
         }
         const uint8_t *dest = peer_unicast ? target_mac : receiver_peer.peer_addr;
 
-        // ── Only transmit while the receiver is present ─────────────────────────
-        // We know it is when its control stream is arriving (last_ctrl_ms fresh).
-        // With the receiver OFF there is nowhere to send: we already drained this
-        // frame's inputs above (so the ring can't overflow), so just DROP it rather
-        // than hammer esp_now_send at an unACKing peer — that backs up the ESP-NOW
-        // TX queue (→ ESP_ERR_ESPNOW_NO_MEM) and would stall the drain.
-        bool link_alive = (last_ctrl_ms != 0) &&
-                          ((uint32_t)((uint32_t)millis() - last_ctrl_ms) < 200u);
-        if (!link_alive) { tx_frame_id++; continue; }
-
-        // ── Flow control: wait for the PREVIOUS send to finish ──────────────────
-        // One frame in flight at a time → esp_now_send can't overflow the ESP-NOW
-        // TX queue. The send callback gives this; timeout is a fail-safe.
+        // Flow control: one frame in flight → esp_now_send can't overflow the
+        // ESP-NOW TX queue. The send callback gives this; timeout is a fail-safe.
         if (tx_done_sem) xSemaphoreTake(tx_done_sem, pdMS_TO_TICKS(50));
 
-        // ── Gap-align the send to just after a control RX ───────────────────────
-        // Drain any stale edge, then wait for the NEXT control edge (≤ ~2 ms at
-        // 500 Hz) so our frame arrives while the half-duplex receiver is listening.
-        // Short timeout so a momentary control gap never throttles the drain.
+        // Gap-align to just after a control edge (≤ ~2 ms at 500 Hz) so the frame
+        // arrives while the half-duplex receiver is listening, not mid-control-TX.
         if (ctrl_edge_sem) {
             xSemaphoreTake(ctrl_edge_sem, 0);                   // clear stale give
             xSemaphoreTake(ctrl_edge_sem, pdMS_TO_TICKS(5));    // next edge or timeout
         }
 
-        esp_err_t send_err = esp_now_send(dest, tx_frame, FRAME_SIZE);
+        esp_err_t send_err = esp_now_send(dest, frame, FRAME_SIZE);
         if (send_err != ESP_OK) {
             static uint32_t last_err_ms = 0;
             uint32_t now_ms = (uint32_t)millis();
@@ -239,7 +266,6 @@ void telemetry_task(void *) {
             }
             if (tx_done_sem) xSemaphoreGive(tx_done_sem);       // no send-cb → unblock now
         }
-        tx_frame_id++;
     }
 }
 
@@ -253,6 +279,8 @@ void telemetry_init(void) {
     tx_done_sem = xSemaphoreCreateBinary();     // TX-complete flow control
     configASSERT(tx_done_sem != NULL);
     xSemaphoreGive(tx_done_sem);                // prime: first send proceeds immediately
+    frame_q = xQueueCreate(FRAME_Q_DEPTH, FRAME_SIZE);   // assemble → send FIFO
+    configASSERT(frame_q != NULL);
 
     WiFi.mode(WIFI_STA);
     WiFi.disconnect();

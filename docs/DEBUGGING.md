@@ -115,10 +115,12 @@ what the current code would output; `real.kf_theta` vs `rep.kf_theta` shows
 heading-estimate divergence.
 
 **Offline `replay.exe` CSV columns** (single series; see the harness section
-below): `time_us, mode, kf_theta, kf_omega, omega_accel, mag_angle, est_theta,
-est_omega, mag_x_filt, mag_y_filt, heading_deg, led_on, mag_valid, accel_sat, dshot_l,
-dshot_r, mag_x, mag_y, accel_x, accel_y, theta_offset` and (VER 2 logs only, at
-frame-end rows) `stored_est_theta, stored_mag_angle, stored_led_on`.
+below): `time_us, mode, ctrl_x, ctrl_y, ctrl_theta, ctrl_throttle,
+input_dshot_l, input_dshot_r, input_dshot_l_q, input_dshot_r_q, kf_theta,
+kf_omega, omega_accel, mag_angle, est_theta, est_omega, mag_x_filt, mag_y_filt,
+heading_deg, led_on, mag_valid, accel_sat, dshot_l, dshot_r, mag_x, mag_y,
+accel_x, accel_y, theta_offset` and (VER 2 logs only, at frame-end rows)
+`stored_est_theta, stored_mag_angle, stored_led_on`.
 
 ---
 
@@ -243,10 +245,15 @@ build/replay LOG.sun --reseed > reseed.csv
 build/replay LOG.sun --from-us 89628463 --to-us 90539463 > window.csv
 ```
 
-CSV columns: `time_us, mode, kf_theta, kf_omega, omega_accel, mag_angle,
-est_theta, est_omega, mag_x_filt, mag_y_filt, heading_deg, led_on, mag_valid,
-accel_sat, dshot_l, dshot_r, mag_x, mag_y, accel_x, accel_y, theta_offset,`
-and (frame-end rows only) `stored_est_theta, stored_mag_angle, stored_led_on`.
+CSV columns: `time_us, mode, ctrl_x, ctrl_y, ctrl_theta, ctrl_throttle,
+input_dshot_l, input_dshot_r, input_dshot_l_q, input_dshot_r_q, kf_theta,
+kf_omega, omega_accel, mag_angle, est_theta, est_omega, mag_x_filt, mag_y_filt,
+heading_deg, led_on, mag_valid, accel_sat, dshot_l, dshot_r, mag_x, mag_y,
+accel_x, accel_y, theta_offset,` and (frame-end rows only)
+`stored_est_theta, stored_mag_angle, stored_led_on`.
+`input_dshot_l/r` are the robot-logged previous-tick DShot commands decoded from
+the quantized `SunshineInput.dshot_*_q` fields; `dshot_l/r` are recomputed by the
+current `sunshine_step()` for the current tick.
 The `stored_*` columns are the **real on-robot** values from the file — pair them
 with `--reseed` to validate replay reproduces the robot bit-for-bit.
 

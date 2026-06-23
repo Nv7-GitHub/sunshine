@@ -109,7 +109,7 @@ typedef struct __attribute__((packed)) {
 } SunshineInput;
 /* static_assert(sizeof(SunshineInput) == 29, ""); */
 
-/* SunshineState: filter history, 60 bytes packed.
+/* SunshineState: filter history, 44 bytes packed.
  * APPEND-ONLY rule applies here too. */
 typedef struct __attribute__((packed)) {
     float kf_theta;         /* Kalman angle estimate (rad, unwrapped)     */
@@ -121,7 +121,7 @@ typedef struct __attribute__((packed)) {
 } SunshineState;
 /* static_assert(sizeof(SunshineState) == 44, ""); */
 
-/* SunshineVars: derived variables, never telemetered, 52 bytes packed.
+/* SunshineVars: derived variables, never telemetered, 56 bytes packed.
  * APPEND-ONLY: never insert, reorder, or resize existing fields. */
 typedef struct __attribute__((packed)) {
     float   omega_from_accel;  /* rad/s, inflated during spinup            */
