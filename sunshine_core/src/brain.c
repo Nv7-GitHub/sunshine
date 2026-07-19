@@ -45,25 +45,38 @@ void sunshine_step(const SunshineInput *in, SunshineState *state, SunshineVars *
      * the mag off. */
     vars->mag_valid = (fabsf(state->kf_omega) > SUNSHINE_MAG_MIN_OMEGA);
 
-    /* -- Kalman update - accelerometer ------------------------------------ */
-    /* The accelerometer is the rate sensor at all times: |ω| = √(a_c/r). But the
-       accel gives only the MAGNITUDE — it cannot sense CW vs CCW. The spin SIGN
-       comes from the magnetometer (state->spin_rate_lp, updated in mag_heading.c),
-       which sees the true rotation sense and so reverses correctly when the robot is
-       inverted. Copy that sign onto the accel rate before the update, so kf_omega —
-       and hence the predicted kf_theta — winds the correct way in either orientation.
-       Before the mag has locked (spin_rate_lp≈0) the sign defaults to +, matching the
-       old behaviour; once the mag is valid it sets the true sign within ~50 ms.
-       The heading is recovered open-loop by mag_heading.c (band-pass centred on this
-       accel rate, independent of the estimate), so the accel can't precess it. */
-    if (!vars->accel_saturated && vars->omega_from_accel > 0.0f) {
+    /* -- Open-loop magnetometer absolute heading -> mag_angle ------------- */
+    /* Runs BEFORE the rate update so state->spin_rate_lp (the SIGNED, LP-smoothed
+     * mag rotation rate) and spin_freq_lp are fresh this tick. */
+    mag_heading_step(in, state, vars);
+
+    /* -- Kalman update - angular rate ------------------------------------- */
+    /* Two rate sensors, each with a failure mode during TRANSLATION:
+     *   - accel: |ω| = √(a_c/r), but linear body acceleration adds a once-per-rev
+     *     term, so the magnitude both WOBBLES (→ ±30° heading swings once integrated,
+     *     the "fluctuates a lot" the driver sees) and is biased HIGH (Jensen, → slow
+     *     drift). It also can't sense CW/CCW.
+     *   - mag rotation rate (spin_rate_lp): the B-field's rotation is UNAFFECTED by
+     *     linear acceleration, so it is unbiased AND already low-passed — but it needs
+     *     enough spin to be valid.
+     * So above the mag-valid threshold, drive the rate from the MAGNETOMETER's own
+     * rotation rate (clean during translation); below it, fall back to the accel
+     * magnitude with the mag's sign (the accel is fine when not translating, and is
+     * the only rate source at low spin). This removes the accel corruption from the
+     * heading entirely while it matters, without the drift that smoothing the accel
+     * rate caused. The band-pass centre still uses the accel rate (spin_freq_lp),
+     * which is loop-independent. */
+    /* Use the mag rate only once spin_rate_lp itself has converged above the mag
+     * threshold — at the mag-valid boundary during spin-up it starts near zero (it
+     * only integrates while valid) and would briefly drag kf_omega down. Until then,
+     * the accel magnitude is the rate source (correct, since we're not yet fast). */
+    if (vars->mag_valid && fabsf(state->spin_rate_lp) > SUNSHINE_MAG_MIN_OMEGA) {
+        kalman_update_omega(state, state->spin_rate_lp, KF_R_ACCEL);
+    } else if (!vars->accel_saturated && vars->omega_from_accel > 0.0f) {
         float signed_omega = (state->spin_rate_lp < 0.0f)
                              ? -vars->omega_from_accel : vars->omega_from_accel;
         kalman_update_omega(state, signed_omega, KF_R_ACCEL);
     }
-
-    /* -- Open-loop magnetometer absolute heading -> mag_angle ------------- */
-    mag_heading_step(in, state, vars);
 
     /* -- Kalman update - magnetometer (absolute heading reference) -------- */
     if (vars->mag_valid)

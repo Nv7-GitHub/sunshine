@@ -17,7 +17,7 @@ interface Props {
 }
 
 function battVoltage(offset: number): number {
-  return 7.6 + offset * 0.0205;
+  return 7.6 + offset * 0.001;   // schema v5: int16 batt_offset, 1 mV/LSB
 }
 
 export default function TopBar({ mode, liveUpdate, rxRssi, droppedFrames, loggingActive, logPath, isGraphLive, onGoLive, onEnableLogging, onDisableLogging }: Props) {

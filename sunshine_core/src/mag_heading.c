@@ -47,13 +47,37 @@ void mag_heading_step(const SunshineInput *in, SunshineState *s, SunshineVars *v
      * modulation parametrically FALSE-LOCKS the recovered heading at half the true
      * spin rate. omega_from_accel is measured straight from the accelerometer
      * (independent of the heading), so it breaks the loop. During accel saturation
-     * it is 0 → fall back to kf_omega for those brief ticks (far too short to
-     * develop a false lock). brain.c sets omega_from_accel + accel_saturated on v
-     * before calling this. Clamp to the min so coeffs stay sane below the mag-valid
-     * threshold (the mag update is gated off there by brain.c anyway). */
-    float spin_omega = (!v->accel_saturated && v->omega_from_accel > 0.0f)
-                       ? v->omega_from_accel : s->kf_omega;
-    float fc = spin_omega * (0.5f / M_PI_F);
+     * it is 0 → fall back to |kf_omega| for those brief ticks. brain.c sets
+     * omega_from_accel + accel_saturated on v before calling this. */
+    float raw_spin = (!v->accel_saturated && v->omega_from_accel > 0.0f)
+                     ? v->omega_from_accel : fabsf(s->kf_omega);
+
+    /* Low-pass the CENTRE (see MAG_BP_FC_LP_HZ). omega_from_accel wobbles at the spin
+     * frequency while translating (linear accel adds a once-per-rev term); retuning
+     * the band-pass from that instantaneous value made the filter time-varying and
+     * injected heading wobble. The true spin rate changes slowly, so a slow LP of it
+     * keeps the filter quasi-LTI and kills the wobble. It stays loop-independent
+     * (only the accel rate feeds it), so no kf_omega false-lock returns.
+     *
+     * Re-seed while BELOW the mag-valid threshold: there the band-pass output is
+     * unused (brain.c gates the mag update off), so hold spin_freq_lp at the current
+     * rate. A fast spin-up — including right after an impact stops the robot — then
+     * begins tracking from the true rate with NO lag carried across the stop; the LP
+     * only smooths once already spinning. */
+    if (s->spin_freq_lp < SUNSHINE_MAG_MIN_OMEGA) {
+        /* Seed / re-seed only when the SMOOTHED rate is genuinely sub-threshold
+         * (robot slow or stopped) — NOT on the instantaneous raw value, which dips
+         * below the threshold on the once-per-rev troughs while translating. Keying
+         * the re-seed on raw_spin would re-seed to those trough values every rev and
+         * destroy the smoothing (measured: it made kf_omega jumpier, not smoother). */
+        s->spin_freq_lp = raw_spin;
+    } else {
+        /* LP rejects both the once-per-rev troughs AND impact spikes: at a=~0.009 a
+         * lone 3× spike or 0.5× trough moves the centre by <2%, so it stays smooth. */
+        float a = 1.0f - expf(-2.0f * M_PI_F * MAG_BP_FC_LP_HZ / 1000.0f);
+        s->spin_freq_lp += a * (raw_spin - s->spin_freq_lp);
+    }
+    float fc = s->spin_freq_lp * (0.5f / M_PI_F);
     if (fc < MAG_BP_MIN_FC_HZ) fc = MAG_BP_MIN_FC_HZ;
 
     /* RBJ band-pass (constant 0 dB peak): zero at DC, peak at fc, constant Q. */
@@ -82,18 +106,24 @@ void mag_heading_step(const SunshineInput *in, SunshineState *s, SunshineVars *v
      * the declination offset are both constant, absorbed by theta_offset. */
     v->mag_angle = atan2f(-my_bp, mx_bp);
 
-    /* Spin-SIGN recovery. The accelerometer measures only |ω| (centripetal
-     * magnitude), so it cannot tell CW from CCW; the magnetometer can, because the
-     * field vector's rotation SENSE reverses when the robot is inverted. Track a
-     * low-passed SIGNED mag rotation rate here; brain.c copies this sign onto the
-     * (unsigned) omega_from_accel before the Kalman rate update, so kf_omega and
-     * hence kf_theta wind the correct way in either orientation. Only integrated
-     * while the mag is valid (spinning fast enough for a clean heading); mag_ang_prev
-     * still advances every tick so the first valid delta is a true one-tick step. */
+    /* SIGNED mag rotation rate. The field vector's rotation SENSE reverses when the
+     * robot is inverted, so this both (a) gives the spin SIGN the accel can't sense,
+     * and (b) IS the Kalman's rate measurement while the mag is valid (brain.c) —
+     * it's unbiased by linear acceleration, unlike the accel magnitude. Low-passed at
+     * MAG_SPIN_RATE_LP_HZ: the raw per-tick mag-angle delta is quantisation/soft-iron
+     * noisy, so it must be smoothed, but the LP also LAGS a fast spin change (impact
+     * slowdown / spin-up) by ~1/(2π·fc). Measured: that lag is momentary (~0.1 s, the
+     * mag_angle update re-anchors) and no worse than the accel during transients.
+     * RAISE MAG_SPIN_RATE_LP_HZ for snappier impact/spin-up tracking (noisier steady
+     * heading); LOWER for a smoother rate (laggier transients). Only integrated while
+     * the mag is valid; mag_ang_prev still advances every tick so the first valid
+     * delta is a true one-tick step. */
     float dma = v->mag_angle - s->mag_ang_prev;
     while (dma >  M_PI_F) dma -= 2.0f * M_PI_F;
     while (dma < -M_PI_F) dma += 2.0f * M_PI_F;
     s->mag_ang_prev = v->mag_angle;
-    if (v->mag_valid)
-        s->spin_rate_lp += 0.02f * (dma * 1000.0f - s->spin_rate_lp);  /* ~8 Hz LP */
+    if (v->mag_valid) {
+        float a = 1.0f - expf(-2.0f * M_PI_F * MAG_SPIN_RATE_LP_HZ / 1000.0f);
+        s->spin_rate_lp += a * (dma * 1000.0f - s->spin_rate_lp);
+    }
 }

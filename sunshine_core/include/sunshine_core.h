@@ -5,8 +5,15 @@
 /* ── Schema version ────────────────────────────────────────────────────────
  * Bump whenever ANY field is added, removed, reordered, or resized in
  * SunshineInput, SunshineState, or SunshineVars.
- * New fields MUST be appended at the END of the struct — never insert. */
-#define SUNSHINE_SCHEMA_VERSION  4U
+ * New fields MUST be appended at the END of the struct — never insert.
+ *
+ * v5: batt_offset widened int8 → int16 (finer battery resolution) and
+ *     SunshineState.spin_freq_lp appended (band-pass centre LP, see mag_heading.c).
+ *     batt_offset is the ONE historical exception to append-only (a mid-struct
+ *     resize); the host log reader remaps it per schema_version (replay.rs
+ *     read_input) so all pre-v5 logs still parse. Live/wire format follows the
+ *     current struct on both ends (brain + app rebuilt together). */
+#define SUNSHINE_SCHEMA_VERSION  5U
 
 /* ── Control modes ─────────────────────────────────────────────────────── */
 #define SUNSHINE_MODE_DISABLED  0U
@@ -17,7 +24,13 @@
 #define ADXL_SCALE_MS2      (49e-3f * 9.81f)   /* m/s² per ADXL375 count  */
 #define MAG_SCALE_UT        0.058f              /* µT per LIS3MDL count    */
 #define BATT_OFFSET_REF_V   7.6f               /* reference voltage (V)   */
-#define BATT_SCALE_V        0.0205f             /* V per batt_offset LSB   */
+/* batt_offset is int16 (schema v5): 1 mV/LSB, so telemetry no longer discretises
+ * the battery (the 12-bit ADC ≈ 2.4 mV/LSB + the 6 Hz LP in batt_read_v are now
+ * the only quantisers). ±32.7 V range is far beyond the 2S span; the brain clamps.
+ * BATT_SCALE_V_LEGACY is the v4 int8 step, kept only so the host can decode the
+ * batt_offset in pre-v5 logs (replay.rs remaps old int8 → new int16 LSBs). */
+#define BATT_SCALE_V        0.001f              /* V per batt_offset LSB (int16)   */
+#define BATT_SCALE_V_LEGACY 0.0205f             /* v4 int8 step, for old-log decode */
 #define IMU_RADIUS_M        0.011f              /* 11 mm from spin centre  */
 #define ADXL_MAX_COUNTS     4082                /* ±200 g / 49 mg·LSB⁻¹  */
 /* Min spin for the mag heading. The tracking band-pass is centred on the spin
@@ -72,6 +85,30 @@
  * = cleaner but riskier; lower Q = wider = more robust. */
 #define MAG_BP_Q          1.5f    /* half-BW = fc/(2Q) ≈ 33% of spin freq          */
 #define MAG_BP_MIN_FC_HZ  8.0f    /* clamp centre to the mag-valid speed (480 RPM) */
+/* Band-pass CENTRE low-pass (schema v5). The centre was previously retuned every
+ * tick from the INSTANTANEOUS omega_from_accel. While translating, linear body
+ * acceleration adds a once-per-rev component to the accel, so omega_from_accel
+ * wobbles at the spin frequency — and a band-pass whose coefficients wobble tick-
+ * to-tick is TIME-VARYING, which injects heading wobble (the LTI "mis-centre only
+ * attenuates" argument holds only for a FIXED filter). Measured on real logs: the
+ * recovered-heading rate error was 37–100 rad/s. Low-passing the centre to ~1.5 Hz
+ * makes the filter quasi-LTI and cuts that to 3–5 rad/s (~90%), because the true
+ * spin rate changes slowly (~sub-Hz) while the corruption is at the ~15-25 Hz spin
+ * band. spinup_lag.py: the true rate stays inside the ±33% pass band ~98.7% of the
+ * mag-valid time; the ~1.3% is brief impact glitches, cutoff-independent. The LP is
+ * re-seeded below the mag threshold (mag_heading.c) so a fast spin-up carries no
+ * lag over a stop. Higher = tracks spin-up faster but rejects less wobble; lower =
+ * smoother heading but laggier centre. Loop-independent (uses only the accel rate),
+ * so it does NOT reintroduce the kf_omega false-lock. Tunable at bringup Level 4. */
+#define MAG_BP_FC_LP_HZ   1.5f    /* band-pass centre LP cutoff, Hz (nav loop = 1 kHz) */
+/* LP cutoff for the SIGNED mag rotation rate (spin_rate_lp). Since schema v5 this is
+ * the Kalman's rate measurement whenever the mag is valid (mag_heading.c / brain.c) —
+ * it is unbiased by linear acceleration, so it fixes the translation heading swings
+ * the accel magnitude caused. Trade-off knob: higher = snappier tracking of fast spin
+ * changes (impact slowdown, spin-up) but a noisier steady heading; lower = smoother
+ * but laggier on transients (the mag_angle update still re-anchors, so the lag is
+ * momentary). 3.2 Hz preserves the pre-v5 coefficient (0.02 @ 1 kHz). Bringup Level 4. */
+#define MAG_SPIN_RATE_LP_HZ 3.2f  /* SIGNED mag-rate LP cutoff, Hz */
 
 /* ── Control tuning ────────────────────────────────────────────────────── */
 #define DRIFT_PLATEAU_WIDTH 0.35f   /* fraction of rotation at each +/- peak diff */
@@ -86,8 +123,10 @@
 
 /* ── IO layer structs ──────────────────────────────────────────────────── */
 
-/* SunshineInput: 1 kHz sensor frame, 29 bytes packed.
- * APPEND-ONLY: never insert, reorder, or resize existing fields. */
+/* SunshineInput: 1 kHz sensor frame, 30 bytes packed (schema v5).
+ * APPEND-ONLY: never insert, reorder, or resize existing fields. The lone
+ * exception is batt_offset, widened int8→int16 at v5 (see SUNSHINE_SCHEMA_VERSION);
+ * the host reader remaps pre-v5 int8 batt per schema_version. */
 typedef struct __attribute__((packed)) {
     uint32_t time_us;
     int16_t  accel_x;       /* ADXL375 raw counts; IMU at 45° to radial   */
@@ -103,12 +142,12 @@ typedef struct __attribute__((packed)) {
     int8_t   ctrl_y;
     int8_t   ctrl_theta;
     uint8_t  ctrl_throttle; /* [0, 255]                                   */
-    int8_t   batt_offset;   /* relative to 7.6 V, 0.0205 V/LSB           */
+    int16_t  batt_offset;   /* v5: relative to 7.6 V, 0.001 V/LSB (int16) */
     uint8_t  dshot_left_q;  /* DShot cmd from PREVIOUS tick, quantised    */
     uint8_t  dshot_right_q;
     uint8_t  mode;          /* SUNSHINE_MODE_*                            */
 } SunshineInput;
-/* static_assert(sizeof(SunshineInput) == 29, ""); */
+/* static_assert(sizeof(SunshineInput) == 30, ""); */
 
 /* SunshineState: filter history, 52 bytes packed.
  * APPEND-ONLY rule applies here too. */
@@ -125,8 +164,12 @@ typedef struct __attribute__((packed)) {
      * robot is inverted (flip → same chassis spin, opposite world spin). */
     float mag_ang_prev;     /* previous mag_angle, for its rotation-rate sign  */
     float spin_rate_lp;     /* low-passed SIGNED mag rotation rate (rad/s)      */
+    /* Band-pass CENTRE frequency LP (schema v5). Low-passed UNSIGNED spin rate
+     * (rad/s) used to centre the mag band-pass — smooths the once-per-rev
+     * translation corruption of omega_from_accel. See mag_heading.c / MAG_BP_FC_LP_HZ. */
+    float spin_freq_lp;
 } SunshineState;
-/* static_assert(sizeof(SunshineState) == 52, ""); */
+/* static_assert(sizeof(SunshineState) == 56, ""); */
 
 /* SunshineVars: derived variables, never telemetered, 56 bytes packed.
  * APPEND-ONLY: never insert, reorder, or resize existing fields. */
@@ -167,7 +210,7 @@ uint32_t sunshine_schema_version(void);
 
 float    sunshine_accel_to_ms2(int16_t raw);
 float    sunshine_mag_to_ut   (int16_t raw);
-float    sunshine_batt_to_v   (int8_t  off);
+float    sunshine_batt_to_v   (int16_t off);   /* v5: int16, 0.001 V/LSB */
 float    sunshine_f16_to_f32  (uint16_t half);
 uint16_t sunshine_f32_to_f16  (float f);
 

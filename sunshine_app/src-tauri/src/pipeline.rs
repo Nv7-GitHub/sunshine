@@ -9,11 +9,14 @@ use std::io::{Seek, SeekFrom};
 pub struct DataPoint {
     pub time_us:    u64,
     pub input:      SunshineInput,
-    // REAL series: the logged real state itself, HELD at the most recent snapshot
-    // (frame start / midpoint → 100 Hz). This is the actual recorded state — a
-    // staircase — NOT stepped, so it's visibly distinct from the smooth 1 kHz
-    // replayed curve instead of a fabricated free-run identical to it. `real_vars`
-    // are derived from that held state (vars are a pure fn of state+input).
+    // REAL series: the logged real state at the two per-frame snapshots (frame start
+    // + midpoint → 100 Hz). `real_valid` is true ONLY at those two ticks; elsewhere
+    // the real.* channels are omitted so the host draws straight lines between the
+    // genuine 100 Hz samples (a coarse version of the replayed curve) instead of a
+    // 1 kHz staircase-with-noise (which is what holding the state and re-stepping a
+    // throwaway copy every tick produced). `real_vars` at a valid tick = one
+    // brain_step from that snapshot's real state, so it's the true recorded vars.
+    pub real_valid: bool,
     pub real_state: SunshineState,
     pub real_vars:  SunshineVars,
     // REPLAYED series: a filter free-running continuously from the first frame
@@ -87,11 +90,14 @@ impl Pipeline {
 
         let mid = INPUTS_PER_FRAME / 2;
         for (i, input) in frame.inputs.iter().enumerate() {
-            if i == mid { self.real_state = frame.state_mid; }  // 100 Hz snapshot (held, not stepped)
+            if i == mid { self.real_state = frame.state_mid; }  // 100 Hz snapshot
             let time_us   = self.expand_hw_time(input.time_us);
-            // REAL = the logged snapshot state, HELD (see step_point): show the real
-            // recorded 100 Hz state, not a re-anchored 1 kHz free-run. Vars are still
-            // derived from it (pure fn of state+input) via a throwaway copy.
+            // REAL is a genuine sample only at the two snapshot ticks (frame start,
+            // midpoint). There `self.real_state` is the logged snapshot state, so one
+            // brain_step yields the true recorded vars. Elsewhere real_valid=false and
+            // the real.* channels are skipped, so the plot connects the real samples
+            // with straight lines (coarse) instead of a fabricated 1 kHz staircase.
+            let real_valid = i == 0 || i == mid;
             let mut real_tmp = self.real_state;
             let real_vars = brain_step(input, &mut real_tmp);
             let rep_vars  = brain_step(input, &mut self.rep_state);
@@ -99,6 +105,7 @@ impl Pipeline {
             let dp = DataPoint {
                 time_us,
                 input:      *input,
+                real_valid,
                 real_state: self.real_state,
                 real_vars,
                 rep_state:  self.rep_state,
@@ -243,12 +250,14 @@ impl Pipeline {
     ) -> Vec<(u64, f32)> {
         if self.ring_len == 0 { return vec![]; }
         let accessor = channel_accessor(channel);
+        let is_real  = channel.starts_with("real.");
         let mut raw: Vec<(u64, f32)> = Vec::new();
         let start_idx = (self.ring_head + RING_CAP - self.ring_len) % RING_CAP;
         for i in 0..self.ring_len {
             let dp = &self.ring[(start_idx + i) % RING_CAP];
             if dp.time_us < start_us { continue; }
             if dp.time_us > end_us   { break; }
+            if is_real && !dp.real_valid { continue; }   // real.* only at 100 Hz snapshots
             raw.push((dp.time_us, accessor(dp)));
         }
 
@@ -264,6 +273,7 @@ impl Pipeline {
         max_points: u32,
     ) -> Option<Vec<(u64, f32)>> {
         let accessor = channel_accessor(channel);
+        let is_real  = channel.starts_with("real.");
         let mut file = File::open(&meta.path).ok()?;
         file.seek(SeekFrom::Start(meta.header_size)).ok()?;
 
@@ -287,10 +297,11 @@ impl Pipeline {
                 }
                 last_hw_us = hw;
                 let time_us = epoch_us + hw as u64;
-                let dp = step_point(time_us, input, &real_state, &mut rep_state);
+                let dp = step_point(time_us, input, i == 0 || i == mid, &real_state, &mut rep_state);
 
                 if time_us < start_us { continue; }
                 if time_us > end_us { return Some(downsample_min_max(raw, max_points)); }
+                if is_real && !dp.real_valid { continue; }   // real.* only at 100 Hz snapshots
                 raw.push((time_us, accessor(&dp)));
             }
         }
@@ -377,13 +388,13 @@ impl Pipeline {
     }
 }
 
-/// Build the DataPoint for one input. REAL = the logged real state, HELD at the
-/// most recent snapshot (frame start / midpoint) by the caller — NOT stepped. This
-/// shows the actual recorded 100 Hz state (a staircase), not a re-anchored 1 kHz
-/// free-run that fabricates a trajectory indistinguishable from the replayed one.
-/// `real_vars` are still derived from that held state (vars are a pure function of
-/// state+input, never logged). `rep_state` free-runs (the 1 kHz recomputation).
-fn step_point(time_us: u64, input: &SunshineInput,
+/// Build the DataPoint for one input. `real_valid` is true only at the two per-frame
+/// snapshot ticks (frame start / midpoint); there `real_state` is the logged snapshot
+/// state, so one throwaway brain_step gives the true recorded 100 Hz vars. At other
+/// ticks real_valid=false and the real.* channels are skipped, so the plot draws
+/// straight lines between the genuine 100 Hz samples (coarse) rather than a 1 kHz
+/// staircase. `rep_state` free-runs (the 1 kHz recomputation) at every tick.
+fn step_point(time_us: u64, input: &SunshineInput, real_valid: bool,
               real_state: &SunshineState, rep_state: &mut SunshineState) -> DataPoint {
     let mut real_tmp = *real_state;                 // derive vars without evolving the held state
     let real_vars = brain_step(input, &mut real_tmp);
@@ -391,6 +402,7 @@ fn step_point(time_us: u64, input: &SunshineInput,
     DataPoint {
         time_us,
         input:      *input,
+        real_valid,
         real_state: *real_state,
         real_vars,
         rep_state:  *rep_state,
@@ -433,7 +445,7 @@ pub fn build_replay_cache(meta: &LogMetadata, mut on_progress: impl FnMut(f32)) 
             }
             last_hw_us = hw;
             let time_us = epoch_us + hw as u64;
-            cache.push(step_point(time_us, input, &real_state, &mut rep_state));
+            cache.push(step_point(time_us, input, j == 0 || j == mid, &real_state, &mut rep_state));
         }
         if i % 200 == 0 || i == total - 1 {
             on_progress((i + 1) as f32 / total as f32);
@@ -451,11 +463,13 @@ fn get_graph_data_from_slice(
 ) -> Vec<(u64, f32)> {
     if data.is_empty() { return vec![]; }
     let accessor = channel_accessor(channel);
+    let is_real  = channel.starts_with("real.");
     // Binary search to the first point >= start_us
     let lo = data.partition_point(|dp| dp.time_us < start_us);
     let raw: Vec<(u64, f32)> = data[lo..]
         .iter()
         .take_while(|dp| dp.time_us <= end_us)
+        .filter(|dp| !is_real || dp.real_valid)      // real.* only at 100 Hz snapshots
         .map(|dp| (dp.time_us, accessor(dp)))
         .collect();
     downsample_min_max(raw, max_points)
@@ -519,13 +533,23 @@ fn channel_accessor(channel: &str) -> fn(&DataPoint) -> f32 {
         "rep.batt_voltage"       => |dp| dp.rep_vars.batt_voltage,
         "rep.erpm_left"          => |dp| dp.rep_vars.erpm_left,
         "rep.erpm_right"         => |dp| dp.rep_vars.erpm_right,
+        /* ── VARIABLES: pure functions of the INPUTS only (no filter state), so the
+         * real and replayed series are identical — one shared 1 kHz series, not a
+         * real/replayed split. Sourced from rep_vars (free-runs at 1 kHz; these
+         * fields are set at the TOP of sunshine_step before any state mutation, so
+         * they equal the real values regardless of the replayed filter state). */
+        "var.omega_from_accel"  => |dp| dp.rep_vars.omega_from_accel,
+        "var.centripetal_ms2"   => |dp| dp.rep_vars.centripetal_ms2,
+        "var.batt_voltage"      => |dp| dp.rep_vars.batt_voltage,
+        "var.erpm_left"         => |dp| dp.rep_vars.erpm_left,
+        "var.erpm_right"        => |dp| dp.rep_vars.erpm_right,
+        "var.accel_x_ms2"       => |dp| dp.input.accel_x as f32 * ADXL_SCALE_MS2,
+        "var.accel_y_ms2"       => |dp| dp.input.accel_y as f32 * ADXL_SCALE_MS2,
+        "var.accel_z_ms2"       => |dp| dp.input.accel_z as f32 * ADXL_SCALE_MS2,
         /* Raw sensor inputs (shared — no real/replayed distinction) */
         "input.accel_x"         => |dp| dp.input.accel_x as f32,
         "input.accel_y"         => |dp| dp.input.accel_y as f32,
         "input.accel_z"         => |dp| dp.input.accel_z as f32,
-        "input.accel_x_ms2"     => |dp| dp.input.accel_x as f32 * ADXL_SCALE_MS2,
-        "input.accel_y_ms2"     => |dp| dp.input.accel_y as f32 * ADXL_SCALE_MS2,
-        "input.accel_z_ms2"     => |dp| dp.input.accel_z as f32 * ADXL_SCALE_MS2,
         "input.mag_x"           => |dp| dp.input.mag_x as f32,
         "input.mag_y"           => |dp| dp.input.mag_y as f32,
         "input.mag_magnitude"   => |dp| {

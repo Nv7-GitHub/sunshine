@@ -17,7 +17,7 @@ pub struct SunshineInput {
     pub ctrl_y:        i8,
     pub ctrl_theta:    i8,
     pub ctrl_throttle: u8,
-    pub batt_offset:   i8,
+    pub batt_offset:   i16,  // v5: was i8; 0.001 V/LSB relative to 7.6 V
     pub dshot_left_q:  u8,
     pub dshot_right_q: u8,
     pub mode:          u8,
@@ -36,6 +36,9 @@ pub struct SunshineState {
     // these; read_padded zero-fills them, matching sunshine_state_init.
     pub mag_ang_prev:  f32,
     pub spin_rate_lp:  f32,
+    // schema v5: LP-smoothed spin freq for the mag band-pass centre (mag_heading.c).
+    // Old (<v5) logs lack it; read_padded zero-fills, matching sunshine_state_init.
+    pub spin_freq_lp:  f32,
 }
 
 /// SunshineVars: 12 floats + 4 u8 flags + 1 float = 48 + 4 + 4 = 56 bytes packed
@@ -62,8 +65,8 @@ pub struct SunshineVars {
 }
 
 const _: () = {
-    assert!(size_of::<SunshineInput>() == 29, "SunshineInput size mismatch");
-    assert!(size_of::<SunshineState>() == 52, "SunshineState size mismatch");
+    assert!(size_of::<SunshineInput>() == 30, "SunshineInput size mismatch");
+    assert!(size_of::<SunshineState>() == 56, "SunshineState size mismatch");
     assert!(size_of::<SunshineVars>()  == 56, "SunshineVars size mismatch");
 };
 

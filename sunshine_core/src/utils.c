@@ -36,5 +36,5 @@ uint16_t sunshine_f32_to_f16(float val) {
 
 float sunshine_accel_to_ms2(int16_t raw) { return (float)raw * ADXL_SCALE_MS2; }
 float sunshine_mag_to_ut   (int16_t raw) { return (float)raw * MAG_SCALE_UT;   }
-float sunshine_batt_to_v   (int8_t  off) { return BATT_OFFSET_REF_V + (float)off * BATT_SCALE_V; }
+float sunshine_batt_to_v   (int16_t off) { return BATT_OFFSET_REF_V + (float)off * BATT_SCALE_V; }
 uint32_t sunshine_schema_version(void)   { return SUNSHINE_SCHEMA_VERSION; }

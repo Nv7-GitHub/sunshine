@@ -65,6 +65,49 @@ Also watch the LED: it should appear as a stationary dot at a fixed heading once
 
 **Typical good values:** `KF_R_MAG ≈ 0.01` (open-loop mag is a clean absolute reference, so trust it), `KF_Q_THETA = 1e-7–1e-5`.
 
+#### Magnetometer band-pass centre LP — `MAG_BP_FC_LP_HZ` (default 1.5 Hz)
+
+The mag band-pass is centred on the spin frequency taken from `omega_from_accel`.
+That accel rate wobbles at the spin frequency **while translating** (linear body
+acceleration adds a once-per-rev term), and retuning the band-pass from the raw
+instantaneous value makes it *time-varying*, which injects wobble into `mag_angle`.
+`MAG_BP_FC_LP_HZ` low-passes the centre so the filter stays quasi-LTI. Measured on
+real logs it cut the `mag_angle` rate-error ~65%. It is re-seeded below the mag-valid
+threshold, so a fast spin-up (even right after an impact stops the robot) carries no
+lag across the stop.
+
+- **Raise it** (e.g. 3–5 Hz) to track spin-up faster, at the cost of rejecting less
+  translation wobble.
+- **Lower it** for a steadier centre but a laggier response to real rate changes.
+- `spinup_lag.py` shows the true spin rate stays inside the ±33% pass band ~98.7% of
+  the mag-valid time at 1.5 Hz; the residual is brief impact glitches (cutoff-
+  independent), so 1.5 Hz is a good default.
+
+#### Angular-rate source: mag rotation rate during translation
+
+The Kalman rate update has **two** sensors, each failing during translation:
+
+- **Accelerometer** (`omega_from_accel = √(a_c/r)`): linear body acceleration adds a
+  once-per-rev term, so the magnitude both wobbles (integrating into ±30° heading
+  swings — the "LED fluctuates" the driver reports) and is biased high (Jensen → slow
+  drift). It also can't sense CW/CCW.
+- **Magnetometer rotation rate** (`state->spin_rate_lp`): the B-field's rotation is
+  unaffected by linear acceleration, so it's unbiased and already low-passed.
+
+So `brain.c` drives the Kalman rate from the **mag rotation rate whenever the mag is
+valid** (`|spin_rate_lp| > SUNSHINE_MAG_MIN_OMEGA`), and only falls back to the accel
+magnitude below that (spin-up / low spin, where the accel is fine and is the only
+source). Measured on real logs this cut the translation LED excursion from ~33° to
+~23° (toward the ~19° pure-spin baseline) **and** reduced drift — no tradeoff, because
+the mag rate is both smooth and unbiased. It also handles inversion for free
+(`spin_rate_lp` is already signed by the mag's rotation sense).
+
+History: an earlier attempt low-passed the *accel* rate instead. It cut the jitter but
+the accel's Jensen bias then showed as a slow drift (the wobble had been keeping the
+Kalman covariance — and thus the mag correction — high). The mag-rate source avoids
+that because it has no bias to leak. `spin_freq_lp` is still used only to centre the
+band-pass (loop-independent).
+
 #### Step 4: Pass/fail check
 
 At 500+ RPM, run the robot for 30 seconds:
@@ -113,6 +156,38 @@ The waveform has zero mean over a revolution and satisfies `wave(phase + pi) = -
 `dshot_right = base - diff`
 
 `headroom` prevents clipping. At low throttle there is little room above neutral; at very high throttle there is little room below max. Translation authority is strongest at moderate spin commands and intentionally fades near full throttle.
+
+### Spin rate vs. translation authority (measured)
+
+There are **two** reasons to translate at a *moderate* spin, not maximum:
+
+1. **Headroom (control side):** the symmetric DShot headroom peaks at ~50% throttle
+   and shrinks toward both extremes (above).
+2. **Motor/ESC bandwidth (plant side):** the wheels can only change speed so fast.
+   Measured from real logs (`tools/replay/erpm_bandwidth.py`), the achieved eRPM
+   ripple per unit DShot ripple **falls as spin rises** (gain ~18 at 15 Hz spin →
+   ~11 at 22 Hz), with a large phase lag. So at high RPM the once-per-rev modulation
+   is increasingly attenuated *and* phase-shifted — translation gets weaker and its
+   direction rotates with speed. Higher RPM buys gyroscopic stability but hurts
+   translation authority; find the sweet spot experimentally.
+
+### `DRIFT_PHASE_LEAD_S` from the eRPM lag
+
+The DShot→eRPM lag above turns into a heading-referenced phase error `omega × lag`
+that grows with spin rate — exactly what `DRIFT_PHASE_LEAD_S` compensates. The logs
+put the lag on the order of ~15–25 ms (this **includes** the eRPM telemetry reporting
+lag, so treat it as an upper bound). Start `DRIFT_PHASE_LEAD_S` near the low end
+(e.g. `0.005f`–`0.010f`) and confirm the sign/magnitude on hardware — the *direction*
+effect cannot be replayed (logs carry no robot position). Use the two-speed method in
+Step 3 below to refine it.
+
+### Inverted operation flips the apparent translation direction (not a bug)
+
+If the robot is **upside down**, its world-frame spin reverses (the schema-v4 spin-sign
+recovery handles this, so `kf_omega` reads negative and the LED still tracks). But the
+whole driver frame is mirrored, so "W" appears to drive *away* from the LED. This is
+expected — verify direction **right-side up**. Tell inversion from the logs by
+`input.accel_z` sign (≈ +20 counts upright, ≈ −20 inverted).
 
 ### Tuning Procedure
 

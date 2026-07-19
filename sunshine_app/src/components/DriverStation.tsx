@@ -7,7 +7,7 @@ import type { InputState } from '../hooks/useKeyboard';
 const MODE_LABELS = ['DISABLED', 'TANK', 'MELTY'] as const;
 
 function battVoltage(offset: number): number {
-  return 7.6 + offset * 0.0205;
+  return 7.6 + offset * 0.001;   // schema v5: int16 batt_offset, 1 mV/LSB
 }
 function battClass(v: number): string {
   if (v >= 7.8) return 'batt-good';

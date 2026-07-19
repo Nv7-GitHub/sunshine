@@ -34,8 +34,10 @@ static uint16_t rd_u16(const uint8_t *p){ uint16_t v; memcpy(&v,p,2); return v; 
 static int16_t  rd_i16(const uint8_t *p){ int16_t  v; memcpy(&v,p,2); return v; }
 static float    rd_f32(const uint8_t *p){ float    v; memcpy(&v,p,4); return v; }
 
-/* On-disk packed offsets (see sunshine_core.h struct definitions). */
-static void unpack_input(const uint8_t *b, SunshineInput *in){
+/* On-disk packed offsets (see sunshine_core.h struct definitions). Schema-aware:
+   pre-v5 stored batt_offset as int8 @25 (so dshot_l_q/dshot_r_q/mode are one byte
+   earlier). Bytes [0..24] are identical across versions. */
+static void unpack_input(const uint8_t *b, SunshineInput *in, uint32_t schema){
     in->time_us       = rd_u32(b+0);
     in->accel_x       = rd_i16(b+4);
     in->accel_y       = rd_i16(b+6);
@@ -50,10 +52,18 @@ static void unpack_input(const uint8_t *b, SunshineInput *in){
     in->ctrl_y        = (int8_t)b[22];
     in->ctrl_theta    = (int8_t)b[23];
     in->ctrl_throttle = b[24];
-    in->batt_offset   = (int8_t)b[25];
-    in->dshot_left_q  = b[26];
-    in->dshot_right_q = b[27];
-    in->mode          = b[28];
+    if (schema >= 5){
+        in->batt_offset   = rd_i16(b+25);   /* int16, 0.001 V/LSB */
+        in->dshot_left_q  = b[27];
+        in->dshot_right_q = b[28];
+        in->mode          = b[29];
+    } else {
+        /* v4 int8 step 0.0205 V → v5 int16 step 0.001 V (ratio 20.5) */
+        in->batt_offset   = (int16_t)((float)(int8_t)b[25] * (0.0205f/0.001f) + 0.5f);
+        in->dshot_left_q  = b[26];
+        in->dshot_right_q = b[27];
+        in->mode          = b[28];
+    }
 }
 static float dequantize_dshot(uint8_t q){
     return (float)q * (2047.0f / 255.0f);
@@ -103,6 +113,7 @@ int main(int argc, char **argv){
     if (memcmp(hdr,"SHINE",5)){ fprintf(stderr,"bad magic\n"); return 1; }
     uint16_t file_ver = rd_u16(hdr+5);
     uint16_t header_sz= rd_u16(hdr+7);
+    uint32_t schema   = rd_u32(hdr+9);
     uint16_t sz_in    = rd_u16(hdr+13);
     uint16_t sz_st    = rd_u16(hdr+15);
     uint16_t sz_var   = rd_u16(hdr+17);
@@ -143,7 +154,7 @@ int main(int argc, char **argv){
 
         const uint8_t *inbase = fb + 5 + (long)sz_st*num_states;
         for (uint16_t k=0;k<num_in;k++){
-            SunshineInput in; unpack_input(inbase + (long)k*sz_in, &in);
+            SunshineInput in; unpack_input(inbase + (long)k*sz_in, &in, schema);
             if (from_us>=0 && (long long)in.time_us < from_us) continue;
             if (to_us  >=0 && (long long)in.time_us > to_us) { free(fb); fclose(f); return 0; }
             /* Continuous: seed ONCE from the stored (real) state at the first

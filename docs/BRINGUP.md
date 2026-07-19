@@ -89,7 +89,7 @@ accel_x,accel_y,accel_z,mag_x,mag_y,mag_z,batt_v
 - 2 blinks → LIS3MDL init failed. Check HSPI wiring: SCK=IO16, MOSI=IO15, MISO=IO17, CS=IO18.
 - `accel_z ≈ 0` → ADXL375 returning zero. Check SPI mode (should be SPI_MODE3) and full-resolution flag.
 - `batt_v ≈ 0` → ADC not reading. `PIN_BATT_ADC = 7` (GPIO7, ADC1_CH7). Check `analogReadResolution(12)` is called in setup.
-- `batt_v` noisy / jumpy while spinning → expected: the ESCs inject a strong ~50 Hz (2×-spin) tone. `batt_read_v()` low-passes it (single-pole IIR at `BATT_LP_HZ`, default 6 Hz in `config.h`). Raise `BATT_LP_HZ` for snappier sag response, lower for a smoother trace. The int8 telemetry step is 20 mV — the filter brings the noise below that so the trend is readable.
+- `batt_v` noisy / jumpy while spinning → expected: the ESCs inject a strong ~50 Hz (2×-spin) tone. `batt_read_v()` low-passes it (single-pole IIR at `BATT_LP_HZ`, default 6 Hz in `config.h`). Raise `BATT_LP_HZ` for snappier sag response, lower for a smoother trace. As of schema v5 `batt_offset` is **int16 at 1 mV/LSB** (was int8 at 20.5 mV), so telemetry no longer discretises the battery — the 12-bit ADC (~2.4 mV) and the LP are the only quantisers left. Plot it as `var.batt_voltage`.
 
 ---
 
@@ -315,6 +315,13 @@ Summary of what each parameter controls:
 | `KF_R_ACCEL` | Accel ω weight (always); higher → less influence from accelerometer |
 | `KF_Q_THETA` | Higher → faster angle tracking, more drift |
 | `KF_R_MAG` | Higher → less influence from magnetometer |
+| `MAG_BP_FC_LP_HZ` | Band-pass centre LP (default 1.5 Hz). Lower = steadier `mag_angle` (less translation-induced wobble); higher = tracks spin-up faster. See TUNING.md. |
+| `MAG_SPIN_RATE_LP_HZ` | LP on the mag rotation rate that drives the Kalman rate during translation (default 3.2 Hz). Higher = snappier impact/spin-up response, noisier steady heading; lower = smoother, laggier on fast spin changes. See TUNING.md. |
+
+**Check for `mag_angle` wobble during translation/impacts.** Plot `var.omega_from_accel`
+and `real.mag_angle` while driving in TANK and bumping the robot. If `mag_angle` gets
+jittery when the accel rate spikes, lower `MAG_BP_FC_LP_HZ`. (The LED itself should
+stay solid — it's mag-anchored; this only affects the band-passed heading cleanliness.)
 
 ### Step 5: LED check
 
@@ -358,6 +365,16 @@ In the host app:
 4. Press A/D → robot should drift left/right
 5. The direction the robot drifts should match the driver's reference frame (LED-defined forward = W)
 
+> **Test right-side up.** If the robot is inverted, the world-frame spin reverses and
+> the whole driver frame mirrors, so "W" appears to drive *away* from the LED — this is
+> expected, not a phase bug (check `input.accel_z`: ≈ −20 counts means inverted). Only
+> tune `DRIFT_PHASE_OFFSET_RADS` for a direction error seen **upright**.
+>
+> **Translate at a moderate spin, not maximum.** Two effects weaken translation at high
+> RPM: shrinking DShot headroom *and* motor/ESC bandwidth (the wheels can't change speed
+> fast enough — measured in the logs, and it also rotates the effective direction with
+> speed). Bring throttle up only until the LED is steady and spin is stable.
+
 ### Step 4: Tune drift parameters
 
 See `TUNING.md` for the full drift tuning procedure. Constants are in `sunshine_core/include/sunshine_core.h`:
@@ -374,7 +391,7 @@ Tune in this order:
 
 1. Leave `DRIFT_PHASE_OFFSET_RADS = 0.0f` and `DRIFT_PHASE_LEAD_S = 0.0f` for the first run. Use a moderate spin throttle where the robot is stable but not near max.
 2. If W produces a consistent sideways/backwards drift, adjust `DRIFT_PHASE_OFFSET_RADS` in 15-30 degree steps (`0.26f` to `0.52f` rad). Positive values advance the motor waveform in the code's CCW-positive phase convention; if the correction gets worse, use the opposite sign.
-3. If the correct offset changes with spin speed, tune `DRIFT_PHASE_LEAD_S`. At 240 rad/s, `0.001f` seconds is about 0.24 rad / 14 degrees of phase lead. Start with 1-2 ms changes, not large jumps.
+3. If the correct offset changes with spin speed, tune `DRIFT_PHASE_LEAD_S`. At 240 rad/s, `0.001f` seconds is about 0.24 rad / 14 degrees of phase lead. Start with 1-2 ms changes, not large jumps. **Data-derived starting point:** `tools/replay/erpm_bandwidth.py` measures the DShot→eRPM lag on a real log (~15-25 ms, but that *includes* eRPM telemetry reporting lag, so it's an upper bound). Begin near the low end (`0.005f`) and confirm the sign on hardware — the direction effect can't be replayed (logs have no robot position).
 4. After direction is repeatable, raise or lower `DRIFT_AMPLITUDE`. If the robot still barely moves but the direction is correct, increase it. If spin speed collapses or it chatters, decrease it.
 5. Adjust `DRIFT_PLATEAU_WIDTH` only after amplitude/phase are sane. Higher values dwell longer at max command and approach a rectangle; lower values widen the ramps and are gentler for the ESC/wheel.
 

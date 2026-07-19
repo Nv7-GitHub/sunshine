@@ -99,6 +99,10 @@ function buildOpts(
         stroke: COLORS[i % COLORS.length],
         width:  1.5,
         scale:  scaleKey(channelUnits[i] ?? ''),
+        // Coarse real.* series are sparse on the union x-axis; connect across the
+        // null gaps so they draw as lines between the 100 Hz samples. Dense series
+        // have no gaps, so this is a no-op for them.
+        spanGaps: true,
       })),
     ],
     hooks: {
@@ -197,11 +201,24 @@ export default function UPlotCanvas({ channels, channelUnits, width, height, hea
       // recreated for a different channel set in the meantime).
       if (!uRef.current || reqChannels !== channelsRef.current) return;
 
-      const times = allPts[0]?.map(([t]) => t) ?? [];
-      const series: number[][] = [
-        times,
-        ...allPts.map(pts => pts.slice(0, times.length).map(([, v]) => v)),
-      ];
+      // Build a UNION x-axis so channels sampled at different rates align: the
+      // real.* series is coarse (100 Hz, two samples/frame) while inputs / var.* /
+      // rep.* are 1 kHz. Each series is null where it has no sample at a given
+      // time; `spanGaps` (buildOpts) draws lines across those nulls so the coarse
+      // real series reads as straight lines between its genuine samples rather than
+      // being stretched to the dense grid. When every channel shares one grid (the
+      // common case) the union is just that grid, so this costs nothing extra.
+      const tset = new Set<number>();
+      for (const pts of allPts) for (const p of pts) tset.add(p[0]);
+      const times = Array.from(tset).sort((a, b) => a - b);
+      const tIndex = new Map<number, number>();
+      for (let i = 0; i < times.length; i++) tIndex.set(times[i], i);
+      const series: (number | null)[][] = [times];
+      for (const pts of allPts) {
+        const arr: (number | null)[] = new Array(times.length).fill(null);
+        for (const [t, v] of pts) arr[tIndex.get(t)!] = v;
+        series.push(arr);
+      }
 
       if (wasLive) {
         // Scale is driven by the RAF loop for smooth 60 Hz scrolling.

@@ -33,20 +33,25 @@ The host app shows the current log file path in the logging status bar.
 
 ## Log file format (for reference)
 
-**Current format is FILE_FORMAT_VER 3 (95-byte header).** `sizeof_state` is read
-from the header, so the file format is unchanged when SunshineState grows — only
-the schema_version bumps. Readers must still handle VER 2 (one state + a vars
-block) and VER 1 (93-byte header) for old logs, AND any older sizeof_state
-(schema v3 = 44, v2 = 60) — always use the header's sizeof_state, never a constant.
+**Current format is FILE_FORMAT_VER 3 (95-byte header), schema v5.** `sizeof_state`
+and `sizeof_input` are read from the header, so the file format is unchanged when a
+struct grows — only the schema_version bumps. Readers must still handle VER 2 (one
+state + a vars block) and VER 1 (93-byte header) for old logs, AND any older
+sizeof_state (schema v4 = 52, v3 = 44, v2 = 60) — always use the header's sizeof,
+never a constant. **Schema v5 also widened `batt_offset` int8→int16** (a mid-struct
+resize), so the input reader is schema-aware: pre-v5 logs (`schema_version < 5`,
+`sizeof_input` 29) use the old int8 layout with `mode`/`dshot_*_q` one byte earlier,
+and the old int8 battery LSB is remapped to the v5 int16 scale (×20.5). See
+`replay.rs::read_input` / `replay.c::unpack_input`.
 
 ```
 Header (95 bytes, FILE_FORMAT_VER 3):
   magic[5]        = "SHINE"
   file_format     = 3 (uint16 LE)           ← 2 in older files
   header_size     = 95 (uint16 LE)          ← was 93 in VER 1
-  schema_version  = uint32 LE               (bumped when structs change; 4 now)
-  sizeof_input    = 29 (uint16 LE)
-  sizeof_state    = 52 (uint16 LE)          ← schema v4 (was 44 in v3, 60 in v2); see SunshineState
+  schema_version  = uint32 LE               (bumped when structs change; 5 now)
+  sizeof_input    = 30 (uint16 LE)          ← schema v5 (was 29; batt_offset int8→int16)
+  sizeof_state    = 56 (uint16 LE)          ← schema v5 (was 52 in v4, 44 in v3, 60 in v2); see SunshineState
   sizeof_vars     = 0  (uint16 LE)          ← VER 3: NO vars block (was 56 in VER 2)
   created_at_ms   = Unix timestamp ms (uint64 LE)
   source          = 0=live, 1=replay, 2=simulation (uint8)
@@ -54,22 +59,24 @@ Header (95 bytes, FILE_FORMAT_VER 3):
   label[64]       = null-terminated UTF-8
   num_inputs      = uint16 LE               ← inputs per frame (20)
 
-Frame (689 bytes at num_inputs=20, schema v4): VER 3 carries TWO states, no vars
+Frame (717 bytes at num_inputs=20, schema v5): VER 3 carries TWO states, no vars
   frame_id         = uint32 LE, monotonic (gaps = dropped telemetry)
   frame_flags      = uint8
-  SunshineState    = 52 bytes  (REAL state at the START of the frame)
-  SunshineState    = 52 bytes  (REAL state at the MIDPOINT input → 100 Hz state)
-  SunshineInput×20 = 580 bytes (20 consecutive 1 kHz inputs)
+  SunshineState    = 56 bytes  (REAL state at the START of the frame)
+  SunshineState    = 56 bytes  (REAL state at the MIDPOINT input → 100 Hz state)
+  SunshineInput×20 = 600 bytes (20 consecutive 1 kHz inputs, 30 B each)
 ```
 
 Two state snapshots per 50 Hz frame give the **real filter state at 100 Hz**.
 **Vars are NOT logged** — they are a pure function of (state, inputs); the host
 recomputes them for a *replayed* series (filter free-running at 1 kHz from the
-first frame). The *real* series is the logged state itself, **held** at each 100 Hz
-snapshot (a staircase — not stepped), so it reads distinctly from the replayed
-curve. The brain sends one 50 Hz packet per 20 inputs over **ESP-NOW v2**
-(687-byte payload = 3 + 2×52 + 20×29 at schema v4; ESP-NOW v2 / IDF ≥ 5.4 is
-required for the >250-byte payload).
+first frame). The *real* series is emitted **only at the two 100 Hz snapshots per
+frame** (frame start + midpoint) and drawn as straight lines between them — a
+*coarse* version of the replayed curve, not a fabricated 1 kHz staircase (the old
+held-and-re-stepped approach produced steps plus per-tick noise and matched the
+replayed dot count; see `pipeline.rs` `real_valid`). The brain sends one 50 Hz
+packet per 20 inputs over **ESP-NOW v2** (715-byte payload = 3 + 2×56 + 20×30 at
+schema v5; ESP-NOW v2 / IDF ≥ 5.4 is required for the >250-byte payload).
 
 **Frame size formula:** `5 + sizeof_state × num_states + sizeof_input × num_inputs + sizeof_vars`
 where `num_states = 2` for VER ≥ 3 else 1, and `sizeof_vars = 0` for VER ≥ 3.
@@ -92,34 +99,41 @@ float  heading_deg;         ← 4 bytes (added in schema v2)
 
 ## Channels available for plotting / inspection
 
-The host app channel selector groups channels into **REAL** and **REPLAYED**
-series (plus shared **Inputs**):
+The host app channel selector groups channels into **Inputs**, **Variables**,
+**REAL**, and **REPLAYED**:
 
-- **REAL** (`real.*`): the **logged real state itself**, held at each 100 Hz
-  snapshot (a staircase — NOT re-stepped through `sunshine_step`). This is the
-  ground truth the robot actually recorded; `real.*` vars are derived from that
-  held state (pure function of state+input). Because it isn't a free-run, it stays
-  honest even when the code changes, and it reads distinctly (steppy, 100 Hz) from
-  the smooth replayed curve.
+- **REAL** (`real.*`): the **logged real state**, sampled at the two 100 Hz
+  snapshots per frame and drawn as straight lines between them (coarse). This is the
+  ground truth the robot recorded; `real.*` vars at a snapshot = one `sunshine_step`
+  from that snapshot's state. It stays honest when the code changes and reads
+  distinctly (coarse) from the smooth 1 kHz replayed curve.
 - **REPLAYED** (`rep.*`): a filter free-running continuously at 1 kHz from the first
   frame via the *current* `sunshine_step`. Diff it against `real.*` to see the
   effect of a code/tuning change, or to view the 1 kHz detail between snapshots.
+- **VARIABLES** (`var.*`): quantities that are a pure function of the **inputs only**
+  (no filter state), so real and replayed are identical — one shared 1 kHz series.
 
-**Inputs (1 kHz, shared — no real/replayed split):**
-- `input.accel_x/y/z`, `input.accel_x/y/z_ms2` — raw ADXL375 counts / m·s⁻²
+**Inputs (1 kHz, shared — raw sensor data):**
+- `input.accel_x/y/z` — raw ADXL375 counts
 - `input.mag_x/y`, `input.mag_magnitude` — raw LIS3MDL counts / µT
-- `input.erpm_left/right`, `input.ctrl_x/y/theta`, `input.ctrl_throttle`
-- `input.rssi`, `input.batt_offset`
+- `input.erpm_left/right` (raw f16), `input.ctrl_x/y/theta`, `input.ctrl_throttle`
+- `input.rssi`, `input.batt_offset` (int16 LSB, schema v5)
 
-**REAL state + vars** (`real.*`) — and the identical set under **`rep.*`**:
+**Variables (1 kHz, shared — derived from inputs, no real/replayed split):**
+- `var.omega_from_accel` (rad/s), `var.centripetal_ms2` (m·s⁻²)
+- `var.accel_x/y/z_ms2` (m·s⁻²) — raw counts × ADXL scale
+- `var.batt_voltage` (V), `var.erpm_left/right` (RPM)
+
+**REAL state + vars** (`real.*`) — and the identical set under **`rep.*`** (these
+depend on filter STATE, so they differ between the recorded run and a re-run):
 - State: `kf_theta` (rad), `kf_omega` (rad/s), `theta_offset` (rad)
-- Vars: `est_theta`, `est_omega`, `heading_deg`, `mag_angle`, `mag_x_filt`, `mag_y_filt`,
-  `omega_from_accel`, `centripetal_ms2`, `dshot_left`, `dshot_right`,
-  `batt_voltage`, `erpm_left`, `erpm_right`
+- Vars: `heading_deg`, `mag_angle`, `mag_x_filt`, `mag_y_filt`, `dshot_left`,
+  `dshot_right`
 
 So e.g. `real.dshot_left` vs `rep.dshot_left` compares the real motor command to
 what the current code would output; `real.kf_theta` vs `rep.kf_theta` shows
-heading-estimate divergence.
+heading-estimate divergence. Battery / eRPM / ω-from-accel / centripetal moved to
+`var.*` because they're input-only (identical real vs replayed).
 
 **Offline `replay.exe` CSV columns** (single series; see the harness section
 below): `time_us, mode, ctrl_x, ctrl_y, ctrl_theta, ctrl_throttle,

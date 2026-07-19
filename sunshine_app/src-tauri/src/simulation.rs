@@ -35,7 +35,7 @@ const ADXL_MAX_G:   f64 = 200.0;           // ADXL375 physical ±200g range
 const ADXL_MAX_CNT: f64 = ADXL_MAX_G / (49e-3);  // ≈ 4082 counts
 const MAG_SCALE:    f64 = 0.058;
 const BATT_REF_V:   f64 = 7.6;
-const BATT_SCALE:   f64 = 0.0205;
+const BATT_SCALE:   f64 = 0.001;   // schema v5: int16, 1 mV/LSB (was 0.0205 int8)
 const POLE_PAIRS:   f64 = 7.0;             // 14-pole motor → 7 pole pairs
 
 pub struct Simulation {
@@ -134,7 +134,7 @@ impl Simulation {
 
         let i_total = self.supply_current(last_vars.dshot_cmd_left, last_vars.dshot_cmd_right, V_NOMINAL);
         let v_batt  = V_NOMINAL - i_total * R_INTERNAL;
-        let batt_offset = ((v_batt - BATT_REF_V) / BATT_SCALE).round().clamp(-127.0, 127.0) as i8;
+        let batt_offset = ((v_batt - BATT_REF_V) / BATT_SCALE).round().clamp(-32768.0, 32767.0) as i16;
 
         SunshineInput {
             time_us:       self.time_us as u32,

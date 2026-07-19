@@ -17,9 +17,12 @@ int main(void) {
     ASSERT_NEAR(sunshine_accel_to_ms2(0),    0.0f,   0.001f, "accel 0 → 0 m/s²");
     ASSERT_NEAR(sunshine_accel_to_ms2(100),  100.0f * ADXL_SCALE_MS2, 0.001f, "accel scale");
     ASSERT_NEAR(sunshine_mag_to_ut(1000),    1000.0f * MAG_SCALE_UT,  0.001f, "mag scale");
-    ASSERT_NEAR(sunshine_batt_to_v(0),       7.6f,   0.001f, "batt offset 0 → 7.6V");
-    ASSERT_NEAR(sunshine_batt_to_v(127),     7.6f + 127*0.0205f, 0.001f, "batt max");
-    ASSERT_NEAR(sunshine_batt_to_v(-127),    7.6f - 127*0.0205f, 0.001f, "batt min");
+    /* Battery is int16 @ BATT_SCALE_V V/LSB relative to 7.6 V (schema v5). */
+    ASSERT_NEAR(sunshine_batt_to_v(0),       BATT_OFFSET_REF_V,   0.001f, "batt offset 0 → 7.6V");
+    ASSERT_NEAR(sunshine_batt_to_v(2600),    BATT_OFFSET_REF_V + 2600*BATT_SCALE_V, 0.001f, "batt +2600 → ~10.2V");
+    ASSERT_NEAR(sunshine_batt_to_v(-2600),   BATT_OFFSET_REF_V - 2600*BATT_SCALE_V, 0.001f, "batt -2600 → ~5.0V");
+    /* Resolution is now ADC-limited (~2.4 mV), not the old 20.5 mV int8 step. */
+    ASSERT_NEAR(sunshine_batt_to_v(1) - sunshine_batt_to_v(0), BATT_SCALE_V, 1e-6f, "batt LSB = 1 mV");
 
     TEST_RESULTS();
 }

@@ -46,11 +46,13 @@ void nav_control_task(void *) {
         in.mag_z   = m.z;
 
         // Battery voltage → batt_offset (see sunshine_core.h for scale)
-        // batt_offset encodes (voltage - 7.6V) / 0.0205V per LSB
+        // v5: int16, batt_offset encodes (voltage - 7.6V) / 0.001V per LSB.
+        // The 2S span (~5–10.2V) maps to ±~2600 LSB, well inside int16; clamp is
+        // just an overflow guard.
         float batt_offset_f = (v - BATT_OFFSET_REF_V) / BATT_SCALE_V;
-        in.batt_offset = (int8_t)(batt_offset_f < -128.0f ? -128 :
-                                  batt_offset_f >  127.0f ?  127 :
-                                  (int8_t)batt_offset_f);
+        in.batt_offset = (int16_t)(batt_offset_f < -32768.0f ? -32768 :
+                                   batt_offset_f >  32767.0f ?  32767 :
+                                   (int16_t)batt_offset_f);
 
         // eRPM as float16 using sunshine_core helper
         in.erpm_left  = sunshine_f32_to_f16(dshot_erpm_left());

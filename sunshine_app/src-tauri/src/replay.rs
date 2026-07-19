@@ -87,7 +87,7 @@ pub fn read_frame(f: &mut File, meta: &LogMetadata) -> std::io::Result<(Telemetr
     let mut inputs = [SunshineInput::default(); INPUTS_PER_FRAME];
     let n = (meta.num_inputs as usize).min(INPUTS_PER_FRAME);
     for inp in inputs[..n].iter_mut() {
-        *inp = read_padded::<SunshineInput>(f, meta.sizeof_input as usize)?;
+        *inp = read_input(f, meta)?;
     }
     // Skip any extra inputs from old files that had more than INPUTS_PER_FRAME
     for _ in n..meta.num_inputs as usize {
@@ -132,6 +132,38 @@ pub fn log_time_range(meta: &LogMetadata) -> std::io::Result<(u64, u64)> {
     let end_us = if last_us < start_us { last_us + 0x1_0000_0000 } else { last_us };
 
     Ok((start_us, end_us))
+}
+
+/// Read one SunshineInput, honouring the schema version. The layout is stable
+/// (append-only) for schema >= 5, so a raw padded copy works. Schema < 5 stored
+/// batt_offset as int8 at byte 25, which shifts dshot_left_q/dshot_right_q/mode one
+/// byte earlier than the v5 struct — a raw copy would corrupt `mode` (→ everything
+/// replays DISABLED). Bytes [0..25] (time_us..ctrl_throttle) are identical in both
+/// layouts, so copy those raw, then remap the tail and rescale the int8 battery
+/// offset into v5's finer int16 LSBs (v4 step 0.0205 V → v5 step 0.001 V, ratio 20.5).
+fn read_input(f: &mut File, meta: &LogMetadata) -> std::io::Result<SunshineInput> {
+    let mut buf = vec![0u8; meta.sizeof_input as usize];
+    f.read_exact(&mut buf)?;
+    let mut inp = SunshineInput::default();
+    if meta.schema_version >= 5 {
+        let n = size_of::<SunshineInput>().min(buf.len());
+        unsafe {
+            std::ptr::copy_nonoverlapping(buf.as_ptr(), &mut inp as *mut _ as *mut u8, n);
+        }
+    } else {
+        let prefix = 25usize.min(buf.len());
+        unsafe {
+            std::ptr::copy_nonoverlapping(buf.as_ptr(), &mut inp as *mut _ as *mut u8, prefix);
+        }
+        if buf.len() >= 29 {
+            let old_batt = buf[25] as i8 as f32;
+            inp.batt_offset   = (old_batt * (0.0205_f32 / 0.001_f32)).round() as i16;
+            inp.dshot_left_q  = buf[26];
+            inp.dshot_right_q = buf[27];
+            inp.mode          = buf[28];
+        }
+    }
+    Ok(inp)
 }
 
 fn read_padded<T: Default + Copy>(f: &mut File, file_size: usize) -> std::io::Result<T> {
