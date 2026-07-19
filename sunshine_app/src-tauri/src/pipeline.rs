@@ -9,9 +9,11 @@ use std::io::{Seek, SeekFrom};
 pub struct DataPoint {
     pub time_us:    u64,
     pub input:      SunshineInput,
-    // REAL series: a filter re-anchored to the logged real state at the start of
-    // every frame (and again at its midpoint → 100 Hz). Reproduces the robot's
-    // own 1 kHz trajectory; `real_vars` are the vars the robot effectively had.
+    // REAL series: the logged real state itself, HELD at the most recent snapshot
+    // (frame start / midpoint → 100 Hz). This is the actual recorded state — a
+    // staircase — NOT stepped, so it's visibly distinct from the smooth 1 kHz
+    // replayed curve instead of a fabricated free-run identical to it. `real_vars`
+    // are derived from that held state (vars are a pure fn of state+input).
     pub real_state: SunshineState,
     pub real_vars:  SunshineVars,
     // REPLAYED series: a filter free-running continuously from the first frame
@@ -73,24 +75,25 @@ impl Pipeline {
     }
 
     pub fn ingest_frame(&mut self, frame: &TelemetryFrame) {
-        // Two filters run per frame (see DataPoint):
-        //  REAL     — re-anchored to the logged real state at the frame start and
-        //             again at the midpoint (frame.state_mid → 100 Hz). This keeps
-        //             it a faithful high-res copy of the robot's own state instead
-        //             of a free-running estimate that drifts (dead-reckoned theta
-        //             has no absolute reference at rest, and host vs ESP32 float
-        //             math differs in the last ULPs). Re-anchoring also self-heals
-        //             dropped packets (the next one re-anchors).
-        //  REPLAYED — seeded once from the first frame, then free-runs. Lets a
-        //             changed sunshine_step be validated across the whole record.
+        // Per frame (see DataPoint):
+        //  REAL     — the logged real state, HELD at each snapshot (frame start, then
+        //             midpoint → 100 Hz). Shows the actual recorded state as-is (a
+        //             staircase), never stepped/fabricated — so it reads distinctly
+        //             from the replayed curve and stays honest when code changes.
+        //  REPLAYED — seeded once from the first frame, then free-runs at 1 kHz. Lets
+        //             a changed sunshine_step be validated across the whole record.
         self.real_state = frame.state;
         if !self.rep_seeded { self.rep_state = frame.state; self.rep_seeded = true; }
 
         let mid = INPUTS_PER_FRAME / 2;
         for (i, input) in frame.inputs.iter().enumerate() {
-            if i == mid { self.real_state = frame.state_mid; }  // 100 Hz re-anchor
+            if i == mid { self.real_state = frame.state_mid; }  // 100 Hz snapshot (held, not stepped)
             let time_us   = self.expand_hw_time(input.time_us);
-            let real_vars = brain_step(input, &mut self.real_state);
+            // REAL = the logged snapshot state, HELD (see step_point): show the real
+            // recorded 100 Hz state, not a re-anchored 1 kHz free-run. Vars are still
+            // derived from it (pure fn of state+input) via a throwaway copy.
+            let mut real_tmp = self.real_state;
+            let real_vars = brain_step(input, &mut real_tmp);
             let rep_vars  = brain_step(input, &mut self.rep_state);
 
             let dp = DataPoint {
@@ -284,7 +287,7 @@ impl Pipeline {
                 }
                 last_hw_us = hw;
                 let time_us = epoch_us + hw as u64;
-                let dp = step_point(time_us, input, &mut real_state, &mut rep_state);
+                let dp = step_point(time_us, input, &real_state, &mut rep_state);
 
                 if time_us < start_us { continue; }
                 if time_us > end_us { return Some(downsample_min_max(raw, max_points)); }
@@ -374,12 +377,16 @@ impl Pipeline {
     }
 }
 
-/// Step both filters one input and build the DataPoint. `real_state` is expected
-/// to be re-anchored to the logged real state at frame boundaries by the caller;
-/// `rep_state` free-runs.
+/// Build the DataPoint for one input. REAL = the logged real state, HELD at the
+/// most recent snapshot (frame start / midpoint) by the caller — NOT stepped. This
+/// shows the actual recorded 100 Hz state (a staircase), not a re-anchored 1 kHz
+/// free-run that fabricates a trajectory indistinguishable from the replayed one.
+/// `real_vars` are still derived from that held state (vars are a pure function of
+/// state+input, never logged). `rep_state` free-runs (the 1 kHz recomputation).
 fn step_point(time_us: u64, input: &SunshineInput,
-              real_state: &mut SunshineState, rep_state: &mut SunshineState) -> DataPoint {
-    let real_vars = brain_step(input, real_state);
+              real_state: &SunshineState, rep_state: &mut SunshineState) -> DataPoint {
+    let mut real_tmp = *real_state;                 // derive vars without evolving the held state
+    let real_vars = brain_step(input, &mut real_tmp);
     let rep_vars  = brain_step(input, rep_state);
     DataPoint {
         time_us,
@@ -426,7 +433,7 @@ pub fn build_replay_cache(meta: &LogMetadata, mut on_progress: impl FnMut(f32)) 
             }
             last_hw_us = hw;
             let time_us = epoch_us + hw as u64;
-            cache.push(step_point(time_us, input, &mut real_state, &mut rep_state));
+            cache.push(step_point(time_us, input, &real_state, &mut rep_state));
         }
         if i % 200 == 0 || i == total - 1 {
             on_progress((i + 1) as f32 / total as f32);

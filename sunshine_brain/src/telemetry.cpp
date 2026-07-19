@@ -72,7 +72,8 @@ static volatile uint32_t last_ctrl_ms = 0;
 // filter state at 100 Hz (one at the first input, one at the midpoint) — see the
 // host replay/logging code. vars are NOT sent: they are a pure function of
 // (state, inputs) and the host recomputes them.
-// Frame layout: frame_id(2) + type(1) + SunshineState×2(88) + SunshineInput[20](580) = 671 bytes.
+// Frame layout: frame_id(2) + type(1) + SunshineState×2(104) + SunshineInput[20](580) = 687 bytes
+// (schema v4: SunshineState is 52 bytes; sizes are derived below, never hard-coded).
 static constexpr int  INPUTS_PER_FRAME  = 20;
 static constexpr int  FRAME_MID_INPUT   = INPUTS_PER_FRAME / 2;   // 2nd state snapshot here
 static constexpr int  STATE_SIZE        = (int)sizeof(SunshineState);

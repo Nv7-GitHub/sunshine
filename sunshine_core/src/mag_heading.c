@@ -81,4 +81,19 @@ void mag_heading_step(const SunshineInput *in, SunshineState *s, SunshineVars *v
      * with kf_theta (CCW positive). The band-pass's constant group-delay phase and
      * the declination offset are both constant, absorbed by theta_offset. */
     v->mag_angle = atan2f(-my_bp, mx_bp);
+
+    /* Spin-SIGN recovery. The accelerometer measures only |ω| (centripetal
+     * magnitude), so it cannot tell CW from CCW; the magnetometer can, because the
+     * field vector's rotation SENSE reverses when the robot is inverted. Track a
+     * low-passed SIGNED mag rotation rate here; brain.c copies this sign onto the
+     * (unsigned) omega_from_accel before the Kalman rate update, so kf_omega and
+     * hence kf_theta wind the correct way in either orientation. Only integrated
+     * while the mag is valid (spinning fast enough for a clean heading); mag_ang_prev
+     * still advances every tick so the first valid delta is a true one-tick step. */
+    float dma = v->mag_angle - s->mag_ang_prev;
+    while (dma >  M_PI_F) dma -= 2.0f * M_PI_F;
+    while (dma < -M_PI_F) dma += 2.0f * M_PI_F;
+    s->mag_ang_prev = v->mag_angle;
+    if (v->mag_valid)
+        s->spin_rate_lp += 0.02f * (dma * 1000.0f - s->spin_rate_lp);  /* ~8 Hz LP */
 }

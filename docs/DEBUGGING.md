@@ -33,17 +33,20 @@ The host app shows the current log file path in the logging status bar.
 
 ## Log file format (for reference)
 
-**Current format is FILE_FORMAT_VER 3 (95-byte header).** Readers must still
-handle VER 2 (one state + a vars block) and VER 1 (93-byte header) for old logs.
+**Current format is FILE_FORMAT_VER 3 (95-byte header).** `sizeof_state` is read
+from the header, so the file format is unchanged when SunshineState grows — only
+the schema_version bumps. Readers must still handle VER 2 (one state + a vars
+block) and VER 1 (93-byte header) for old logs, AND any older sizeof_state
+(schema v3 = 44, v2 = 60) — always use the header's sizeof_state, never a constant.
 
 ```
 Header (95 bytes, FILE_FORMAT_VER 3):
   magic[5]        = "SHINE"
   file_format     = 3 (uint16 LE)           ← 2 in older files
   header_size     = 95 (uint16 LE)          ← was 93 in VER 1
-  schema_version  = uint32 LE               (bumped when structs change)
+  schema_version  = uint32 LE               (bumped when structs change; 4 now)
   sizeof_input    = 29 (uint16 LE)
-  sizeof_state    = 44 (uint16 LE)          ← schema v3 (was 60); see SunshineState
+  sizeof_state    = 52 (uint16 LE)          ← schema v4 (was 44 in v3, 60 in v2); see SunshineState
   sizeof_vars     = 0  (uint16 LE)          ← VER 3: NO vars block (was 56 in VER 2)
   created_at_ms   = Unix timestamp ms (uint64 LE)
   source          = 0=live, 1=replay, 2=simulation (uint8)
@@ -51,21 +54,22 @@ Header (95 bytes, FILE_FORMAT_VER 3):
   label[64]       = null-terminated UTF-8
   num_inputs      = uint16 LE               ← inputs per frame (20)
 
-Frame (673 bytes at num_inputs=20, schema v3): VER 3 carries TWO states, no vars
+Frame (689 bytes at num_inputs=20, schema v4): VER 3 carries TWO states, no vars
   frame_id         = uint32 LE, monotonic (gaps = dropped telemetry)
   frame_flags      = uint8
-  SunshineState    = 44 bytes  (REAL state at the START of the frame)
-  SunshineState    = 44 bytes  (REAL state at the MIDPOINT input → 100 Hz state)
+  SunshineState    = 52 bytes  (REAL state at the START of the frame)
+  SunshineState    = 52 bytes  (REAL state at the MIDPOINT input → 100 Hz state)
   SunshineInput×20 = 580 bytes (20 consecutive 1 kHz inputs)
 ```
 
 Two state snapshots per 50 Hz frame give the **real filter state at 100 Hz**.
 **Vars are NOT logged** — they are a pure function of (state, inputs); the host
-recomputes them, both a *real* series (filter re-anchored to the logged state
-each frame + midpoint) and a *replayed* series (filter free-running from the
-first frame). The brain sends one 50 Hz packet per 20 inputs over **ESP-NOW v2**
-(671-byte payload = 3 + 2×44 + 20×29; ESP-NOW v2 / IDF ≥ 5.4 is required for the
->250-byte payload).
+recomputes them for a *replayed* series (filter free-running at 1 kHz from the
+first frame). The *real* series is the logged state itself, **held** at each 100 Hz
+snapshot (a staircase — not stepped), so it reads distinctly from the replayed
+curve. The brain sends one 50 Hz packet per 20 inputs over **ESP-NOW v2**
+(687-byte payload = 3 + 2×52 + 20×29 at schema v4; ESP-NOW v2 / IDF ≥ 5.4 is
+required for the >250-byte payload).
 
 **Frame size formula:** `5 + sizeof_state × num_states + sizeof_input × num_inputs + sizeof_vars`
 where `num_states = 2` for VER ≥ 3 else 1, and `sizeof_vars = 0` for VER ≥ 3.
@@ -89,14 +93,17 @@ float  heading_deg;         ← 4 bytes (added in schema v2)
 ## Channels available for plotting / inspection
 
 The host app channel selector groups channels into **REAL** and **REPLAYED**
-series (plus shared **Inputs**). Both series are host-computed via `sunshine_step`:
+series (plus shared **Inputs**):
 
-- **REAL** (`real.*`): a filter re-anchored to the logged real state at the start
-  of every frame and again at its midpoint (100 Hz). Reproduces the robot's own
-  1 kHz trajectory (given matching code).
-- **REPLAYED** (`rep.*`): a filter free-running continuously from the first frame.
-  Shows what the *current* `sunshine_step` produces across the whole record — diff
-  it against `real.*` to see the effect of a code/tuning change.
+- **REAL** (`real.*`): the **logged real state itself**, held at each 100 Hz
+  snapshot (a staircase — NOT re-stepped through `sunshine_step`). This is the
+  ground truth the robot actually recorded; `real.*` vars are derived from that
+  held state (pure function of state+input). Because it isn't a free-run, it stays
+  honest even when the code changes, and it reads distinctly (steppy, 100 Hz) from
+  the smooth replayed curve.
+- **REPLAYED** (`rep.*`): a filter free-running continuously at 1 kHz from the first
+  frame via the *current* `sunshine_step`. Diff it against `real.*` to see the
+  effect of a code/tuning change, or to view the 1 kHz detail between snapshots.
 
 **Inputs (1 kHz, shared — no real/replayed split):**
 - `input.accel_x/y/z`, `input.accel_x/y/z_ms2` — raw ADXL375 counts / m·s⁻²
@@ -132,9 +139,19 @@ only on the rows corresponding to the frame-start and midpoint state snapshots.
 
 ### Scenario 1: LED sweeping — theta not locking
 
+**FIRST check spin DIRECTION (schema v4 fix).** `omega_from_accel = √(a_c/r)` is an
+unsigned MAGNITUDE — the accel cannot tell CW from CCW. When the robot is **inverted**
+(flipped: same chassis spin, opposite world spin), the magnetometer sees the reversed
+rotation but the accel doesn't, so a heading slaved only to the accel counter-rotates
+against the field at ~2× the spin rate (a total smear). Fix (`brain.c` + `mag_heading.c`):
+the spin SIGN is taken from the mag rotation sense (`state.spin_rate_lp`) and copied onto
+`omega_from_accel`; `mag_valid` uses `|kf_omega|`. Symptom of a regression here: `kf_theta`
+winding opposite to the raw-mag field. Verify in replay that the LED heading rate matches
+the raw-mag winding for BOTH orientations (drive the robot inverted in a test log).
+
 **What to look at:**
 1. `vars.mag_valid` — is it staying 1? If it drops, omega fell below the mag threshold (480 RPM).
-2. `vars.est_omega` vs `vars.omega_from_accel` — does omega track correctly?
+2. `vars.est_omega` vs `vars.omega_from_accel` — does omega track (same sign)? `state.spin_rate_lp` sign = mag-derived spin direction.
 3. `vars.mag_x_filt` and `vars.mag_y_filt` — the band-passed Earth sine; their magnitude `sqrt(x²+y²)` should be a steady ~18–22 µT. If it collapses, the spin is below the mag threshold, or `omega_from_accel` is so far off that the spin frequency has fallen outside the ±33% tracking band.
 4. `state.kf_P[0]` — is the angle covariance decreasing? It should drop from 100 toward near-zero after the mag update engages.
 
@@ -269,9 +286,18 @@ with `--reseed` to validate replay reproduces the robot bit-for-bit.
 **`--reseed` vs continuous:** `--reseed` seeds state from each frame's logged
 "state at start" and should reproduce the stored vars *exactly* (replay
 determinism check). Continuous free-runs from the first frame; to keep that
-faithful when the log has dropped 1 kHz inputs, the harness **dead-reckons the
-filter across detected timestamp gaps** (the robot ran 1 kHz continuously — only
-the telemetry link dropped frames). Use `analyze.py gaps` to see the drop rate.
+faithful when the log has a hole in the 1 kHz inputs, the harness **dead-reckons
+the filter across detected timestamp gaps**. Use `analyze.py gaps` to see the rate.
+
+**A timestamp gap has TWO possible causes — check `frame_id` to tell them apart:**
+- **Dropped telemetry** — `frame_id` jumps by >1 across the gap. The robot ran
+  1 kHz fine; the ESP-NOW link lost whole frames. (Reliable unicast makes this rare.)
+- **Robot nav-loop STALL** — `frame_id` is *contiguous* across the gap, but the time
+  between the last input of one frame and the first of the next is >1 ms. The robot
+  itself stopped sampling. A known cause: `Serial.printf` (USB-CDC) blocking the
+  1 kHz loop when no host drains the TX FIFO — fixed with `Serial.setTxTimeoutMs(0)`
+  + `if (Serial)` guards (main.cpp / nav_control.cpp). A stall means the *robot's*
+  control/heading froze for that long, not just a plotting hole — investigate it.
 
 **Example analyses:**
 ```bash

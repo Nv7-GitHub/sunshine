@@ -3,6 +3,7 @@
 #include <SPI.h>
 #include <Adafruit_LIS3MDL.h>
 #include <Arduino.h>
+#include <math.h>
 
 static SPIClass        hspi(HSPI);
 static Adafruit_LIS3MDL mag;
@@ -47,6 +48,14 @@ MagSample lis3mdl_read(void) {
 }
 
 float batt_read_v(void) {
-    int raw = analogRead(PIN_BATT_ADC);
-    return (float)raw * BATT_ADC_SCALE;
+    int   raw = analogRead(PIN_BATT_ADC);
+    float v   = (float)raw * BATT_ADC_SCALE;
+    // Single-pole IIR low-pass (see config.h BATT_LP_HZ). Rejects the ~50 Hz
+    // (2×-spin) EMI tone that otherwise makes the battery trace pure noise, while
+    // passing real sag. alpha = 1 - exp(-2*pi*fc/fs), fs = 1 kHz nav loop.
+    static float       v_lp  = -1.0f;
+    static const float alpha = 1.0f - expf(-2.0f * (float)M_PI * BATT_LP_HZ / 1000.0f);
+    if (v_lp < 0.0f) v_lp = v;               // seed on first call
+    v_lp += alpha * (v - v_lp);
+    return v_lp;
 }

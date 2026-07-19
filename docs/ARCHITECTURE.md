@@ -75,8 +75,8 @@ sunshine/
 ```
 LIVE:       Brain sensors
               → 1 kHz sunshine_step() on ESP32
-              → ESP-NOW v2 (50 Hz, 20 inputs/frame, 671 B) → Receiver
-              → USB serial (671 B payload + 5 B framing) → Tauri serial.rs
+              → ESP-NOW v2 (50 Hz, 20 inputs/frame, 687 B) → Receiver
+              → USB serial (687 B payload + 5 B framing) → Tauri serial.rs
               → pipeline.rs: brain_step() × 20 → ring buffer → live_update event
               → React GraphPanel
 
@@ -137,10 +137,10 @@ Nothing crosses the core/platform boundary except through these three structs. A
 | Struct | Size | Direction | Description |
 |--------|------|-----------|-------------|
 | `SunshineInput` | 29 B | Hardware → core | 1 kHz sensor frame |
-| `SunshineState` | 44 B | Core ↔ core | Filter history (Kalman + mag band-pass state) |
+| `SunshineState` | 52 B | Core ↔ core | Filter history (Kalman + mag band-pass + spin-sign state) |
 | `SunshineVars` | 56 B | Core → hardware | Derived variables, computed each step |
 
-`SunshineVars` is never telemetered in current schema v3 logs — it is always recomputed from `SunshineInput` + `SunshineState` via `sunshine_step()`. Each 50 Hz frame stores two `SunshineState` snapshots (frame start and midpoint) plus twenty 1 kHz inputs; replay recomputes vars at 1 kHz.
+`SunshineVars` is never telemetered (schema v4 logs) — it is always recomputed from `SunshineInput` + `SunshineState` via `sunshine_step()`. Each 50 Hz frame stores two `SunshineState` snapshots (frame start and midpoint) plus twenty 1 kHz inputs; replay recomputes vars at 1 kHz.
 
 ---
 
@@ -148,7 +148,7 @@ Nothing crosses the core/platform boundary except through these three structs. A
 
 **Fields may only be added to the END of `SunshineInput`, `SunshineState`, or `SunshineVars`. Never insert, reorder, or resize existing fields.**
 
-`SUNSHINE_SCHEMA_VERSION` (currently 3) must be bumped with a comment on every struct change. Log files store `sizeof_input`, `sizeof_state`, `sizeof_vars`, and `num_inputs` in the header; readers handle mismatches:
+`SUNSHINE_SCHEMA_VERSION` (currently 4) must be bumped with a comment on every struct change. Log files store `sizeof_input`, `sizeof_state`, `sizeof_vars`, and `num_inputs` in the header; readers handle mismatches:
 - Reader's `sizeof < file's sizeof`: truncated read, extra bytes skipped
 - Reader's `sizeof > file's sizeof`: missing trailing fields default to zero
 
@@ -184,7 +184,7 @@ All physical/tuning constants are in `sunshine_core/include/sunshine_core.h`. Fi
 | `DRIFT_PHASE_OFFSET_RADS` | 0.0 rad | sunshine_core.h |
 | `DRIFT_PHASE_LEAD_S` | 0.0 s | sunshine_core.h |
 | Loop interval | 1000 µs (1 kHz) | config.h (brain) |
-| ESP-NOW TX rate (brain→rx) | 50 Hz | Derived: 20 inputs/frame over ESP-NOW v2 (671 B) |
+| ESP-NOW TX rate (brain→rx) | 50 Hz | Derived: 20 inputs/frame over ESP-NOW v2 (687 B) |
 | ESP-NOW TX rate (rx→brain) | 500 Hz | config.h (receiver) |
 | Host watchdog | 3 s | config.h (receiver) |
 | Brain watchdog | 500 ms | config.h (brain) |

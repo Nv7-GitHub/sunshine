@@ -32,6 +32,14 @@ static void error_halt(int blink_count, const char *msg) {
 
 void setup() {
     Serial.begin(921600);
+    // CRITICAL: make USB-CDC writes NON-BLOCKING. With ARDUINO_USB_CDC_ON_BOOT the
+    // Serial TX FIFO fills whenever no host is draining it (i.e. whenever the robot
+    // is spinning untethered), and the default timeout makes Serial.printf BLOCK on
+    // a full FIFO — which stalled the 1 kHz nav loop for ~60 ms (seen as a timestamp
+    // gap in the log). 0 → drop bytes instead of blocking; debug output is never
+    // worth stalling the safety-critical control loop. (Also guard hot-path prints
+    // with `if (Serial)` in nav_control.cpp.)
+    Serial.setTxTimeoutMs(0);
     pinMode(PIN_LED, OUTPUT);
     analogReadResolution(12);
 

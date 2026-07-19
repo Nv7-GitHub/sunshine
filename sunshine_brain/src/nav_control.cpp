@@ -160,7 +160,8 @@ void nav_control_task(void *) {
             static uint32_t mx_total = 0, prof_n = 0;
             if (elapsed > mx_total) mx_total = elapsed;
             if (++prof_n % 500 == 0) {
-                Serial.printf("PROF us: adxl=%u mag=%u batt=%u ctrl=%u step=%u dshot=%u rest=%u | total=%u max=%u | telem_drop=%u frame_drop=%u tx_fail=%u\n",
+                if (Serial)  // only format+emit when a USB host is attached (else skip the work)
+                    Serial.printf("PROF us: adxl=%u mag=%u batt=%u ctrl=%u step=%u dshot=%u rest=%u | total=%u max=%u | telem_drop=%u frame_drop=%u tx_fail=%u\n",
                               adxl_us, mag_us, batt_us, ctrl_us, step_us, dshot_us, rest_us, elapsed, mx_total,
                               telemetry_dropped_count(), telemetry_frames_dropped(), telemetry_tx_fail_count());
                 mx_total = 0;
@@ -171,7 +172,7 @@ void nav_control_task(void *) {
             overrun_count++;
             t_next = micros();  // re-sync BEFORE printf to exclude print latency
             vars.loop_overrun = true;  // set if current tick overran OR telem ring full
-            if (overrun_count <= 3 || (overrun_count % 100) == 0) {
+            if (Serial && (overrun_count <= 3 || (overrun_count % 100) == 0)) {
                 Serial.printf("OVERRUN: %u µs (total=%u)\n", elapsed, overrun_count);
             }
         } else {

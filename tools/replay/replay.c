@@ -59,12 +59,16 @@ static float dequantize_dshot(uint8_t q){
     return (float)q * (2047.0f / 255.0f);
 }
 static void unpack_state(const uint8_t *b, SunshineState *s){
+    /* Zero first so schema-v4 fields (mag_ang_prev, spin_rate_lp at 44/48) default to
+     * 0 when replaying older schema-v3 logs (sizeof_state=44) that lack them. */
+    memset(s, 0, sizeof(*s));
     s->kf_theta     = rd_f32(b+0);
     s->kf_omega     = rd_f32(b+4);
     for (int i=0;i<4;i++) s->kf_P[i]      = rd_f32(b+8 +4*i);
     s->theta_offset = rd_f32(b+24);
     for (int i=0;i<2;i++) s->mag_hp_x[i]= rd_f32(b+28+4*i);  /* state: 28..35 */
-    for (int i=0;i<2;i++) s->mag_hp_y[i]= rd_f32(b+36+4*i);  /* state: 36..43 (sizeof_state=44) */
+    for (int i=0;i<2;i++) s->mag_hp_y[i]= rd_f32(b+36+4*i);  /* state: 36..43 */
+    /* schema v4 (sizeof_state>=52): mag_ang_prev @44, spin_rate_lp @48 */
 }
 /* stored vars (for --reseed validation): we only need a few fields */
 typedef struct { float mag_angle, est_theta, est_omega, mag_x_filt, mag_y_filt,

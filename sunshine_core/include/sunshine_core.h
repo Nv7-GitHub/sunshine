@@ -6,7 +6,7 @@
  * Bump whenever ANY field is added, removed, reordered, or resized in
  * SunshineInput, SunshineState, or SunshineVars.
  * New fields MUST be appended at the END of the struct — never insert. */
-#define SUNSHINE_SCHEMA_VERSION  3U
+#define SUNSHINE_SCHEMA_VERSION  4U
 
 /* ── Control modes ─────────────────────────────────────────────────────── */
 #define SUNSHINE_MODE_DISABLED  0U
@@ -110,7 +110,7 @@ typedef struct __attribute__((packed)) {
 } SunshineInput;
 /* static_assert(sizeof(SunshineInput) == 29, ""); */
 
-/* SunshineState: filter history, 44 bytes packed.
+/* SunshineState: filter history, 52 bytes packed.
  * APPEND-ONLY rule applies here too. */
 typedef struct __attribute__((packed)) {
     float kf_theta;         /* Kalman angle estimate (rad, unwrapped)     */
@@ -119,8 +119,14 @@ typedef struct __attribute__((packed)) {
     float theta_offset;     /* driver heading offset (rad)                */
     float mag_hp_x[2];      /* mag_x high-pass biquad state (2nd order)   */
     float mag_hp_y[2];      /* mag_y high-pass biquad state               */
+    /* Spin-direction recovery (schema v4). The accel gives only |ω| (centripetal
+     * magnitude), so kf_omega's SIGN must come from the magnetometer, which sees
+     * the true rotation sense — otherwise the heading counter-rotates when the
+     * robot is inverted (flip → same chassis spin, opposite world spin). */
+    float mag_ang_prev;     /* previous mag_angle, for its rotation-rate sign  */
+    float spin_rate_lp;     /* low-passed SIGNED mag rotation rate (rad/s)      */
 } SunshineState;
-/* static_assert(sizeof(SunshineState) == 44, ""); */
+/* static_assert(sizeof(SunshineState) == 52, ""); */
 
 /* SunshineVars: derived variables, never telemetered, 56 bytes packed.
  * APPEND-ONLY: never insert, reorder, or resize existing fields. */

@@ -39,19 +39,28 @@ void sunshine_step(const SunshineInput *in, SunshineState *state, SunshineVars *
     /* -- Kalman predict --------------------------------------------------- */
     kalman_predict(state, DT);
 
-    /* The mag is the absolute reference only above the min spin rate. */
-    vars->mag_valid = (state->kf_omega > SUNSHINE_MAG_MIN_OMEGA);
+    /* The mag is the absolute reference only above the min spin rate. Use |kf_omega|
+     * so it stays valid when the robot spins the other way (inverted): kf_omega is
+     * SIGNED (see the accel update below), and a correct negative rate must not gate
+     * the mag off. */
+    vars->mag_valid = (fabsf(state->kf_omega) > SUNSHINE_MAG_MIN_OMEGA);
 
     /* -- Kalman update - accelerometer ------------------------------------ */
-    /* The accelerometer is the rate sensor at all times: ω = √(a_c/r). The
-       heading is recovered open-loop by mag_heading.c (band-pass centred on this
-       same accel rate, independent of the estimate), so the accel can no longer
-       drag the heading into precession — therefore we trust it fully always and
-       kf_omega tracks omega_from_accel. (The old code down-weighted the accel once
-       the mag "locked" to stop a precession that only existed in the previous
-       closed-loop demodulator; that machinery is gone.) */
-    if (!vars->accel_saturated && vars->omega_from_accel > 0.0f)
-        kalman_update_omega(state, vars->omega_from_accel, KF_R_ACCEL);
+    /* The accelerometer is the rate sensor at all times: |ω| = √(a_c/r). But the
+       accel gives only the MAGNITUDE — it cannot sense CW vs CCW. The spin SIGN
+       comes from the magnetometer (state->spin_rate_lp, updated in mag_heading.c),
+       which sees the true rotation sense and so reverses correctly when the robot is
+       inverted. Copy that sign onto the accel rate before the update, so kf_omega —
+       and hence the predicted kf_theta — winds the correct way in either orientation.
+       Before the mag has locked (spin_rate_lp≈0) the sign defaults to +, matching the
+       old behaviour; once the mag is valid it sets the true sign within ~50 ms.
+       The heading is recovered open-loop by mag_heading.c (band-pass centred on this
+       accel rate, independent of the estimate), so the accel can't precess it. */
+    if (!vars->accel_saturated && vars->omega_from_accel > 0.0f) {
+        float signed_omega = (state->spin_rate_lp < 0.0f)
+                             ? -vars->omega_from_accel : vars->omega_from_accel;
+        kalman_update_omega(state, signed_omega, KF_R_ACCEL);
+    }
 
     /* -- Open-loop magnetometer absolute heading -> mag_angle ------------- */
     mag_heading_step(in, state, vars);

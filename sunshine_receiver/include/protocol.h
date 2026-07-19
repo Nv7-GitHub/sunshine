@@ -27,9 +27,11 @@ static constexpr uint8_t STATUS_INIT_ERROR       = 0x04;
 // Brain sends 20 inputs per ESP-NOW v2 packet (50 Hz; requires IDF >= 5.4 for the
 // >250-byte payload). Two SunshineState snapshots per frame give 100 Hz real
 // state; vars are not sent (host recomputes them). Layout: 2 (frame_id) + 1
-// (type) + 2*44 (SunshineState) + 20*29 (SunshineInput) = 671. Keep in sync with
-// brain telemetry.cpp FRAME_SIZE.
-static constexpr uint16_t ESPNOW_TELEM_SIZE  = 671;
+// (type) + 2*52 (SunshineState, schema v4) + 20*29 (SunshineInput) = 687. Keep in
+// sync with brain telemetry.cpp FRAME_SIZE — a mismatch makes espnow_rx.cpp drop
+// EVERY frame (it rejects wrong-length packets). Bump this whenever SunshineState
+// or SunshineInput changes size.
+static constexpr uint16_t ESPNOW_TELEM_SIZE  = 687;
 static constexpr uint16_t CTRL_PAYLOAD_SIZE  = 5;   // mode+x+y+theta+throttle
 static constexpr uint16_t HEARTBEAT_SIZE     = 4;
 static constexpr uint16_t RSSI_SIZE          = 1;

@@ -32,6 +32,10 @@ pub struct SunshineState {
     pub theta_offset:  f32,
     pub mag_hp_x:      [f32; 2],
     pub mag_hp_y:      [f32; 2],
+    // schema v4: spin-direction recovery (see sunshine_core.h). Old (v3) logs lack
+    // these; read_padded zero-fills them, matching sunshine_state_init.
+    pub mag_ang_prev:  f32,
+    pub spin_rate_lp:  f32,
 }
 
 /// SunshineVars: 12 floats + 4 u8 flags + 1 float = 48 + 4 + 4 = 56 bytes packed
@@ -59,7 +63,7 @@ pub struct SunshineVars {
 
 const _: () = {
     assert!(size_of::<SunshineInput>() == 29, "SunshineInput size mismatch");
-    assert!(size_of::<SunshineState>() == 44, "SunshineState size mismatch");
+    assert!(size_of::<SunshineState>() == 52, "SunshineState size mismatch");
     assert!(size_of::<SunshineVars>()  == 56, "SunshineVars size mismatch");
 };
 

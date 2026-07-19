@@ -88,7 +88,8 @@ accel_x,accel_y,accel_z,mag_x,mag_y,mag_z,batt_v
 - 1 blink → ADXL375 init failed. Check FSPI wiring: SCK=IO12, MOSI=IO11, MISO=IO13, CS=IO10.
 - 2 blinks → LIS3MDL init failed. Check HSPI wiring: SCK=IO16, MOSI=IO15, MISO=IO17, CS=IO18.
 - `accel_z ≈ 0` → ADXL375 returning zero. Check SPI mode (should be SPI_MODE3) and full-resolution flag.
-- `batt_v ≈ 0` → ADC not reading. `PIN_BATT_ADC = 39`. Check `analogReadResolution(12)` is called in setup.
+- `batt_v ≈ 0` → ADC not reading. `PIN_BATT_ADC = 7` (GPIO7, ADC1_CH7). Check `analogReadResolution(12)` is called in setup.
+- `batt_v` noisy / jumpy while spinning → expected: the ESCs inject a strong ~50 Hz (2×-spin) tone. `batt_read_v()` low-passes it (single-pole IIR at `BATT_LP_HZ`, default 6 Hz in `config.h`). Raise `BATT_LP_HZ` for snappier sag response, lower for a smoother trace. The int8 telemetry step is 20 mV — the filter brings the noise below that so the trend is readable.
 
 ---
 
@@ -318,6 +319,8 @@ Summary of what each parameter controls:
 ### Step 5: LED check
 
 While spinning above the mag threshold (~480 RPM), the LED should appear as a stationary dot (a few degrees of wobble from the soft-iron ellipse is fine — see FILTER_MATH.md). If it *sweeps/precesses* around, the heading is drifting — the open-loop mag (band-pass centred on `omega_from_accel`) should prevent that, so trust the mag more (`KF_R_MAG` down). Confirm `omega_from_accel` is sane: if it is wildly wrong the band-pass mis-centres and the heading attenuates.
+
+**If the LED spins fast / heading is wildly wrong ONLY in one orientation**, it's the spin-direction sign. `omega_from_accel` is an unsigned magnitude (the accel can't sense CW vs CCW), so the sign is taken from the magnetometer (`state.spin_rate_lp`). When the robot is **inverted** it spins the opposite way in the world frame; the mag catches this and `kf_omega` should flip sign within ~50 ms. Test BOTH orientations here (spin it upright, then flip it and spin again) — the LED must be stationary in both. If it's broken only when inverted, check that `mag_valid` uses `|kf_omega|` and that `spin_rate_lp` is taking the mag's sign (schema v4 fix).
 
 ### Pass criteria
 
