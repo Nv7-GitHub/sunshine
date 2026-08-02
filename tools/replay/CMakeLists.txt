@@ -9,6 +9,11 @@
 # Then e.g.:  ./build/replay LOG.sun > cont.csv
 cmake_minimum_required(VERSION 3.16)
 project(sunshine_replay C)
+# Emit build/compile_commands.json so clangd resolves replay.c, the sunshine_core
+# sources and the unit tests with real flags. clangd looks for a `build/` subdir
+# of each ancestor of the file, so this lands exactly where it searches — see
+# tools/gen_compile_db.sh for the whole-tree story.
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_C_STANDARD 99)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})

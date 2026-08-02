@@ -3,3 +3,6 @@
 .pnpm-store
 build
 .cache
+# clangd compilation databases — absolute paths to this machine's toolchains,
+# regenerate with tools/gen_compile_db.sh
+compile_commands.json
