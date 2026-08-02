@@ -41,6 +41,44 @@
  * large — so the mag is gated off. 16π rad/s = 8 Hz spin = 480 RPM (lower edge
  * ≈ 6 Hz). (Hard-iron DC itself is killed exactly by the band-pass's zero at DC.) */
 #define SUNSHINE_MAG_MIN_OMEGA  (16.0f * 3.14159265f)  /* ~480 RPM, rad/s  */
+/* ── Drivetrain / motor, for the MELTY wheel-speed cap (control.c) ─────────
+ * PER-BUILD parameters, read off the mechanical design and the motor nameplate.
+ * They are NOT fitted to any log: a different robot changes exactly these values
+ * and nothing else in the control path.
+ *
+ * Why they exist: the AM32 ESC is an open-loop VOLTAGE SOURCE — it applies a duty
+ * cycle, it does not close a speed loop — so a wheel's steady no-load speed is a
+ * known function of (duty × V_batt). That is what makes the relation invertible,
+ * and the cap in control.c is exactly that inverse: given the wheel speed the
+ * ground demands, solve for the DShot value whose no-load speed matches it.
+ *
+ * The failure mode being prevented: without the cap the wheels run 1.3–2.3× faster
+ * than the rolling speed the body rate demands. The surplus is stored kinetic
+ * energy in the wheels, and every time the robot touches down it is dumped into an
+ * impulsive traction spike that throws the robot back into the air — the vertical
+ * bounce.
+ *
+ * MOTOR_KV_RPM_PER_V is the 1100 NAMEPLATE and must NOT be derated to match the
+ * ~6% speed deficit seen under load. That deficit is the I·R drop across the
+ * winding, i.e. the slip DOING ITS JOB: the cap commands a NO-LOAD speed and the
+ * load then pulls the actual speed below it, and that difference is the
+ * torque-producing slip. Deriving KV from loaded data would cancel the very margin
+ * the cap is supposed to grant.
+ *
+ * MOTOR_POLE_PAIRS is unused by the cap arithmetic. It exists for the eRPM model
+ * (eRPM = mechanical rpm × pole pairs) that the brain-side eRPM filter uses to
+ * build its command-derived ceiling.
+ *
+ * WHEEL_SLIP_ALLOW_MS is THE tuning knob, and it is a fixed slip SPEED, not a
+ * percentage of rolling speed. Traction force is I = (V_cmd − backEMF)/R, so a
+ * fixed slip speed is a fixed slip VOLTAGE and therefore a fixed current — a fixed
+ * available torque at any spin rate. A flat percentage instead would starve the
+ * robot of torque at low spin and still permit the runaway at high spin. */
+#define WHEEL_RADIUS_M      0.022f   /* wheel rolling radius, m              */
+#define WHEEL_CENTER_M      0.0405f  /* wheel contact patch to spin axis, m  */
+#define MOTOR_KV_RPM_PER_V  1100.0f  /* nameplate, rpm/V (no-load)           */
+#define MOTOR_POLE_PAIRS    7        /* 14-pole motor -> 7 pole pairs        */
+#define WHEEL_SLIP_ALLOW_MS 1.0f     /* allowed slip at the contact patch, m/s */
 
 /* ── Kalman tuning (override with -D flag for tuning builds) ───────────── */
 #ifndef KF_Q_THETA

@@ -54,7 +54,11 @@ void nav_control_task(void *) {
                                    batt_offset_f >  32767.0f ?  32767 :
                                    (int16_t)batt_offset_f);
 
-        // eRPM as float16 using sunshine_core helper
+        // eRPM as float16 using sunshine_core helper. NaN here means "the ESC
+        // was not commutating", i.e. no measurement — distinct from 0, which
+        // now means a genuinely stopped wheel. This relies on
+        // sunshine_f32_to_f16() preserving the mantissa (NAN = 0x7FC00000,
+        // mantissa >> 13 = 0x200) so it encodes as an f16 NaN and not +inf.
         in.erpm_left  = sunshine_f32_to_f16(dshot_erpm_left());
         in.erpm_right = sunshine_f32_to_f16(dshot_erpm_right());
 
@@ -123,8 +127,13 @@ void nav_control_task(void *) {
             return (uint16_t)(c + 0.5f);
         };
         uint32_t t_d0 = micros();
+        // `v` is the same 6 Hz-filtered batt_read_v() result that feeds
+        // in.batt_offset above, so the ceiling the eRPM filter uses and the
+        // voltage the log records are the same number. It is used only for the
+        // eRPM plausibility ceiling; the duty is derived inside dshot.cpp from
+        // the two motor_cmd() results.
         dshot_send(motor_cmd(vars.dshot_cmd_left,  MOTOR_LEFT_INVERT),
-                   motor_cmd(vars.dshot_cmd_right, MOTOR_RIGHT_INVERT));
+                   motor_cmd(vars.dshot_cmd_right, MOTOR_RIGHT_INVERT), v);
         dshot_us = micros() - t_d0;
 #endif
         // Disabled: slow breathe so the board is visibly alive but clearly idle.

@@ -1,4 +1,4 @@
-use crate::ffi::{SunshineInput, SunshineState, SunshineVars, brain_step, state_init};
+use crate::ffi::{SunshineInput, SunshineState, SunshineVars, brain_step, f16_to_f32, state_init};
 use crate::logging::LogWriter;
 use crate::protocol::{TelemetryFrame, INPUTS_PER_FRAME};
 use crate::replay::{LogMetadata, read_frame, read_metadata};
@@ -485,8 +485,37 @@ fn downsample_min_max(raw: Vec<(u64, f32)>, max_points: u32) -> Vec<(u64, f32)> 
         if chunk.is_empty() { continue; }
         let (t0, _) = chunk[0];
         let (t1, _) = *chunk.last().unwrap();
-        let min = chunk.iter().map(|&(_, v)| v).fold(f32::INFINITY, f32::min);
-        let max = chunk.iter().map(|&(_, v)| v).fold(f32::NEG_INFINITY, f32::max);
+        // NaN-aware min/max. The obvious `fold(f32::INFINITY, f32::min)` is WRONG
+        // here on both counts, because Rust's f32::min/max *ignore* NaN:
+        //   - a MIXED bucket (some finite, some NaN) silently dropped the NaN, so a
+        //     one-sample gap inside a bucket disappeared entirely;
+        //   - an ALL-NaN bucket returned (+inf, -inf) rather than NaN.
+        // The second one matters because serde_json maps NaN *and* ±inf to the SAME
+        // JSON null (ser.rs serialize_f32), so an escaping +inf is indistinguishable
+        // at the UI from a genuine gap — it would masquerade as "no measurement"
+        // while actually meaning "the encoder overflowed". Non-finite values are
+        // therefore never measurements and never emitted: we skip them on the way in
+        // and emit an explicit NaN when the whole bucket was unmeasurable.
+        // ±inf also arrives from pre-§4.1 logs, where sunshine_f32_to_f16 collapsed
+        // NaN to 0x7C00; those become gaps too, which is the honest reading.
+        let mut min = f32::INFINITY;
+        let mut max = f32::NEG_INFINITY;
+        let mut any_finite = false;
+        for &(_, v) in chunk {
+            if !v.is_finite() { continue; }
+            any_finite = true;
+            if v < min { min = v; }
+            if v > max { max = v; }
+        }
+        let (min, max) = if any_finite { (min, max) } else { (f32::NAN, f32::NAN) };
+        // An all-NaN bucket STILL pushes its two points. Every non-`real.*` channel
+        // shares one downsampled time grid, and UPlotCanvas builds a UNION x-axis
+        // from all selected channels' timestamps. Dropping the points here would
+        // shorten this channel's grid, so the other channels' timestamps would enter
+        // the union as extra columns where this channel is null — making a dense
+        // channel read as sparse and, now that spanGaps is false for dense series,
+        // punching spurious gaps into every OTHER trace. Point count per bucket must
+        // stay at exactly 2.
         let t_mid = (t0 + t1) / 2;
         out.push((t0, min));
         out.push((t_mid, max));
@@ -558,8 +587,13 @@ fn channel_accessor(channel: &str) -> fn(&DataPoint) -> f32 {
             let z = dp.input.mag_z as f32;
             (x*x + y*y + z*z).sqrt() * MAG_SCALE_UT
         },
-        "input.erpm_left"       => |dp| dp.input.erpm_left as f32,
-        "input.erpm_right"      => |dp| dp.input.erpm_right as f32,
+        /* erpm_* on the wire is an IEEE-754 float16 BIT PATTERN (sunshine_core.h:176),
+         * not a count — `as f32` plots the encoding, which is meaningless and would
+         * render the NaN "ESC not commutating" sentinel as a ~64000 spike (design
+         * §4.3). sunshine_f16_to_f32 preserves NaN (utils.c keeps `mant << 13` when
+         * exp == 31), so the gap survives the decode all the way to the plot. */
+        "input.erpm_left"       => |dp| f16_to_f32(dp.input.erpm_left),
+        "input.erpm_right"      => |dp| f16_to_f32(dp.input.erpm_right),
         "input.ctrl_x"          => |dp| dp.input.ctrl_x as f32,
         "input.ctrl_y"          => |dp| dp.input.ctrl_y as f32,
         "input.ctrl_theta"      => |dp| dp.input.ctrl_theta as f32,
@@ -627,6 +661,68 @@ mod tests {
         p.ingest_frame(&make_frame([input; INPUTS_PER_FRAME]));
         let vals = p.get_channel_snapshot(&["not.a.channel".to_string()], None);
         assert_eq!(vals[0], Some(0.0));
+    }
+
+    #[test]
+    fn downsample_keeps_nan_in_a_mixed_bucket() {
+        // A bucket holding both finite samples and a NaN must report the finite
+        // min/max — f32::min/max ignoring NaN was never the bug on THIS side; the
+        // bug was that the NaN vanished without trace. Here we only assert the
+        // finite extremes survive and no infinity leaks out.
+        let raw: Vec<(u64, f32)> = vec![
+            (0, 1.0), (1, f32::NAN), (2, 3.0), (3, 2.0),
+            (4, 9.0), (5, 9.0),      (6, 9.0), (7, 9.0),
+        ];
+        let out = downsample_min_max(raw, 2);
+        assert!(out.iter().all(|&(_, v)| !v.is_infinite()),
+                "±inf must never be emitted: {out:?}");
+        assert_eq!(out[0].1, 1.0, "mixed bucket min must be the finite min");
+        assert_eq!(out[1].1, 3.0, "mixed bucket max must be the finite max");
+    }
+
+    #[test]
+    fn downsample_all_nan_bucket_yields_nan_not_infinity() {
+        // The all-NaN bucket must yield NaN, not (+inf, -inf). Both serialize to
+        // JSON null, so a test that only checks "renders as a gap" passes either
+        // way — assert on is_nan/!is_infinite explicitly.
+        let raw: Vec<(u64, f32)> = vec![
+            (0, f32::NAN), (1, f32::NAN), (2, f32::NAN), (3, f32::NAN),
+            (4, 5.0),      (5, 5.0),      (6, 5.0),      (7, 5.0),
+        ];
+        let out = downsample_min_max(raw, 2);
+        assert!(out[0].1.is_nan() && out[1].1.is_nan(), "all-NaN bucket must be NaN");
+        assert!(out.iter().all(|&(_, v)| !v.is_infinite()));
+    }
+
+    #[test]
+    fn downsample_emits_two_points_per_bucket_even_when_all_nan() {
+        // Point count must not depend on measurability: every non-real.* channel
+        // shares one downsampled time grid, and UPlotCanvas unions those grids.
+        // A short series here would inject foreign timestamps into every other
+        // channel and punch spurious gaps into them.
+        let n = 8usize;
+        let nan_series: Vec<(u64, f32)> = (0..n).map(|i| (i as u64, f32::NAN)).collect();
+        let fin_series: Vec<(u64, f32)> = (0..n).map(|i| (i as u64, i as f32)).collect();
+        let a = downsample_min_max(nan_series, 2);
+        let b = downsample_min_max(fin_series, 2);
+        assert_eq!(a.len(), b.len());
+        let ta: Vec<u64> = a.iter().map(|p| p.0).collect();
+        let tb: Vec<u64> = b.iter().map(|p| p.0).collect();
+        assert_eq!(ta, tb, "time grid must be identical regardless of NaN content");
+    }
+
+    #[test]
+    fn input_erpm_is_decoded_from_float16_bits() {
+        // input.erpm_* is a float16 bit pattern, not a count. 0x7E00 is the
+        // "ESC not commutating" NaN; casting the bits would give 32256.
+        let f = crate::ffi::f32_to_f16(1234.0);
+        let dp = DataPoint { input: SunshineInput { erpm_left: f, erpm_right: 0x7E00,
+                                                    ..SunshineInput::default() },
+                             ..DataPoint::default() };
+        let v = channel_accessor("input.erpm_left")(&dp);
+        assert!((v - 1234.0).abs() < 1.0, "expected ~1234 RPM, got {v}");
+        assert!(channel_accessor("input.erpm_right")(&dp).is_nan(),
+                "a float16 NaN payload must decode to NaN, not a ~32256 spike");
     }
 
     #[test]

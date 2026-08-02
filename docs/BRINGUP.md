@@ -303,6 +303,12 @@ Spin the robot slowly by hand (without motors). In the graph:
 
 Spin the robot above the mag threshold (~480 RPM) by hand or with light motor power (with props off it's safe). Plot `vars.mag_x_filt` and `vars.mag_y_filt` — the band-passed Earth-field axes. They *oscillate* at the spin frequency (they're the rotating Earth sine), but their magnitude `sqrt(x²+y²)` should settle to a steady ~18–22 µT within ~1 s. If the magnitude is near zero, the spin is below threshold or `est_omega` is far off (so the spin frequency is outside the ±33% tracking band — fix Step 2 first). Also plot `vars.mag_angle` (the absolute heading) — it should rotate smoothly with the body.
 
+**Do not carry a marginal magnetometer forward into Level 5.** The MELTY wheel-speed cap
+takes its rate reference from the mag-driven `kf_omega`, so a mag that never locks holds
+MELTY at the unlocked ceiling and the robot will not spin up at all (see Level 5, Step 2).
+A mag that is *intermittent* is worse to diagnose than one that is dead: the spin will
+stall and release at random. Fix it here.
+
 ### Step 4: Tune Kalman parameters
 
 See `TUNING.md` for the full tuning procedure. Constants are in `sunshine_core/include/sunshine_core.h`. Change them and rebuild — no re-flash needed if you use `-D` build flags in `platformio.ini` for rapid iteration.
@@ -355,6 +361,22 @@ cd sunshine_brain && pio run --target upload --environment production
 ### Step 2: Confirm LED is stationary
 
 At low spin throttle, verify the LED appears stationary at a fixed heading before attempting any translation. This confirms the Kalman filter is working.
+
+> **A dead magnetometer now means MELTY WILL NOT SPIN UP — deliberate, not a fault.**
+> MELTY commands pass through the wheel-speed cap (`melty_speed_cap()` in `control.c`),
+> which clamps the mean wheel command to the no-load speed the *measured* body rate
+> demands plus a fixed slip allowance. Its rate reference is the mag-driven `kf_omega`,
+> and with no mag there is never a lock, so the reference falls back to
+> `SUNSHINE_MAG_MIN_OMEGA` and the command sits at the unlocked ceiling (≈1194 DShot at
+> 8.2 V) forever: the robot stalls out near 50–60 rad/s however far the throttle is
+> pushed. The trade is intended — a MELTY robot with no heading reference is
+> undriveable anyway — but it converts "degraded but spinning" into "will not spin up",
+> so **suspect the mag first** when MELTY won't spin up while TANK is fine (the cap is
+> MELTY-only, which is exactly why TANK still spins). Plot `real.kf_omega` against
+> `input.ctrl_throttle`: `kf_omega` flat near the threshold while the throttle is high
+> is this cap — not a motor, battery or ESC fault. Confirm with `real.mag_x_filt` /
+> `real.mag_y_filt` (their magnitude collapses when the mag is dead), then go back to
+> Level 4 Step 3 and fix the magnetometer.
 
 ### Step 3: Test translation in MELTY mode
 

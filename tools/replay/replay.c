@@ -133,12 +133,28 @@ int main(int argc, char **argv){
     int seeded = 0;
     long long prev_us = -1;   /* for gap-fill dead reckoning */
 
-    /* CSV header */
+    /* CSV header.
+     *
+     * batt_voltage and spin_rate_lp exist for the wheel-speed-cap analysis
+     * (tools/replay/wheel_slip.py). Both are needed because the cap cannot be
+     * reconstructed from the CSV without them:
+     *   - the cap is voltage-referenced (cap = NEUTRAL + v_needed/v_batt * span),
+     *     and the pack sags several hundred mV WITHIN a single run, which is a
+     *     several-percent wheel-speed swing for an unchanged DShot value. A
+     *     script assuming a nominal voltage evaluates the wrong cap.
+     *   - the cap's "locked" gate is mag_valid && |spin_rate_lp| > MAG_MIN_OMEGA
+     *     (the same gate brain.c uses to trust the mag rate). mag_valid alone is
+     *     only half of it, so without spin_rate_lp the script silently evaluates
+     *     the unlocked branch on locked samples.
+     * They are appended to the unconditional per-sample group and stay BEFORE the
+     * conditional stored_* group below, whose blank-field emission must not move.
+     */
     printf("time_us,mode,ctrl_x,ctrl_y,ctrl_theta,ctrl_throttle,"
            "input_dshot_l,input_dshot_r,input_dshot_l_q,input_dshot_r_q,"
            "kf_theta,kf_omega,omega_accel,mag_angle,est_theta,est_omega,"
            "mag_x_filt,mag_y_filt,heading_deg,led_on,mag_valid,accel_sat,dshot_l,dshot_r,"
            "erpm_left,erpm_right,mag_x,mag_y,accel_x,accel_y,theta_offset,"
+           "batt_voltage,spin_rate_lp,"
            "stored_kf_theta,stored_kf_omega,stored_theta_offset,"
            "stored_est_theta,stored_mag_angle,stored_led_on\n");
 
@@ -175,7 +191,10 @@ int main(int argc, char **argv){
             int last = (k==num_in-1);
             printf("%u,%u,%d,%d,%d,%u,%.1f,%.1f,%u,%u,"
                    "%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.4f,%.4f,%.4f,%u,%u,%u,%.1f,%.1f,"
-                   "%.1f,%.1f,%d,%d,%d,%d,%.6f",
+                   /* %.3f for the battery: schema v5 quantises batt_offset at
+                      1 mV/LSB, so three decimals is exactly lossless and no more.
+                      %.6f for spin_rate_lp to match the other rad/s channels. */
+                   "%.1f,%.1f,%d,%d,%d,%d,%.6f,%.3f,%.6f",
                    in.time_us, in.mode, in.ctrl_x, in.ctrl_y, in.ctrl_theta, in.ctrl_throttle,
                    dequantize_dshot(in.dshot_left_q), dequantize_dshot(in.dshot_right_q),
                    in.dshot_left_q, in.dshot_right_q,
@@ -184,7 +203,8 @@ int main(int argc, char **argv){
                    v.heading_deg, v.led_on, v.mag_valid, v.accel_saturated,
                    v.dshot_cmd_left, v.dshot_cmd_right,
                    v.erpm_left, v.erpm_right,
-                   in.mag_x, in.mag_y, in.accel_x, in.accel_y, st.theta_offset);
+                   in.mag_x, in.mag_y, in.accel_x, in.accel_y, st.theta_offset,
+                   v.batt_voltage, st.spin_rate_lp);
             if (k == 0) printf(",%.6f,%.6f,%.6f",
                                frame_state.kf_theta, frame_state.kf_omega, frame_state.theta_offset);
             else if (num_states >= 2 && k == num_in/2)

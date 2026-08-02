@@ -17,6 +17,11 @@ float sunshine_f16_to_f32(uint16_t h) {
             f = (sign << 31) | ((exp + 127 - 15) << 23) | (mant << 13);
         }
     } else if (exp == 31) {
+        /* The `| (mant << 13)` term is LOAD-BEARING, not decoration: mant==0 gives
+         * ±inf, mant!=0 gives an f32 NaN (mant <= 0x3FF, so the shift can never lose
+         * bits).  0x7E00 therefore decodes to 0x7FC00000, a quiet NaN.  "Simplifying"
+         * this to a bare 0x7F800000 would turn every NaN back into +inf and silently
+         * undo the eRPM sentinel described in sunshine_f32_to_f16() below. */
         f = (sign << 31) | 0x7F800000u | (mant << 13);
     } else {
         f = (sign << 31) | ((exp + 127 - 15) << 23) | (mant << 13);
@@ -30,7 +35,29 @@ uint16_t sunshine_f32_to_f16(float val) {
     int32_t  exp  = (int32_t)((x >> 23) & 0xFF) - 127 + 15;
     uint32_t mant = (x & 0x7FFFFFu) >> 13;
     if (exp <= 0)  return (uint16_t)(sign << 15);
-    if (exp >= 31) return (uint16_t)((sign << 15) | 0x7C00u);
+    /* NaN must survive the encode; +inf and finite overflow must NOT become NaN.
+     * eRPM now encodes "the ESC is not commutating, this sample is unmeasurable"
+     * as NaN (design §4.1) — bidirectional-DShot speed comes from the ESC's own
+     * commutation timing, so with the FETs off there is nothing to time.  Collapsing
+     * that NaN to +inf turns a *gap* into a 65504-eRPM spike in the log and in the UI,
+     * which is exactly the fake data the sentinel exists to avoid.
+     *
+     * The NaN test reads the RAW f32 bits, not the derived `mant`, for two reasons:
+     *   - `mant = (x & 0x7FFFFF) >> 13` throws away the low 13 payload bits, so a NaN
+     *     whose payload lives only down there (e.g. 0x7F800001) has mant == 0 and a
+     *     fix that merely ORs the shifted-down mantissa through would emit 0x7C00 and
+     *     re-lose the NaN.  That is the actual trap here.
+     *   - it is not isnan(), so it still works under -ffast-math / -ffinite-math-only
+     *     on the ESP-IDF firmware build, where isnan() may be constant-folded to false.
+     * True infinity and finite overflow (1e30f) keep saturating to 0x7C00 on purpose:
+     * saturating an out-of-range magnitude to inf is correct and must not turn into
+     * "unmeasurable".  The sign bit is carried onto NaN only because it is free and
+     * symmetric; it carries no meaning. */
+    if (exp >= 31) {
+        if (((x >> 23) & 0xFFu) == 0xFFu && (x & 0x7FFFFFu) != 0)
+            return (uint16_t)((sign << 15) | 0x7E00u);   /* canonical quiet NaN half */
+        return (uint16_t)((sign << 15) | 0x7C00u);
+    }
     return (uint16_t)((sign << 15) | ((uint32_t)exp << 10) | mant);
 }
 

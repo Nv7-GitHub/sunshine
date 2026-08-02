@@ -56,8 +56,12 @@ export const CHANNELS = {
     { key: 'input.mag_x',         label: 'Mag X',         unit: 'counts' },
     { key: 'input.mag_y',         label: 'Mag Y',         unit: 'counts' },
     { key: 'input.mag_magnitude', label: 'Mag |B|',       unit: 'µT' },
-    { key: 'input.erpm_left',     label: 'eRPM L (raw)',  unit: 'counts' },
-    { key: 'input.erpm_right',    label: 'eRPM R (raw)',  unit: 'counts' },
+    // Wire format is a float16 BIT PATTERN, not a count; the backend now decodes
+    // it (pipeline.rs channel_accessor), so the unit is RPM and these land on the
+    // same axis as var.erpm_*. "raw" means straight off the ESC — unfiltered and
+    // NaN where the ESC was not commutating — not undecoded.
+    { key: 'input.erpm_left',     label: 'eRPM L (raw)',  unit: 'RPM' },
+    { key: 'input.erpm_right',    label: 'eRPM R (raw)',  unit: 'RPM' },
     { key: 'input.ctrl_x',        label: 'Ctrl X',        unit: '' },
     { key: 'input.ctrl_y',        label: 'Ctrl Y',        unit: '' },
     { key: 'input.ctrl_theta',    label: 'Ctrl θ',        unit: '' },

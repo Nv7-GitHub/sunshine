@@ -27,7 +27,25 @@ Log files are written by the host app to:
 ~/Documents/sunshine_logs/YYYY-MM-DD_HH-MM-SS[_label].sun
 ```
 
-The host app shows the current log file path in the logging status bar.
+**On this machine that is literally `~/Documents/sunshine_logs`** — the logs are large and
+machine-local, so they are outside the repo and nothing in the tree references one by
+path. Anything you are asked to investigate ("the translation log", "the run that
+bounced") is a file in there. The host app also shows the current log file path in the
+logging status bar.
+
+The name starts with a zero-padded sortable timestamp, so the newest log is the last one
+lexicographically — but **select by mtime**, because a session that is still recording (or
+that crashed) keeps its original name while the file keeps growing:
+
+```bash
+ls -t ~/Documents/sunshine_logs/*.sun | head -1           # newest
+LOG=$(ls -t ~/Documents/sunshine_logs/*.sun | head -1)    # ...and use it
+build/replay "$LOG" > cont.csv
+```
+
+If the newest log's header `flags` bit0 (`logging_complete`) is clear it was never closed
+cleanly — normal while the app is still running. It replays fine; the harness reads whole
+frames only, so a torn trailing frame is simply dropped.
 
 ---
 
@@ -147,6 +165,44 @@ stored_theta_offset` and (VER 2 logs only, at frame-end rows)
 `stored_kf_theta/omega/theta_offset` are sparse: in VER 3 logs they are present
 only on the rows corresponding to the frame-start and midpoint state snapshots.
 
+### Interpreting eRPM — NaN means "not measurable", not "stopped"
+
+Bidirectional-DShot eRPM is derived from the ESC's **own commutation timing**. Below
+~5 % duty AM32 turns the FETs off and lets the motor coast, so there is nothing left to
+time and the ESC emits a decaying, meaningless period. The firmware therefore reports
+**NaN** whenever the previous tick's duty was below the commutation threshold, and the
+graph draws that as a **gap**. Read it as *"the ESC was not commutating"* — the wheel
+may well have been spinning fast.
+
+`0` now means what it says: a genuinely stopped wheel. **Logs recorded BEFORE this change
+encode unmeasurable as 0, not NaN** — every undriven sample in them was written as a hard
+0, which is why old eRPM traces "drop to zero" for long stretches. There is no way to
+recover the distinction after the fact in such a log; read its zeros as "unknown".
+
+That the zeros were never real is measurable two ways in
+`2026-07-20_04-20-24_translation2.sun`:
+
+- **Prevalence.** 77.6 % of samples with the command at neutral read zero, against 0.01 %
+  of driven samples. Zeros track *the command*, not the wheel.
+- **The coast-down at t = 402.9 s**, which settles it outright. The command drops to 0
+  while `real.kf_omega` stays flat at −94 rad/s, so the flywheel — and therefore the
+  wheels — provably cannot have slowed, yet `erpm_left` "falls" 18416 → 3312 over ~120 ms
+  and throws a 25504 spike on the way down. The wheels were still turning at ~11 500 eRPM
+  throughout. All of it is decode garbage from a coasting ESC.
+
+Practical notes:
+
+- **Gaps in `var.erpm_left/right` are expected** at neutral and during the low half of
+  the MELTY drift wave. Long gaps *while the throttle is up* are not — check the DShot
+  command (`real.dshot_left/right`) actually left the commutation threshold.
+- **A flat line with no gaps at all** across a neutral stretch means you are looking at
+  a pre-NaN log (or the fake-zero path came back).
+- `var.erpm_*` is the sanitised value (range gate against a command-derived ceiling,
+  direction-aware deviation gate, median-5). `input.erpm_*` is the raw decoded float16
+  — use it to see what the ESC actually reported before filtering.
+- eRPM is **telemetry only**; nothing in the Kalman or control path reads it, so a bad
+  eRPM stream cannot itself have caused a behaviour you are chasing.
+
 ---
 
 ## Common debugging scenarios
@@ -212,6 +268,76 @@ and the band-passed field magnitude should be a steady ~18–22 µT.
 2. `vars.accel_saturated` — note how long it stays high
 3. At what RPM does saturation occur? Expected: ~4800 RPM. If it saturates at lower speeds, check that the IMU is reading correctly (accel_z at rest should be ≈ +20 counts, not ≈ 0).
 
+### Scenario 5: Wheel overspeed / the robot bounces while spinning
+
+Symptom: in MELTY the robot hops vertically instead of sitting flat. One measurable
+cause is the wheels spinning far faster than the ground demands: each landing dumps the
+surplus wheel kinetic energy in as an impulsive traction spike, which throws the robot
+back into the air.
+
+**The reference figure: 123 eRPM per rad/s of body rate.** With no slip the wheel rate
+is pure geometry, `ω_wheel = |ω_body| × WHEEL_CENTER_M / WHEEL_RADIUS_M`, and the ESC
+reports electrical rpm, so
+
+```
+eRPM_no_slip = |ω_body| × (0.0405 / 0.022) × 60/(2π) × 7  =  123.06 × |ω_body|
+```
+
+**What to look at:**
+1. Plot `var.erpm_left` and `real.kf_omega` together and divide: at 100 rad/s expect
+   ~12 300 eRPM. A ratio much above 1.0 is overspeed — the evidence log
+   `2026-07-20_04-20-24_translation2.sun` sat at a median 1.30 and a p95 of 2.27.
+2. The ratio has a hard physical **floor at 1.0** (a wheel cannot roll slower than the
+   ground unless it is braking). If the measured floor is not within a few percent of
+   1.0, your `WHEEL_RADIUS_M` / `WHEEL_CENTER_M` / pole-pair constants are wrong — fix
+   the geometry before reading anything else into the ratio.
+3. `real.dshot_left/right` vs `rep.dshot_left/right` shows what the wheel-speed cap
+   would have done to a run recorded before it existed.
+4. `tools/replay/wheel_slip.py` reports commanded vs. capped DShot and the resulting
+   slip distribution over a whole log — use it to confirm or adjust
+   `WHEEL_SLIP_ALLOW_MS` against real data rather than argument.
+
+**What the ratio should look like once the cap is in.** Note first what replay can and
+cannot tell you here: replaying an old log through the capped `control.c` recomputes the
+*command*, but the eRPM in that log is still the uncapped run's wheel response. A true
+post-cap ratio distribution can only come from a log recorded with the cap live. (What
+*is* measurable on an old log is the commanded no-load speed over rolling speed — that
+modelled ratio falls from a 1.63 median / 5.51 p95 to 1.30 / 2.46 on the evidence log,
+an ~83 % cut in squared excess wheel speed, the stored-energy proxy that lands as an
+impulse on touchdown. It is a statement about the command, not about the wheel.)
+
+What the cap does guarantee is a per-rate ceiling. Unloaded — airborne, the case that
+matters — the wheel reaches the commanded no-load speed, which is rolling speed plus the
+allowance, so:
+
+```
+ratio <= 1 + WHEEL_SLIP_ALLOW_MS / (|w_body| * WHEEL_CENTER_M)
+```
+
+| body rate | 50 rad/s | 100 rad/s | 150 rad/s |
+|---|---|---|---|
+| ceiling at allow = 1.0 m/s | 1.49 | 1.25 | 1.17 |
+
+Two things legitimately sit above that line and neither is a fault: the drift wave rides
+above the capped `base` (that asymmetry *is* translation), and below the mag-lock
+threshold the cap holds a fixed ceiling while the rolling term keeps falling, so the ratio
+at very low spin is large by construction — at 20 rad/s the ceiling is ~3.8. Judge the
+ratio only above lock. A surviving 2×+ tail at 100 rad/s or more means the cap is not
+being applied: check the mode is MELTY (TANK is uncapped by design) and check
+`var.batt_voltage` per the note below.
+
+At `WHEEL_SLIP_ALLOW_MS = 1.0` the cap binds on ~76 % of driven MELTY samples, and the
+amount it removes shrinks with spin rate — median ~170 DShot counts below 50 rad/s, ~68
+between 50 and 100, ~25 between 100 and 150 — because the rolling term grows while the
+fixed allowance does
+not. A cap that binds hard at high rate is the anomaly worth chasing, not one that binds
+often at low rate.
+
+**Remember the cap needs the battery.** The ESC is an open-loop voltage source, so
+wheel speed is set by `duty × V_batt`; the pack moved 7.80–8.39 V inside a single run.
+If `var.batt_voltage` is implausible (< 5 V or > 10 V) the cap fails open by design —
+check it before concluding the cap is not working.
+
 ---
 
 ## Re-running with different parameters
@@ -258,6 +384,15 @@ it's just a thin IO/glue layer so the parsing never has to be rewritten per task
   `__attribute__((packed))` (native on gcc/clang).
 - `tools/replay/analyze.py` — example analyses over the CSV (validate / gaps /
   precession). Reads only the CSV; reimplements no robot logic.
+- `tools/replay/wheel_slip.py` — wheel overspeed and MELTY speed-cap report (see
+  Scenario 5): measured-vs-no-slip eRPM ratio with its geometry regression guard,
+  how often the cap binds and by how much, the overspeed distribution before and
+  after, and an `--allow` sweep so `WHEEL_SLIP_ALLOW_MS` can be re-chosen against a
+  real log without rebuilding firmware. Reads only the CSV; the **cap arithmetic is
+  the one piece of robot logic it mirrors**, deliberately, because that is the thing
+  under evaluation — `--vs-replay` diffs the mirror against the `dshot_l/r` the
+  compiled `control.c` produced, and a non-zero median there means the two have
+  drifted apart and the report is stale.
 
 **Build (cross-platform — needs CMake + any C compiler):**
 ```bash
@@ -318,6 +453,8 @@ the filter across detected timestamp gaps**. Use `analyze.py gaps` to see the ra
 python ../analyze.py validate   reseed.csv  # replay == real? (~0 deg)   [path: tools/replay/analyze.py]
 python ../analyze.py gaps        cont.csv    # dropped-input check
 python ../analyze.py precession  cont.csv    # LED drift vs raw-mag truth
+python ../wheel_slip.py          cont.csv    # wheel overspeed + speed-cap report
+python ../wheel_slip.py          cont.csv --allow 0.5,0.75,1.0,1.5,2.0 --vs-replay
 ```
 
 The `precession` check is a useful pattern: it derives **ground-truth spin rate

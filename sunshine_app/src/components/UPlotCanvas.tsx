@@ -99,10 +99,25 @@ function buildOpts(
         stroke: COLORS[i % COLORS.length],
         width:  1.5,
         scale:  scaleKey(channelUnits[i] ?? ''),
-        // Coarse real.* series are sparse on the union x-axis; connect across the
-        // null gaps so they draw as lines between the 100 Hz samples. Dense series
-        // have no gaps, so this is a no-op for them.
-        spanGaps: true,
+        // spanGaps is PER-SERIES on purpose — do not "simplify" it back to a global
+        // true. A null in the data now carries two different meanings that used to
+        // be indistinguishable:
+        //   real.*  — the coarse 100 Hz series has no sample at this column of the
+        //             union x-axis (it is sparse against the 1 kHz grid). Bridging
+        //             is correct: it draws straight lines between genuine samples
+        //             instead of a series of disconnected dots.
+        //   others  — the backend serialized a NaN measurement. NaN means "the ESC
+        //             was not commutating, there is no measurement" (design §4.1),
+        //             so the line must STOP. Bridging one would invent a wheel
+        //             speed across exactly the interval where none was observed.
+        // This is only sound because fetchAndDraw() re-fills every column a series
+        // does not own itself (see the union-axis comment there). Channels do NOT
+        // share one grid: each is downsampled independently, so a coarse real.*
+        // channel contributes union columns that fall between a dense channel's own
+        // samples. Left as raw nulls those would draw as gaps here and be
+        // indistinguishable from the genuine "ESC not commutating" gaps this split
+        // exists to surface.
+        spanGaps: ch.startsWith('real.'),
       })),
     ],
     hooks: {
@@ -193,9 +208,11 @@ export default function UPlotCanvas({ channels, channelUnits, width, height, hea
       // consistent snapshot of the source. Querying each channel separately
       // lets the source mutate in between (file swap, new live frames),
       // producing series of mismatched length that corrupt the chart.
-      const allPts = await invoke<[number, number][][]>('get_graph_data_multi', {
+      // The value is `number | null`, not `number`: serde_json renders every
+      // non-finite f32 as JSON null, which is how a NaN measurement arrives.
+      const allPts = await invoke<[number, number | null][][]>('get_graph_data_multi', {
         channels: reqChannels, startUs, endUs, maxPoints: maxPts,
-      }).catch(() => reqChannels.map(() => [] as [number, number][]));
+      }).catch(() => reqChannels.map(() => [] as [number, number | null][]));
 
       // Bail if a newer fetch superseded this one (uPlot may have been
       // recreated for a different channel set in the meantime).
@@ -203,11 +220,28 @@ export default function UPlotCanvas({ channels, channelUnits, width, height, hea
 
       // Build a UNION x-axis so channels sampled at different rates align: the
       // real.* series is coarse (100 Hz, two samples/frame) while inputs / var.* /
-      // rep.* are 1 kHz. Each series is null where it has no sample at a given
-      // time; `spanGaps` (buildOpts) draws lines across those nulls so the coarse
-      // real series reads as straight lines between its genuine samples rather than
-      // being stretched to the dense grid. When every channel shares one grid (the
-      // common case) the union is just that grid, so this costs nothing extra.
+      // rep.* are 1 kHz.
+      //
+      // The channels do NOT share one grid. The backend downsamples each channel
+      // independently with the same max_points, so a channel with fewer raw samples
+      // gets a different bucket size, and every bucket emits a SYNTHETIC midpoint
+      // timestamp ((t0+t1)/2) that is not a sample time on any other channel. The
+      // union therefore contains, for each series, a large number of columns that
+      // series does not own — with a real.* channel selected alongside a dense one,
+      // roughly half of them.
+      //
+      // Those foreign columns must be RE-FILLED, not left null, because a null now
+      // carries a specific meaning: the backend serialized a NaN, the firmware's
+      // "ESC not commutating, there is no measurement" marker (design §4.1), which
+      // `spanGaps: false` draws as a gap. Leaving the structural holes in would
+      // shred every dense trace into disconnected 2-point stubs and — far worse —
+      // make those spurious holes visually identical to the genuine NaN gaps the
+      // per-series spanGaps exists to reveal.
+      //
+      // The fill is a linear interpolation between the series' own neighbouring
+      // samples, i.e. exactly the straight segment uPlot would have drawn had the
+      // foreign column not existed, so it adds no information. It is skipped when
+      // either neighbour is null: a real NaN must never be bridged over.
       const tset = new Set<number>();
       for (const pts of allPts) for (const p of pts) tset.add(p[0]);
       const times = Array.from(tset).sort((a, b) => a - b);
@@ -217,6 +251,16 @@ export default function UPlotCanvas({ channels, channelUnits, width, height, hea
       for (const pts of allPts) {
         const arr: (number | null)[] = new Array(times.length).fill(null);
         for (const [t, v] of pts) arr[tIndex.get(t)!] = v;
+        for (let k = 0; k + 1 < pts.length; k++) {
+          const [t0, v0] = pts[k];
+          const [t1, v1] = pts[k + 1];
+          if (v0 === null || v1 === null) continue;   // NaN endpoint → keep the gap
+          const i0 = tIndex.get(t0)!, i1 = tIndex.get(t1)!;
+          if (i1 <= i0 + 1) continue;                 // adjacent → nothing foreign between
+          const dt = t1 - t0;
+          for (let i = i0 + 1; i < i1; i++)
+            arr[i] = dt > 0 ? v0 + (v1 - v0) * ((times[i] - t0) / dt) : v0;
+        }
         series.push(arr);
       }
 
