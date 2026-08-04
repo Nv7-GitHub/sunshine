@@ -38,6 +38,36 @@ The receiver is built against `espressif32@6.0.0` (IDF 4.4). This affects two th
 
 ---
 
+## Porting to a New Robot
+
+This codebase brings up **any two-wheel meltybrain that uses the same brain PCB** — different frame, wheels, motors, ESC ratings, mass. The port is: change the per-build constants below, then run Levels 1–5 in order. Everything else (schema, telemetry, replay, app) is robot-independent.
+
+### Where the per-build constants live
+
+| File | Constants | Consumed by |
+|------|-----------|-------------|
+| `sunshine_core/include/sunshine_core.h` | **Drivetrain block:** `WHEEL_RADIUS_M`, `WHEEL_CENTER_M`, `MOTOR_KV_RPM_PER_V` (nameplate, do **not** derate — see comment there), `MOTOR_POLE_PAIRS`, `WHEEL_SLIP_ALLOW_MS`. **Geometry:** `IMU_RADIUS_M` (accel distance from spin axis). **Measured:** `DRIFT_PHASE_LEAD_S` (Level 5 Step 4 below). | Brain firmware, host app, replay tool, and unit tests all **link this one header** — change it once, rebuild each. |
+| `sunshine_brain/include/config.h` | Pins, `BATT_ADC_SCALE`, SPI wiring — **unchanged on the same PCB**. Per-build: `MOTOR_LEFT_INVERT` / `MOTOR_RIGHT_INVERT` (Level 2 Step 5), `ESPNOW_CHANNEL`. | Brain firmware only. |
+| `sunshine_receiver/include/config.h` | `BRAIN_MAC` (Level 3 Step 1). | Receiver firmware only. |
+| `sunshine_app/src-tauri/src/simulation.rs` | **⚠ Manually duplicated physical constants** — must be kept in sync with the core header by hand: `KV`, `WHEEL_RADIUS`, `WHEEL_CENTER`, `IMU_RADIUS`, `POLE_PAIRS`. Plus **sim-only** plant parameters: `MASS`, `MOI`, `WHEEL_INERTIA`, `R_PHASE` (motor phase resistance), `HARD_IRON_X/Y`, `EARTH_FIELD` (horizontal component at your location), drag/tire constants. | Simulation mode of the host app only. A stale sim never affects the robot — but sim-based tuning is only as good as these numbers. |
+
+Cosmetic only: the KV label in `sunshine_app/src/components/DriverStation.tsx`. The sensor scale factors (`ADXL_SCALE_MS2`, `MAG_SCALE_UT`, battery encoding) appear in the core header and again in `pipeline.rs`/`StatusBar.tsx`, but they are properties of the PCB's sensors, not of the robot build — leave them alone.
+
+### How to obtain the sim-only numbers
+
+- `MASS` — kitchen scale.
+- `MOI` — CAD (preferred), or bifilar-pendulum measurement.
+- `WHEEL_INERTIA` — CAD, or `½·m_wheel·r²` as a first cut (includes motor rotor).
+- `R_PHASE` — motor datasheet, or multimeter across two phases ÷ 2.
+- `HARD_IRON_X/Y` — from any Level 3+ log: mean of raw `inputs.mag_x` / `inputs.mag_y` while spinning, × 0.058 µT/count. (The heading filter kills hard-iron by construction; the sim needs it only to *generate* realistic mag data.)
+- `EARTH_FIELD` — horizontal field strength for your location (NOAA calculator). Horizontal component **only**, not total.
+
+### What "fully brought up" means
+
+After Level 5, all of these work for the new robot with no further code changes: live driving (TANK + MELTY with translation), telemetry + logging, **replay** (`tools/replay/` links the same core, so `replay`, `analyze.py`, `translation_lag.py`, `erpm_bandwidth.py`, `wheel_slip.py`, `spinup_lag.py` are all robot-agnostic or read the new constants), and **simulation** (once `simulation.rs` is synced). The unit tests (`build/ctest`) assert physical invariants against whatever constants are compiled, with one exception: the `DRIFT_PHASE_LEAD_S` band in `test_control.c` encodes this robot's measured delay — after Level 5 Step 4, retarget that band to the new measurement.
+
+---
+
 ## Level 1 — Low-level Sensors
 
 **Goal:** All three sensors init and read correctly.  
@@ -397,7 +427,27 @@ In the host app:
 > fast enough — measured in the logs, and it also rotates the effective direction with
 > speed). Bring throttle up only until the LED is steady and spin is stable.
 
-### Step 4: Tune drift parameters
+### Step 4: Characterize the actuation delay (`DRIFT_PHASE_LEAD_S`)
+
+**Do this before hand-tuning anything.** There is a delay between commanding a DShot value and the wheel actually changing speed (ESC + motor + wheel inertia). At melty spin rates even ~15 ms rotates the translation force by >100°, and the symptom is exactly "motors audibly modulate but the robot only wobbles / drifts the wrong way". The delay is a property of your motor/ESC/wheel build, so **measure it, don't guess it** — and it *can* be measured from a log, unlike the direction sign.
+
+1. **Record a characterization log.** In MELTY at a moderate, steady spin throttle (LED stationary), hold each of W / A / S / D for ~2–3 seconds, with a second of no input between. A minute of this is plenty. Bouncing or brief airborne time is fine — the analysis takes a median over many windows.
+2. **Run the analyzer** on the log the app just saved:
+
+   ```bash
+   .venv/bin/python tools/replay/translation_lag.py ~/Documents/sunshine_logs/<your_log>.sun
+   ```
+
+   (It runs `tools/replay/build/replay` itself — build it first: `cd tools/replay/build && cmake .. && cmake --build .`)
+3. **Read the output.** Per window it prints the cross-correlation delay (ms) and a residual constant offset (deg); at the bottom, the recommended `DRIFT_PHASE_LEAD_S`. Sanity checks:
+   - `peak_r` mostly > 0.5 — the wheels are coherently following the drift wave. If not, fix eRPM telemetry (Level 2) first.
+   - Per-window delays should agree within a few ms, **including across both spin directions** if you logged any inverted running — that agreement is what proves it's a pure time delay.
+   - `offset residual` should be near 0°. A large residual (≫25°) means a constant phase error — that's a `DRIFT_PHASE_OFFSET_RADS` / convention problem, not lag; investigate before proceeding.
+4. **Set `DRIFT_PHASE_LEAD_S`** in `sunshine_core/include/sunshine_core.h` to the printed value, update the measured band in `test_control.c` ("PHASE LEAD" block) to bracket it, rebuild, reflash, and re-run Step 3. Translation direction should now be roughly right at any spin speed.
+
+Reference: on this robot the measured delay was ~20 ms (≈3 ms of which is eRPM telemetry lag, which the script subtracts) → `DRIFT_PHASE_LEAD_S = 0.018f`.
+
+### Step 5: Tune drift parameters
 
 See `TUNING.md` for the full drift tuning procedure. Constants are in `sunshine_core/include/sunshine_core.h`:
 
@@ -405,17 +455,17 @@ See `TUNING.md` for the full drift tuning procedure. Constants are in `sunshine_
 |-----------|--------|
 | `DRIFT_AMPLITUDE` | Translation strength as a fraction of available DShot headroom. Increase only after phase is roughly correct. |
 | `DRIFT_PLATEAU_WIDTH` | Fraction of each rotation spent at each +1/-1 differential plateau. Higher is more rectangle-like; lower gives wider ramps. |
-| `DRIFT_PHASE_OFFSET_RADS` | Fixed motor timing offset between the LED/driver heading and the wheel-force waveform. Default `0.0f`. |
-| `DRIFT_PHASE_LEAD_S` | Speed-dependent ESC/traction lag compensation. Added phase is `kf_omega * DRIFT_PHASE_LEAD_S`. Default `0.0f`. |
+| `DRIFT_PHASE_OFFSET_RADS` | Fixed motor timing offset between the LED/driver heading and the wheel-force waveform. Default `0.0f`; the Step 4 offset-residual check should confirm it stays ~0. |
+| `DRIFT_PHASE_LEAD_S` | Speed-dependent ESC/traction lag compensation, **measured in Step 4**. Added phase is `kf_omega * DRIFT_PHASE_LEAD_S`. |
 | `THETA_RATE_RADS` | How fast the driver heading reference rotates with left/right arrow. This rotates the LED reference, not motor timing. |
 
 Tune in this order:
 
-1. Leave `DRIFT_PHASE_OFFSET_RADS = 0.0f` and `DRIFT_PHASE_LEAD_S = 0.0f` for the first run. Use a moderate spin throttle where the robot is stable but not near max.
-2. If W produces a consistent sideways/backwards drift, adjust `DRIFT_PHASE_OFFSET_RADS` in 15-30 degree steps (`0.26f` to `0.52f` rad). Positive values advance the motor waveform in the code's CCW-positive phase convention; if the correction gets worse, use the opposite sign.
-3. If the correct offset changes with spin speed, tune `DRIFT_PHASE_LEAD_S`. At 240 rad/s, `0.001f` seconds is about 0.24 rad / 14 degrees of phase lead. Start with 1-2 ms changes, not large jumps. **Data-derived starting point:** `tools/replay/erpm_bandwidth.py` measures the DShot→eRPM lag on a real log (~15-25 ms, but that *includes* eRPM telemetry reporting lag, so it's an upper bound). Begin near the low end (`0.005f`) and confirm the sign on hardware — the direction effect can't be replayed (logs have no robot position).
-4. After direction is repeatable, raise or lower `DRIFT_AMPLITUDE`. If the robot still barely moves but the direction is correct, increase it. If spin speed collapses or it chatters, decrease it.
-5. Adjust `DRIFT_PLATEAU_WIDTH` only after amplitude/phase are sane. Higher values dwell longer at max command and approach a rectangle; lower values widen the ramps and are gentler for the ESC/wheel.
+1. With Step 4's measured `DRIFT_PHASE_LEAD_S` in place, drive at a moderate spin throttle where the robot is stable but not near max.
+2. If W still produces a consistent sideways/backwards drift **that is the same angle at different spin speeds**, adjust `DRIFT_PHASE_OFFSET_RADS` in 15-30 degree steps (`0.26f` to `0.52f` rad). Positive values advance the motor waveform in the code's CCW-positive phase convention; if the correction gets worse, use the opposite sign. (A direction error that *grows with spin speed* means the lead is off instead — re-measure Step 4, or nudge `DRIFT_PHASE_LEAD_S` by 1-2 ms: at 240 rad/s, `0.001f` is ~14° of phase.)
+3. After direction is repeatable, raise or lower `DRIFT_AMPLITUDE`. If the robot still barely moves but the direction is correct, increase it. If spin speed collapses or it chatters, decrease it.
+4. Adjust `DRIFT_PLATEAU_WIDTH` only after amplitude/phase are sane. Higher values dwell longer at max command and approach a rectangle; lower values widen the ramps and are gentler for the ESC/wheel.
+5. After tuning, log another translation run and re-run `translation_lag.py` — the offset residual should stay ~0 and the delay unchanged; if you changed wheels/motors mid-tune, re-do Step 4.
 
 ### Pass criteria
 

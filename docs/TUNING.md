@@ -128,7 +128,7 @@ MELTY mode applies a differential DShot command that changes with robot angle. T
 | `DRIFT_AMPLITUDE` | 0.40 | Max differential as a fraction of available symmetric DShot headroom. |
 | `DRIFT_PLATEAU_WIDTH` | 0.35 | Fraction of full rotation spent at each +1 and -1 plateau. 0.35 gives two 126° plateaus and two 54° ramps. |
 | `DRIFT_PHASE_OFFSET_RADS` | 0.0 | Fixed motor-timing offset between the LED/driver heading and the wheel-force waveform. |
-| `DRIFT_PHASE_LEAD_S` | 0.0 | ESC/traction lag compensation. Added phase is `kf_omega * DRIFT_PHASE_LEAD_S`. |
+| `DRIFT_PHASE_LEAD_S` | 0.018 | ESC/traction lag compensation. Added phase is `kf_omega * DRIFT_PHASE_LEAD_S`. **Measured, per-build** — `tools/replay/translation_lag.py`, procedure in BRINGUP.md Level 5 Step 4. |
 | `THETA_RATE_RADS` | π rad/s | Heading offset rate per full left/right arrow deflection (ctrl_theta = ±127). |
 
 ### How the pulse works
@@ -174,12 +174,24 @@ There are **two** reasons to translate at a *moderate* spin, not maximum:
 ### `DRIFT_PHASE_LEAD_S` from the eRPM lag
 
 The DShot→eRPM lag above turns into a heading-referenced phase error `omega × lag`
-that grows with spin rate — exactly what `DRIFT_PHASE_LEAD_S` compensates. The logs
-put the lag on the order of ~15–25 ms (this **includes** the eRPM telemetry reporting
-lag, so treat it as an upper bound). Start `DRIFT_PHASE_LEAD_S` near the low end
-(e.g. `0.005f`–`0.010f`) and confirm the sign/magnitude on hardware — the *direction*
-effect cannot be replayed (logs carry no robot position). Use the two-speed method in
-Step 3 below to refine it.
+that grows with spin rate — exactly what `DRIFT_PHASE_LEAD_S` compensates.
+
+**Measure it, don't guess it:** `tools/replay/translation_lag.py <log.sun>` cross-
+correlates the logged DShot differential against the eRPM differential over every
+translation window and prints the recommended constant (full procedure: BRINGUP.md
+Level 5 Step 4). Unlike single-frequency demodulation (`erpm_bandwidth.py`) the
+time-domain cross-correlation is not ambiguous modulo one rotation, and the script's
+constant-offset residual check separates lag from a `DRIFT_PHASE_OFFSET_RADS` problem.
+
+**Measured (2026-07-20 translation2 log):** a pure **time delay of ~20 ms** (18–24 ms
+over 24 windows), identical for both spin directions, with **no constant offset** (so
+`DRIFT_PHASE_OFFSET_RADS` stays 0 — the phase convention is correct). Subtracting the
+~3 ms median-5 eRPM telemetry lag leaves **~17 ms of physical actuation delay** →
+`DRIFT_PHASE_LEAD_S = 0.018f`. Uncompensated, this was a 110–150° force-direction
+error at 1000–1300 RPM — the wheel-speed peak landed nearly opposite the commanded
+direction, which is why the robot wobbled and barely translated. Confirm the residual
+direction error on hardware (position cannot be replayed from logs) and refine with
+the two-speed method in Step 3 below.
 
 ### Inverted operation flips the apparent translation direction (not a bug)
 

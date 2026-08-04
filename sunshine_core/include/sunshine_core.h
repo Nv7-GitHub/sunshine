@@ -152,7 +152,16 @@
 #define DRIFT_PLATEAU_WIDTH 0.35f   /* fraction of rotation at each +/- peak diff */
 #define DRIFT_AMPLITUDE     0.40f   /* max diff as fraction of available headroom */
 #define DRIFT_PHASE_OFFSET_RADS 0.0f /* fixed motor timing offset, rad             */
-#define DRIFT_PHASE_LEAD_S  0.0f    /* ESC/traction lag compensation, seconds     */
+/* ESC/traction lag compensation. PER-BUILD: measured, not designed — re-run
+ * tools/replay/translation_lag.py on a translation log for any new robot
+ * (procedure: BRINGUP.md Level 5). On the 2026-07-20 translation2 log the
+ * DShot→eRPM differential is a pure ~20 ms TIME delay (18–24 ms across 24
+ * windows, BOTH spin directions; the lock-in phase fits omega·tau with ~0
+ * constant term, so DRIFT_PHASE_OFFSET_RADS stays 0). Minus ~3 ms median-5
+ * eRPM telemetry lag → ~17 ms physical. Uncompensated this rotated the
+ * translation force 110–150° at 1000–1300 RPM, which is why the robot wobbled
+ * instead of translating. Signed kf_omega handles inverted operation. */
+#define DRIFT_PHASE_LEAD_S  0.018f  /* ESC/traction lag compensation, seconds     */
 #define THETA_RATE_RADS     3.14159265f  /* rad/s per full ctrl_theta              */
 #define MAX_DSHOT_SPIN      DSHOT_MAX
 #define DSHOT_NEUTRAL       1048.0f

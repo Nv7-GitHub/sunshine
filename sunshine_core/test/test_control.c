@@ -14,11 +14,12 @@ static SunshineInput make_input(uint8_t mode, uint8_t throttle,
     return in;
 }
 
-static float melty_halfdiff_at(float phase, uint8_t throttle) {
+static float melty_halfdiff_omega(float phase, float omega, uint8_t throttle) {
     SunshineState s;
     SunshineVars v;
     sunshine_state_init(&s);
     s.kf_theta = phase;
+    s.kf_omega = omega;
     /* Zeroed vars = 0 V battery, which is implausible, so the wheel-speed cap
        fails open and these waveform assertions keep their pre-cap values. Do NOT
        "fix" this by supplying a battery — the cap has its own tests below. */
@@ -26,6 +27,10 @@ static float melty_halfdiff_at(float phase, uint8_t throttle) {
     SunshineInput in = make_input(SUNSHINE_MODE_MELTY, throttle, 127, 0, 0);
     control_step(&in, &s, &v);
     return 0.5f * (v.dshot_cmd_left - v.dshot_cmd_right);
+}
+
+static float melty_halfdiff_at(float phase, uint8_t throttle) {
+    return melty_halfdiff_omega(phase, 0.0f, throttle);
 }
 
 /* One MELTY control_step with the full cap-relevant state made explicit. */
@@ -199,6 +204,40 @@ int main(void) {
         ASSERT(v.dshot_cmd_right > DSHOT_NEUTRAL + 1.0f, "MELTY high throttle drift does not clip low side");
     }
 
+    /* ── MELTY actuation-lag phase lead ────────────────────────────────────
+       Measured by tools/replay/translation_lag.py on the 2026-07-20 translation2
+       log: the wheel-speed response (eRPM differential) lags the DShot
+       differential by a pure TIME delay of ~20 ms (18–24 ms across 24 windows,
+       BOTH spin directions; lock-in phase fits omega*tau with no constant
+       offset). Minus ~3 ms of median-5 eRPM telemetry lag → ~17 ms physical.
+       Uncompensated, that is a 110–150° force-direction error at 1000–1300 RPM —
+       translation mostly cancels. DRIFT_PHASE_LEAD_S must compensate it. The
+       band below is generous because the delay is per-build (motor/ESC/wheel
+       inertia): re-measure per BRINGUP.md Level 5 and retarget on a new robot. */
+    {
+        /* (a) The compiled lead must be in the measured band. */
+        ASSERT(DRIFT_PHASE_LEAD_S >= 0.010f && DRIFT_PHASE_LEAD_S <= 0.025f,
+               "PHASE LEAD: compensates the measured ~17 ms actuation delay");
+
+        /* (b) Sign/wiring: at spin rate W the wave must be ADVANCED by exactly
+              W*LEAD — i.e. spinning output at theta equals static output at
+              theta + W*LEAD. A retard (sign flip) would double the error. */
+        const float W = 125.0f;                 /* rad/s, mid-log spin rate */
+        for (float th = -3.0f; th <= 3.0f; th += 0.37f) {
+            float spinning = melty_halfdiff_omega(th, W, 100);
+            float advanced = melty_halfdiff_omega(th + W * DRIFT_PHASE_LEAD_S,
+                                                  0.0f, 100);
+            ASSERT_NEAR(spinning, advanced, 1.0f,
+                        "PHASE LEAD: wave advanced by omega*lead (sign correct)");
+        }
+
+        /* (c) Negative spin (inverted robot) must advance the other way. */
+        float neg  = melty_halfdiff_omega(0.5f, -W, 100);
+        float nexp = melty_halfdiff_omega(0.5f - W * DRIFT_PHASE_LEAD_S, 0.0f, 100);
+        ASSERT_NEAR(neg, nexp, 1.0f,
+                    "PHASE LEAD: negative spin advances in the opposite direction");
+    }
+
     /* ── MELTY wheel-speed cap ─────────────────────────────────────────────
        The cap inverts the ESC's open-loop voltage-source model to command a
        no-load wheel speed of "rolling speed + fixed slip allowance", which bounds
@@ -252,8 +291,11 @@ int main(void) {
 
         /* (5) The drift wave still rides above and below the CAPPED base: one
               wheel legitimately exceeds the cap while the other brakes. That
-              asymmetry IS translation and must not be clamped away. */
-        SunshineVars tr = melty_run(255, 127, 100.0f, 100.0f, 1, 8.0f, 0.0f);
+              asymmetry IS translation and must not be clamped away. theta cancels
+              the omega*DRIFT_PHASE_LEAD_S advance so the wave sits on its +
+              plateau regardless of the compiled lead. */
+        SunshineVars tr = melty_run(255, 127, 100.0f, 100.0f, 1, 8.0f,
+                                    -100.0f * DRIFT_PHASE_LEAD_S);
         ASSERT(tr.dshot_cmd_left > tr.dshot_cmd_right,
                "CAP: drift differential survives the cap");
         ASSERT_NEAR(0.5f * (tr.dshot_cmd_left + tr.dshot_cmd_right),
