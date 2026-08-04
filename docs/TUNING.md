@@ -171,6 +171,23 @@ There are **two** reasons to translate at a *moderate* spin, not maximum:
    direction rotates with speed. Higher RPM buys gyroscopic stability but hurts
    translation authority; find the sweet spot experimentally.
 
+### Translation force requires the wheel-speed cap (tire saturation)
+
+Translation force is the *difference* between the two wheels' contact-patch friction
+forces, and friction saturates at ~µN within a few tenths of a m/s of slip. Measured
+on the pre-cap translation2 log: both wheels carried **+0.7 to +3.7 m/s of constant
+forward slip**, and the drift-wave modulation (±0.1–0.9 m/s realized) never brought
+either wheel near zero slip — so both tires sat pinned at saturated µN all
+revolution and the differential force was ~zero *regardless of the commanded
+waveform*. Symptom: motors audibly modulate, eRPM visibly modulates, robot barely
+moves and wobbles inconsistently (the residual forces are normal-load fluctuations,
+not the drift wave). The wheel-speed cap fixes this as a side effect of fixing the
+bounce: it pins mean slip at `WHEEL_SLIP_ALLOW_MS` (1.0 m/s), so the drift wave now
+swings the retreating wheel down through zero slip into braking — one wheel
+saturated forward, the other near-zero/braking = a real once-per-rev force
+differential. Consequence: **do not "fix" weak translation by disabling or loosening
+the cap** — that removes the very condition translation needs.
+
 ### `DRIFT_PHASE_LEAD_S` from the eRPM lag
 
 The DShot→eRPM lag above turns into a heading-referenced phase error `omega × lag`
