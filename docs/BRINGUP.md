@@ -46,25 +46,24 @@ This codebase brings up **any two-wheel meltybrain that uses the same brain PCB*
 
 | File | Constants | Consumed by |
 |------|-----------|-------------|
-| `sunshine_core/include/sunshine_core.h` | **Drivetrain block:** `WHEEL_RADIUS_M`, `WHEEL_CENTER_M`, `MOTOR_KV_RPM_PER_V` (nameplate, do **not** derate — see comment there), `MOTOR_POLE_PAIRS`, `WHEEL_SLIP_ALLOW_MS`. **Geometry:** `IMU_RADIUS_M` (accel distance from spin axis). **Measured:** `DRIFT_PHASE_LEAD_S` (Level 5 Step 4 below). | Brain firmware, host app, replay tool, and unit tests all **link this one header** — change it once, rebuild each. |
+| `sunshine_core/include/sunshine_core.h` | **The one file with every per-robot number.** Drivetrain block: `WHEEL_RADIUS_M`, `WHEEL_CENTER_M`, `MOTOR_KV_RPM_PER_V` (nameplate, do **not** derate — see comment there), `MOTOR_POLE_PAIRS`, `WHEEL_SLIP_ALLOW_MS`. Geometry: `IMU_RADIUS_M` (accel distance from spin axis). Measured: `DRIFT_PHASE_LEAD_S` (Level 5 Step 4 below). Plant/environment block (used by the host **simulation** only, but kept here so nothing per-robot lives anywhere else): `ROBOT_MASS_KG`, `ROBOT_MOI_KGM2`, `WHEEL_INERTIA_KGM2`, `MOTOR_R_PHASE_OHM`, `BATT_NOMINAL_V`, `BATT_R_INTERNAL_OHM`, `EARTH_FIELD_UT`, `EARTH_ANGLE_RAD`, `HARD_IRON_X/Y_UT`, `MAG_HF_TONE_*`, `SIM_*` model fudge factors. | Brain firmware, host app, replay tool, and unit tests all **link this one header**. The app's `build.rs` additionally **parses it and generates the Rust constants** for `simulation.rs` at build time — there is no hand-synced copy anywhere; change the header, rebuild, done. |
 | `sunshine_brain/include/config.h` | Pins, `BATT_ADC_SCALE`, SPI wiring — **unchanged on the same PCB**. Per-build: `MOTOR_LEFT_INVERT` / `MOTOR_RIGHT_INVERT` (Level 2 Step 5), `ESPNOW_CHANNEL`. | Brain firmware only. |
 | `sunshine_receiver/include/config.h` | `BRAIN_MAC` (Level 3 Step 1). | Receiver firmware only. |
-| `sunshine_app/src-tauri/src/simulation.rs` | **⚠ Manually duplicated physical constants** — must be kept in sync with the core header by hand: `KV`, `WHEEL_RADIUS`, `WHEEL_CENTER`, `IMU_RADIUS`, `POLE_PAIRS`. Plus **sim-only** plant parameters: `MASS`, `MOI`, `WHEEL_INERTIA`, `R_PHASE` (motor phase resistance), `HARD_IRON_X/Y`, `EARTH_FIELD` (horizontal component at your location), drag/tire constants. | Simulation mode of the host app only. A stale sim never affects the robot — but sim-based tuning is only as good as these numbers. |
 
-Cosmetic only: the KV label in `sunshine_app/src/components/DriverStation.tsx`. The sensor scale factors (`ADXL_SCALE_MS2`, `MAG_SCALE_UT`, battery encoding) appear in the core header and again in `pipeline.rs`/`StatusBar.tsx`, but they are properties of the PCB's sensors, not of the robot build — leave them alone.
+Cosmetic only: the KV label in `sunshine_app/src/components/DriverStation.tsx`. The sensor scale factors (`ADXL_SCALE_MS2`, `MAG_SCALE_UT`, battery encoding) also appear in `pipeline.rs`/`StatusBar.tsx`, but they are properties of the PCB's sensors, not of the robot build — leave them alone.
 
-### How to obtain the sim-only numbers
+### How to obtain the plant/environment numbers
 
-- `MASS` — kitchen scale.
-- `MOI` — CAD (preferred), or bifilar-pendulum measurement.
-- `WHEEL_INERTIA` — CAD, or `½·m_wheel·r²` as a first cut (includes motor rotor).
-- `R_PHASE` — motor datasheet, or multimeter across two phases ÷ 2.
-- `HARD_IRON_X/Y` — from any Level 3+ log: mean of raw `inputs.mag_x` / `inputs.mag_y` while spinning, × 0.058 µT/count. (The heading filter kills hard-iron by construction; the sim needs it only to *generate* realistic mag data.)
-- `EARTH_FIELD` — horizontal field strength for your location (NOAA calculator). Horizontal component **only**, not total.
+- `ROBOT_MASS_KG` — kitchen scale.
+- `ROBOT_MOI_KGM2` — CAD (preferred), or bifilar-pendulum measurement.
+- `WHEEL_INERTIA_KGM2` — CAD, or `½·m_wheel·r²` as a first cut (includes motor rotor).
+- `MOTOR_R_PHASE_OHM` — motor datasheet, or multimeter across two phases ÷ 2.
+- `HARD_IRON_X_UT` / `HARD_IRON_Y_UT` — from any Level 3+ log: mean of raw `inputs.mag_x` / `inputs.mag_y` while spinning, × 0.058 µT/count. (The heading filter kills hard-iron by construction; the sim needs it only to *generate* realistic mag data.)
+- `EARTH_FIELD_UT` — horizontal field strength for your location (NOAA calculator). Horizontal component **only**, not total.
 
 ### What "fully brought up" means
 
-After Level 5, all of these work for the new robot with no further code changes: live driving (TANK + MELTY with translation), telemetry + logging, **replay** (`tools/replay/` links the same core, so `replay`, `analyze.py`, `translation_lag.py`, `erpm_bandwidth.py`, `wheel_slip.py`, `spinup_lag.py` are all robot-agnostic or read the new constants), and **simulation** (once `simulation.rs` is synced). The unit tests (`build/ctest`) assert physical invariants against whatever constants are compiled, with one exception: the `DRIFT_PHASE_LEAD_S` band in `test_control.c` encodes this robot's measured delay — after Level 5 Step 4, retarget that band to the new measurement.
+After Level 5, all of these work for the new robot with no further code changes: live driving (TANK + MELTY with translation), telemetry + logging, **replay** (`tools/replay/` links the same core, so `replay`, `analyze.py`, `translation_lag.py`, `erpm_bandwidth.py`, `wheel_slip.py`, `spinup_lag.py` are all robot-agnostic or read the new constants), and **simulation** (its constants are generated from the same header at build time). The unit tests (`build/ctest`) assert physical invariants against whatever constants are compiled, with one exception: the `DRIFT_PHASE_LEAD_S` band in `test_control.c` encodes this robot's measured delay — after Level 5 Step 4, retarget that band to the new measurement.
 
 ---
 

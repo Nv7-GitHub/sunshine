@@ -80,6 +80,43 @@
 #define MOTOR_POLE_PAIRS    7        /* 14-pole motor -> 7 pole pairs        */
 #define WHEEL_SLIP_ALLOW_MS 1.0f     /* allowed slip at the contact patch, m/s */
 
+/* ── Robot plant / environment (per-build; used by the host SIMULATION only) ──
+ * The C core does not read these, but they live here so ALL per-robot numbers
+ * are in one file: the app's build.rs parses this header and generates the Rust
+ * constants for simulation.rs at build time — there is no second copy to keep
+ * in sync. Sources: mass from a scale; MOI/wheel inertia from CAD; R_phase from
+ * the motor datasheet (or phase-to-phase resistance / 2); hard-iron and the mag
+ * HF tone measured from a real log (see BRINGUP.md "Porting to a New Robot");
+ * Earth field = HORIZONTAL component for your location (NOAA calculator) — the
+ * robot spins in a horizontal plane, so the vertical component never rotates. */
+#define ROBOT_MASS_KG        0.454f
+#define ROBOT_MOI_KGM2       1.214e-3f    /* body yaw inertia                  */
+#define WHEEL_INERTIA_KGM2   6.40744019e-6f /* wheel + motor rotor, each        */
+#define MOTOR_R_PHASE_OHM    0.075f
+#define BATT_NOMINAL_V       8.4f         /* sim pack voltage (2S full-ish)    */
+#define BATT_R_INTERNAL_OHM  0.008f
+#define EARTH_FIELD_UT       25.0f        /* horizontal component ONLY, µT     */
+#define EARTH_ANGLE_RAD      0.0f         /* field azimuth (arbitrary ref)     */
+/* Hard-iron: body-frame bias from motor magnets/PCB traces, measured as the
+ * mean of raw mag_x/mag_y over a spinning log × MAG_SCALE_UT. The heading
+ * band-pass kills it by construction; the sim needs it only to GENERATE
+ * realistic raw mag data. */
+#define HARD_IRON_X_UT       -95.0f
+#define HARD_IRON_Y_UT       103.0f
+/* LIS3MDL 1 kHz low-power-mode sampling artifact: a tone at fs/6 ≈ 167 Hz,
+ * measured ~7 µT on X and ~2 µT on Y (spiritridge log). Modelled so the sim
+ * exercises the band-pass's HF rejection. */
+#define MAG_HF_TONE_HZ       166.6667f
+#define MAG_HF_TONE_X_UT     7.0f
+#define MAG_HF_TONE_Y_UT     2.0f
+/* SIM_*: lumped plant-model fudge factors (not measurable robot properties) —
+ * retune only if sim spin-up/translation feel diverges from real logs. */
+#define SIM_BODY_DRAG        0.05f        /* body spin drag, 1/s               */
+#define SIM_TRANSLATION_DRAG 2.0f         /* rolling/carpet loss, 1/s          */
+#define SIM_TIRE_DAMPING     10.0f        /* N per m/s of longitudinal slip    */
+#define SIM_MAX_TIRE_FORCE   25.0f        /* crude traction limit per wheel, N */
+#define SIM_WHEEL_DRAG       2.0e-6f      /* wheel bearing/air drag torque coeff */
+
 /* ── Kalman tuning (override with -D flag for tuning builds) ───────────── */
 #ifndef KF_Q_THETA
 #define KF_Q_THETA   1e-6f
