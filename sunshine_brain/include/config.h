@@ -34,12 +34,14 @@
 #define PIN_BATT_ADC 7
 // V = adc_raw * (3.3/4095) * (R_high+R_low)/R_low = adc_raw * (3.3/4095) * 3.0
 static constexpr float BATT_ADC_SCALE = (3.3f / 4095.0f) * 3.0f;
-// Battery low-pass cutoff. The raw ADC carries a strong ~50 Hz (2×-spin) EMI tone
+// Battery low-pass cutoff. The raw ADC carries a strong ~50 Hz (2×-spin) EMI
+// tone
 // (~±100 mV) that swamps the 20 mV telemetry resolution and makes batt_voltage
 // unusable. A single-pole IIR at this cutoff rejects it (~10× at 50 Hz) while
 // still passing real current-draw sag (tens–hundreds of ms). Raise for snappier
 // sag response, lower for a smoother trace. (Oversampling within the 1 kHz tick
-// would NOT help — the noise is a slow spin-synchronous tone, not fast ADC noise.)
+// would NOT help — the noise is a slow spin-synchronous tone, not fast ADC
+// noise.)
 static constexpr float BATT_LP_HZ = 6.0f;
 
 // ── LED
@@ -68,7 +70,7 @@ static constexpr uint32_t CTRL_WATCHDOG_MS = 500;   // no ctrl → DISABLED
 // rotation (viewed from above). If the robot spins CW, flip both. If only one
 // motor spins the wrong way, flip that one. See BRINGUP.md Level 2 for the
 // verification procedure.
-static constexpr bool MOTOR_LEFT_INVERT = true;
+static constexpr bool MOTOR_LEFT_INVERT = false;
 static constexpr bool MOTOR_RIGHT_INVERT = true;
 
 // ── ESP-NOW
