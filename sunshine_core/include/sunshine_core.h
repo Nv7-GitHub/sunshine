@@ -187,7 +187,7 @@
 
 /* ── Control tuning ────────────────────────────────────────────────────── */
 #define DRIFT_PLATEAU_WIDTH 0.35f   /* fraction of rotation at each +/- peak diff */
-#define DRIFT_AMPLITUDE     0.40f   /* max diff as fraction of available headroom */
+#define DRIFT_AMPLITUDE     0.60f   /* max diff as fraction of available headroom */
 #define DRIFT_PHASE_OFFSET_RADS 0.0f /* fixed motor timing offset, rad             */
 /* ESC/traction lag compensation. PER-BUILD: measured, not designed — re-run
  * tools/replay/translation_lag.py on a translation log for any new robot
