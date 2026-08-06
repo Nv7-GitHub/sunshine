@@ -86,7 +86,8 @@ static float map_to_dshot(float v) {
  * up. That is the right trade, since a MELTY robot with no heading reference is
  * undriveable anyway, but it converts "degraded but spinning" into "will not spin
  * up" and is therefore documented in BRINGUP.md so bringup sees it first. */
-static float melty_speed_cap(const SunshineState *s, const SunshineVars *v, float base) {
+static float melty_speed_cap(const SunshineState *s, const SunshineVars *v, float base,
+                             float drive_mag) {
     /* Written as a positive-range test so a NaN battery also fails open. */
     if (!(v->batt_voltage >= CAP_VBATT_MIN_V && v->batt_voltage <= CAP_VBATT_MAX_V))
         return base;
@@ -94,9 +95,22 @@ static float melty_speed_cap(const SunshineState *s, const SunshineVars *v, floa
     /* Same lock condition brain.c uses to decide whether to trust the mag rate. */
     int locked = v->mag_valid && fabsf(s->spin_rate_lp) > SUNSHINE_MAG_MIN_OMEGA;
 
+    /* Translation slip un-bias. The slip allowance exists to give spin-up torque,
+     * but during translation it is a FORCE DEAD ZONE: tire friction saturates
+     * within a few tenths of m/s of slip, so with both wheels biased +1 m/s
+     * forward the drift wave's first ~1 m/s of differential moves neither tire
+     * off forward saturation and produces ~zero force (measured on the
+     * 2026-08-06 logs: light presses modulated the motors audibly but barely
+     * translated; only deep-saturation amplitudes translated, which is also
+     * what bounced the robot). Scaling the allowance by (1 - drive_mag) centres
+     * the wave on ZERO slip at full stick — advancing wheel pushes, retreating
+     * wheel genuinely brakes, both in the controllable friction range — so
+     * translation force is proportional to the stick from the first counts. */
+    float allow_ms = WHEEL_SLIP_ALLOW_MS * (1.0f - drive_mag);
+
     float w_ref    = fmaxf(locked ? fabsf(s->kf_omega) : 0.0f, SUNSHINE_MAG_MIN_OMEGA);
     float w_cap    = w_ref * (WHEEL_CENTER_M / WHEEL_RADIUS_M)   /* rolling rate    */
-                     + WHEEL_SLIP_ALLOW_MS / WHEEL_RADIUS_M;     /* + slip allowance */
+                     + allow_ms / WHEEL_RADIUS_M;                /* + slip allowance */
     float v_needed = (w_cap * RADS_TO_RPM) / MOTOR_KV_RPM_PER_V;
     float cap      = DSHOT_NEUTRAL + (v_needed / v->batt_voltage) * (DSHOT_MAX - DSHOT_NEUTRAL);
 
@@ -162,6 +176,11 @@ void control_step(const SunshineInput *in, SunshineState *s, SunshineVars *v) {
     float drive_dir = atan2f(cy, cx);
     float drive_mag = sqrtf(cx*cx + cy*cy) / 127.0f;
     drive_mag       = clampf(drive_mag, 0.0f, 1.0f);
+    /* Low-spin translation fade — see DRIFT_OMEGA_FADE_* in sunshine_core.h.
+     * Applied BEFORE the cap so a faded drive also restores the full spin-up
+     * slip allowance (the un-bias scales by the post-fade drive_mag). */
+    drive_mag *= clampf((fabsf(s->kf_omega) - DRIFT_OMEGA_FADE_LO)
+                        / (DRIFT_OMEGA_FADE_HI - DRIFT_OMEGA_FADE_LO), 0.0f, 1.0f);
 
     float base = DSHOT_NEUTRAL + spin_span;
     /* Cap the MEAN wheel command before headroom is derived from it, so the drift
@@ -169,7 +188,7 @@ void control_step(const SunshineInput *in, SunshineState *s, SunshineVars *v) {
      * still rides above AND below the capped base, so the driving wheel briefly
      * exceeds the cap while the other brakes — that asymmetry IS the translation
      * mechanism and must not be clamped away. */
-    base = melty_speed_cap(s, v, base);
+    base = melty_speed_cap(s, v, base, drive_mag);
     float headroom = fminf(base - DSHOT_NEUTRAL, DSHOT_MAX - base);
     if (headroom < 0.0f) headroom = 0.0f;
 

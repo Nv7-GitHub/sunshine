@@ -186,9 +186,28 @@
 #define MAG_SPIN_RATE_LP_HZ 3.2f  /* SIGNED mag-rate LP cutoff, Hz */
 
 /* ── Control tuning ────────────────────────────────────────────────────── */
-#define DRIFT_PLATEAU_WIDTH 0.35f   /* fraction of rotation at each +/- peak diff */
+/* 0.25 → 90° ramps (~10 ms at combat spin). The old 0.35 commanded a full wheel
+ * reversal in ~6 ms against the measured ~20 ms actuation lag: the plant rounded
+ * the edges off anyway (no force gained), while the harmonic content that did get
+ * through showed as elevated 2x/3x-rev vibration lines in accel_z during
+ * translation (2026-08-06 logs). Wider ramps deliver the same fundamental with
+ * less per-edge wheel-KE dump and gyroscopic kick. */
+#define DRIFT_PLATEAU_WIDTH 0.25f   /* fraction of rotation at each +/- peak diff */
 #define DRIFT_AMPLITUDE     0.60f   /* max diff as fraction of available headroom */
 #define DRIFT_PHASE_OFFSET_RADS 0.0f /* fixed motor timing offset, rad             */
+/* Low-spin translation fade (2026-08-06 logs). Two measured reasons translation
+ * must not run at low spin: (1) the collapse trap — an edge-strike slowdown drops
+ * kf_omega, the cap follows it down and (with ESC complementary-PWM braking)
+ * actively brakes the wheels, parking the robot at 55–60 rad/s for as long as the
+ * stick is held, where recovery is throttled by the same cap; (2) the actuation
+ * phase lag grows at low spin (wheel-diff lag measured 50–80° at 60–100 rad/s vs
+ * ~0–10° at 145–165), so what translation remains is weak and crabbed anyway.
+ * Fading drive_mag to zero below FADE_LO breaks the trap: the drift stops, the
+ * full slip allowance returns, and the robot spins back up through the band.
+ * FADE_LO sits above the 50.3 rad/s mag floor (where the trap parks); FADE_HI is
+ * below the ~90+ rad/s range where translation demonstrably works. */
+#define DRIFT_OMEGA_FADE_LO  60.0f  /* rad/s: translation fully off below        */
+#define DRIFT_OMEGA_FADE_HI  85.0f  /* rad/s: full translation authority above   */
 /* ESC/traction lag compensation. PER-BUILD: measured, not designed — re-run
  * tools/replay/translation_lag.py on a translation log for any new robot
  * (procedure: BRINGUP.md Level 5). On the 2026-07-20 translation2 log the

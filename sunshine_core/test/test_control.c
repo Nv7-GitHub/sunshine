@@ -30,7 +30,11 @@ static float melty_halfdiff_omega(float phase, float omega, uint8_t throttle) {
 }
 
 static float melty_halfdiff_at(float phase, uint8_t throttle) {
-    return melty_halfdiff_omega(phase, 0.0f, throttle);
+    /* Waveform-shape probe. Translation fades out below DRIFT_OMEGA_FADE_HI, so
+       probe at a spinning rate and cancel the omega*lead advance so `phase` is
+       still the wave's own argument. */
+    const float W = 125.0f;
+    return melty_halfdiff_omega(phase - W * DRIFT_PHASE_LEAD_S, W, throttle);
 }
 
 /* One MELTY control_step with the full cap-relevant state made explicit. */
@@ -209,6 +213,7 @@ int main(void) {
     {
         sunshine_state_init(&s);
         s.kf_theta = 0.0f;
+        s.kf_omega = 200.0f;   /* above the translation fade band so drift is live */
         in = make_input(SUNSHINE_MODE_MELTY, 240, 127, 0, 0);
         control_step(&in, &s, &v);
         ASSERT(v.dshot_cmd_left < DSHOT_MAX - 1.0f, "MELTY high throttle drift does not clip high side");
@@ -231,20 +236,24 @@ int main(void) {
                "PHASE LEAD: compensates the measured ~17 ms actuation delay");
 
         /* (b) Sign/wiring: at spin rate W the wave must be ADVANCED by exactly
-              W*LEAD — i.e. spinning output at theta equals static output at
-              theta + W*LEAD. A retard (sign flip) would double the error. */
-        const float W = 125.0f;                 /* rad/s, mid-log spin rate */
+              W*LEAD. Both probes spin above the translation fade band (omega=0
+              would fade the drift to zero), so compare W against W2 with the
+              phase pre-shifted by (W-W2)*LEAD: both then evaluate the wave at
+              theta + W*LEAD, and a retard (sign flip) breaks the match. */
+        const float W = 125.0f, W2 = 150.0f;    /* rad/s, mid-log spin rates */
         for (float th = -3.0f; th <= 3.0f; th += 0.37f) {
             float spinning = melty_halfdiff_omega(th, W, 100);
-            float advanced = melty_halfdiff_omega(th + W * DRIFT_PHASE_LEAD_S,
-                                                  0.0f, 100);
+            float advanced = melty_halfdiff_omega(th + (W - W2) * DRIFT_PHASE_LEAD_S,
+                                                  W2, 100);
             ASSERT_NEAR(spinning, advanced, 1.0f,
                         "PHASE LEAD: wave advanced by omega*lead (sign correct)");
         }
 
-        /* (c) Negative spin (inverted robot) must advance the other way. */
+        /* (c) Negative spin (inverted robot) must advance the other way:
+              halfdiff(0.5, -W) evaluates the wave at 0.5 - W*LEAD, which equals
+              a positive-spin probe pre-retarded by 2*W*LEAD. */
         float neg  = melty_halfdiff_omega(0.5f, -W, 100);
-        float nexp = melty_halfdiff_omega(0.5f - W * DRIFT_PHASE_LEAD_S, 0.0f, 100);
+        float nexp = melty_halfdiff_omega(0.5f - 2.0f * W * DRIFT_PHASE_LEAD_S, W, 100);
         ASSERT_NEAR(neg, nexp, 1.0f,
                     "PHASE LEAD: negative spin advances in the opposite direction");
     }
@@ -300,20 +309,57 @@ int main(void) {
         ASSERT(b75.dshot_cmd_left > b90.dshot_cmd_left,
                "CAP: lower battery needs a higher DShot for the same wheel speed");
 
-        /* (5) The drift wave still rides above and below the CAPPED base: one
-              wheel legitimately exceeds the cap while the other brakes. That
-              asymmetry IS translation and must not be clamped away. theta cancels
-              the omega*DRIFT_PHASE_LEAD_S advance so the wave sits on its +
-              plateau regardless of the compiled lead. */
+        /* (5) The drift wave rides above and below the CAPPED base: one wheel
+              legitimately exceeds the cap while the other brakes. That asymmetry
+              IS translation and must not be clamped away. theta cancels the
+              omega*DRIFT_PHASE_LEAD_S advance so the wave sits on its + plateau
+              regardless of the compiled lead. */
         SunshineVars tr = melty_run(255, 127, 100.0f, 100.0f, 1, 8.0f,
                                     -100.0f * DRIFT_PHASE_LEAD_S);
         ASSERT(tr.dshot_cmd_left > tr.dshot_cmd_right,
                "CAP: drift differential survives the cap");
-        ASSERT_NEAR(0.5f * (tr.dshot_cmd_left + tr.dshot_cmd_right),
-                    l100.dshot_cmd_left, 1.0f,
-                    "CAP: drift wave rides symmetrically about the capped base");
-        ASSERT(tr.dshot_cmd_left > l100.dshot_cmd_left,
-               "CAP: driving wheel briefly exceeds the cap (translation mechanism)");
+        ASSERT(tr.dshot_cmd_left > l100.dshot_cmd_left - ALLOW / 2.0f,
+               "CAP: driving wheel rides above the translating base");
+
+        /* (5b) Translation slip un-bias: at full stick the slip allowance must
+              collapse to zero so the wave straddles ZERO slip. Measured on the
+              2026-08-06 logs: with the +1 m/s bias, both tires sat saturated
+              forward for most of the wave (friction saturates within a few
+              tenths of m/s), so light presses produced sound but ~no force — a
+              1 m/s differential dead zone — and only deep-saturation amplitudes
+              translated at all. Mean command = pure rolling speed at full stick. */
+        ASSERT_NEAR(cmd_to_wheel_rads(0.5f * (tr.dshot_cmd_left + tr.dshot_cmd_right), 8.0f),
+                    100.0f * GEOM, TOL,
+                    "UNBIAS: full-stick translation centres the wave on zero slip");
+
+        /* (5c) Partial stick keeps a proportional share of the allowance. */
+        SunshineVars half = melty_run(255, 64, 100.0f, 100.0f, 1, 8.0f,
+                                      -100.0f * DRIFT_PHASE_LEAD_S);
+        ASSERT_NEAR(cmd_to_wheel_rads(0.5f * (half.dshot_cmd_left + half.dshot_cmd_right), 8.0f),
+                    100.0f * GEOM + ALLOW * (1.0f - 64.0f / 127.0f), TOL,
+                    "UNBIAS: allowance scales down with stick deflection");
+
+        /* (5d) Low-spin translation fade: below DRIFT_OMEGA_FADE_LO the drift
+              must be OFF (the measured failure: a collapse leaves the robot
+              trapped at 55-60 rad/s, drive held, cap braking the wheels — the
+              fade lets it spin back up instead), ramping to full authority by
+              DRIFT_OMEGA_FADE_HI. */
+        SunshineVars f_lo  = melty_run(255, 127, 55.0f, 55.0f, 1, 8.0f,
+                                       -55.0f * DRIFT_PHASE_LEAD_S);
+        SunshineVars f_mid = melty_run(255, 127, 72.0f, 72.0f, 1, 8.0f,
+                                       -72.0f * DRIFT_PHASE_LEAD_S);
+        SunshineVars f_hi  = melty_run(255, 127, 95.0f, 95.0f, 1, 8.0f,
+                                       -95.0f * DRIFT_PHASE_LEAD_S);
+        float d_lo  = 0.5f * (f_lo.dshot_cmd_left  - f_lo.dshot_cmd_right);
+        float d_mid = 0.5f * (f_mid.dshot_cmd_left - f_mid.dshot_cmd_right);
+        float d_hi  = 0.5f * (f_hi.dshot_cmd_left  - f_hi.dshot_cmd_right);
+        ASSERT_NEAR(d_lo, 0.0f, 0.5f, "FADE: no translation below DRIFT_OMEGA_FADE_LO");
+        ASSERT(d_mid > 2.0f,          "FADE: partial authority inside the fade band");
+        ASSERT(d_hi > d_mid,          "FADE: full authority above DRIFT_OMEGA_FADE_HI");
+        /* With translation faded out, the full spin-up slip allowance returns. */
+        ASSERT_NEAR(cmd_to_wheel_rads(0.5f * (f_lo.dshot_cmd_left + f_lo.dshot_cmd_right), 8.0f),
+                    55.0f * GEOM + ALLOW, TOL,
+                    "FADE: faded translation restores the spin-up allowance");
 
         /* (6) Fail-open: an implausible battery reading skips the cap entirely.
               A stuck-low or garbage reading must never disarm the weapon. */

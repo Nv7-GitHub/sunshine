@@ -125,10 +125,12 @@ MELTY mode applies a differential DShot command that changes with robot angle. T
 
 | Constant | Default | What it controls |
 |----------|---------|-----------------|
-| `DRIFT_AMPLITUDE` | 0.40 | Max differential as a fraction of available symmetric DShot headroom. |
-| `DRIFT_PLATEAU_WIDTH` | 0.35 | Fraction of full rotation spent at each +1 and -1 plateau. 0.35 gives two 126° plateaus and two 54° ramps. |
+| `DRIFT_AMPLITUDE` | 0.60 | Max differential as a fraction of available symmetric DShot headroom. Usable at full value since the slip un-bias (the wave straddles zero slip, so force is proportional). |
+| `DRIFT_PLATEAU_WIDTH` | 0.25 | Fraction of full rotation spent at each +1 and -1 plateau. 0.25 gives two 90° plateaus and two 90° ramps (~10 ms at combat spin — matched to the ~20 ms actuation lag; the old 54° ramps commanded reversals the plant rounded off anyway while their harmonics showed as 2x/3x-rev vibration). |
 | `DRIFT_PHASE_OFFSET_RADS` | 0.0 | Fixed motor-timing offset between the LED/driver heading and the wheel-force waveform. |
 | `DRIFT_PHASE_LEAD_S` | 0.018 | ESC/traction lag compensation. Added phase is `kf_omega * DRIFT_PHASE_LEAD_S`. **Measured, per-build** — `tools/replay/translation_lag.py`, procedure in BRINGUP.md Level 5 Step 4. |
+| `DRIFT_OMEGA_FADE_LO` | 60 rad/s | Translation fully off below this spin rate. Breaks the measured collapse trap: an edge-strike slowdown otherwise parks the robot at 55–60 rad/s with the cap braking the wheels while the stick is held. |
+| `DRIFT_OMEGA_FADE_HI` | 85 rad/s | Full translation authority above this. Between LO and HI, `drive_mag` scales linearly. |
 | `THETA_RATE_RADS` | π rad/s | Heading offset rate per full left/right arrow deflection (ctrl_theta = ±127). |
 
 ### How the pulse works
@@ -182,11 +184,38 @@ revolution and the differential force was ~zero *regardless of the commanded
 waveform*. Symptom: motors audibly modulate, eRPM visibly modulates, robot barely
 moves and wobbles inconsistently (the residual forces are normal-load fluctuations,
 not the drift wave). The wheel-speed cap fixes this as a side effect of fixing the
-bounce: it pins mean slip at `WHEEL_SLIP_ALLOW_MS` (1.0 m/s), so the drift wave now
-swings the retreating wheel down through zero slip into braking — one wheel
-saturated forward, the other near-zero/braking = a real once-per-rev force
-differential. Consequence: **do not "fix" weak translation by disabling or loosening
-the cap** — that removes the very condition translation needs.
+bounce: it bounds mean slip near the rolling speed, so the drift wave can swing
+the retreating wheel down through zero slip into braking — one wheel pushing, the
+other braking = a real once-per-rev force differential. Consequence: **do not
+"fix" weak translation by disabling or loosening the cap** — that removes the
+very condition translation needs.
+
+**Slip un-bias while translating (2026-08-06):** a fixed `WHEEL_SLIP_ALLOW_MS`
+bias turned out to be a translation **dead zone** — with both wheels parked at
++1 m/s forward slip, the wave's first ~1 m/s of differential moves neither tire
+off forward saturation (light presses audibly modulated the motors but produced
+almost no force), and the amplitudes that did translate put the advancing wheel
+3+ m/s into slip, dumping energy and bouncing the robot. The cap therefore scales
+the allowance by `(1 − drive_mag)`: stick centred → full allowance (spin-up
+torque unchanged); full stick → the wave straddles **zero** slip, so force is
+proportional to the stick from the first counts and full `DRIFT_AMPLITUDE` is
+usable. Translation also fades out below `DRIFT_OMEGA_FADE_LO`–`HI` (see table)
+so a slowed robot spins back up instead of staying trapped just above the mag
+floor.
+
+### Sustained translation and tilt (watch this on hardware)
+
+The translation force is world-fixed and acts at the contact patches, below the
+CG — so it tilts the spin axis while applied. On the pre-un-bias 2026-08-06 logs,
+sustained full deflection tilted to edge strike in ~0.25–0.5 s (1×-rev coning
+line in `accel_z`: 12→148 counts in 0.25 s; recovery ~0.4 s after release), and
+every logged collapse had a held stick. Much of that violence came from the
+deep-saturation regime (bounces breaking wheel contact, which removes the
+restoring moment that normally lets a melty settle at a small steady tilt) — the
+slip un-bias and wider ramps remove that, so sustained translation is expected
+to settle like a conventional melty. If held-stick translation still walks the
+edge into the floor on hardware, the remaining lever is the forcing duty cycle
+(feather the keys, or revisit duty-cycling the drift in firmware).
 
 ### `DRIFT_PHASE_LEAD_S` from the eRPM lag
 
