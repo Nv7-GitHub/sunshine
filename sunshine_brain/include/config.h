@@ -48,9 +48,9 @@ static constexpr float BATT_LP_HZ = 6.0f;
 // ───────────────────────────────────────────────────────────────────────
 #define PIN_LED 38
 // Duty levels for analogWrite (8-bit, 0..255).
-// Heading flash (TANK/MELTY): ALWAYS full brightness — only shown while
-// spinning, where it must be visible in daylight, so it's never dimmed by
-// bringup level.
+// Armed brightness: the MELTY heading flash and the TANK solid-on "armed"
+// indicator. ALWAYS full brightness — the flash is only shown while spinning,
+// where it must be visible in daylight, so it's never dimmed by bringup level.
 #define LED_DUTY_ACTIVE 255
 // DISABLED "breathe" and the sensor-init-error blink: a dim "board alive"
 // indicator. Kept low at all times (the robot is stationary on a desk when

@@ -108,7 +108,8 @@ void control_step(const SunshineInput *in, SunshineState *s, SunshineVars *v) {
     float wrapped     = wrap_to_pi(robot_angle);
     float hd          = wrapped * (180.0f / M_PI_F);
     v->heading_deg    = hd < 0.0f ? hd + 360.0f : hd;
-    /* LED beacon: lit within ±LED_HALF_ARC of the zero heading. At high spin the
+    /* LED beacon (MELTY; TANK overrides this to solid below): lit within
+     * ±LED_HALF_ARC of the zero heading. At high spin the
      * heading advances more than the 6° window per 1 kHz tick (e.g. ~14° at 250
      * rad/s), so a fixed ±3° point-test would step OVER the window between samples
      * and the dot would vanish for whole revolutions. Widen the half-window to at
@@ -128,6 +129,14 @@ void control_step(const SunshineInput *in, SunshineState *s, SunshineVars *v) {
     }
 
     if (in->mode == SUNSHINE_MODE_TANK) {
+        /* The heading beacon is a MELTY-only construct: it marks the robot's
+         * "forward" once per revolution so the driver can steer a spinning body.
+         * TANK does not spin, so the same test just tracks wherever the (noisy,
+         * possibly unlocked) mag heading happens to sit relative to zero — the
+         * LED then stutters on and off at random as the robot is driven around.
+         * Hold it solid instead: in TANK the LED means "armed", which reads
+         * unambiguously against the DISABLED breathe and the MELTY strobe. */
+        v->led_on = 1;
         /* W/S (ctrl_y) controls fwd/rev; A/D (ctrl_x) controls turning */
         float fwd  = clampf((float)in->ctrl_y  / 127.0f, -1.0f, 1.0f);
         float turn = clampf((float)in->ctrl_x  / 127.0f, -1.0f, 1.0f);

@@ -672,13 +672,20 @@ input, select { font: inherit; color: inherit; }
 /* ─── Controls viz ─── */
 .controls-grid {
   display: grid;
-  grid-template-columns: 1fr 44px;
+  grid-template-columns: minmax(0, 1fr) 44px;
   gap: 8px;
   align-items: stretch;
 }
 
+/* WKWebView (the Tauri webview) resolves aspect-ratio from the *stretched* row
+ * height rather than from the grid track width, which collapsed the pad to a
+ * ~45px square. `align-self: start` leaves the height auto so the ratio is
+ * transferred width→height, as Chrome already did. The vbar still stretches to
+ * the row, and the row is sized by the pad. */
 .joy-pad {
   position: relative;
+  width: 100%;
+  align-self: start;
   aspect-ratio: 1 / 1;
   background:
     radial-gradient(80% 80% at 50% 50%, rgba(255,255,255,.03), transparent 70%),

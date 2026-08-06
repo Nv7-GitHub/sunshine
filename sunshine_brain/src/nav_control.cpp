@@ -137,7 +137,8 @@ void nav_control_task(void *) {
         dshot_us = micros() - t_d0;
 #endif
         // Disabled: slow breathe so the board is visibly alive but clearly idle.
-        // Active: binary heading flash from sunshine_step.
+        // Active: led_on from sunshine_step — a heading flash in MELTY, solid in
+        // TANK (which has no heading to beacon).
         if (in.mode == SUNSHINE_MODE_DISABLED) {
             // Idle: dim breathe so the board is visibly alive but clearly not armed.
             uint32_t phase = (uint32_t)millis() % 2000;             // 2-s period
@@ -145,7 +146,7 @@ void nav_control_task(void *) {
                                    : (2000 - phase) * 0.001f;       // 1→0 ramp
             analogWrite(PIN_LED, (uint8_t)(t * t * LED_DUTY_IDLE)); // squared for a softer fade
         } else {
-            // Active (TANK/MELTY) heading flash: full brightness always.
+            // Armed (TANK/MELTY): full brightness always.
             analogWrite(PIN_LED, vars.led_on ? LED_DUTY_ACTIVE : 0);
         }
 

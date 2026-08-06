@@ -99,6 +99,17 @@ int main(void) {
     ASSERT_NEAR(v.dshot_cmd_left, v.dshot_cmd_right, 1.0f, "TANK turn right: left≈right");
     ASSERT(v.dshot_cmd_left > DSHOT_NEUTRAL, "TANK turn right: both forward of neutral");
 
+    /* TANK holds the LED solid. The heading beacon is meaningless without a spin,
+       so applying it here made the LED stutter at random as the robot drove. Sweep
+       headings that straddle the beacon window: all must stay lit. */
+    for (float th = -3.0f; th <= 3.0f; th += 0.05f) {
+        s.kf_theta = th; s.theta_offset = 0.0f;
+        in = make_input(SUNSHINE_MODE_TANK, 0, 40, 60, 0);
+        control_step(&in, &s, &v);
+        ASSERT_EQ(v.led_on, true, "TANK: LED solid at every heading");
+    }
+    sunshine_state_init(&s);
+
     /* MELTY: throttle>0, no translation → left≈right≈base */
     sunshine_state_init(&s);
     s.kf_theta = 0.0f;
