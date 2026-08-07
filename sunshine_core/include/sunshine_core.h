@@ -346,8 +346,8 @@
  * 0.2-0.3 gain against a sim plant that realized far more) were strangling
  * the force. Realized swing at these caps stays at the previously-validated
  * envelope. */
-#define TIP_SWING_RATIO_LO 2.5f /* cmd swing/omega cap below TIP_OMEGA_LO   */
-#define TIP_SWING_RATIO_HI 3.5f /* cmd swing/omega cap above TIP_OMEGA_HI   */
+#define TIP_SWING_RATIO_LO 2.0f /* cmd swing/omega cap below TIP_OMEGA_LO   */
+#define TIP_SWING_RATIO_HI 2.8f /* cmd swing/omega cap above TIP_OMEGA_HI   */
 #define TIP_OMEGA_LO 125.0f      /* rad/s: ramp start                       */
 #define TIP_OMEGA_HI 170.0f      /* rad/s: ramp end (full ratio)            */
 /* ── Closed-loop wobble damper (schema v6) ─────────────────────────────────
