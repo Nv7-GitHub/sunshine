@@ -201,7 +201,14 @@
  * amplitude buys tilt. Re-tune after the on-floor direction test fixes the
  * phase constants. */
 #define DRIFT_AMPLITUDE     0.45f   /* max diff as fraction of available headroom */
-#define DRIFT_PHASE_OFFSET_RADS 0.0f /* fixed motor timing offset, rad             */
+/* MEASURED on-floor 2026-08-07 (two-speed drift-direction test, TUNING.md L5S3,
+ * cross-checked against the v45 log's world-frame eRPM-diff demod): the realized
+ * force direction erred by a CONSTANT +210 deg (likely a diff-sign flip from the
+ * 2026-08-06 motor-config change plus ~30 deg of mount geometry) plus a spin-
+ * proportional part (see DRIFT_PHASE_LEAD_S). -2.62 rad ≡ +3.66 rad cancels the
+ * constant part. If a future drift test shows W landing ~2x this angle to the
+ * RIGHT of the LED, the observation sign was inverted: negate this value. */
+#define DRIFT_PHASE_OFFSET_RADS (-2.62f) /* fixed geometry/sign offset, rad      */
 /* Low-spin translation fade (2026-08-06 logs). Two measured reasons translation
  * must not run at low spin: (1) the collapse trap — an edge-strike slowdown drops
  * kf_omega, the cap follows it down and (with ESC complementary-PWM braking)
@@ -236,16 +243,19 @@
  * swing is ~±1 m/s, so the remaining bias must sit well under that for the
  * braking half to exist at all. */
 #define DRIFT_UNBIAS_FRAC    0.7f
-/* ESC/traction lag compensation. PER-BUILD: measured, not designed — re-run
- * tools/replay/translation_lag.py on a translation log for any new robot
- * (procedure: BRINGUP.md Level 5). On the 2026-07-20 translation2 log the
- * DShot→eRPM differential is a pure ~20 ms TIME delay (18–24 ms across 24
- * windows, BOTH spin directions; the lock-in phase fits omega·tau with ~0
- * constant term, so DRIFT_PHASE_OFFSET_RADS stays 0). Minus ~3 ms median-5
- * eRPM telemetry lag → ~17 ms physical. Uncompensated this rotated the
- * translation force 110–150° at 1000–1300 RPM, which is why the robot wobbled
- * instead of translating. Signed kf_omega handles inverted operation. */
-#define DRIFT_PHASE_LEAD_S  0.018f  /* ESC/traction lag compensation, seconds     */
+/* FORCE-lag compensation — NOT the wheel-speed lag. History: 0.018 was set from
+ * translation_lag.py's DShot→eRPM cross-correlation (~20 ms), but eRPM is wheel
+ * SPEED, and speed is the INTEGRAL of torque — compensating force with the
+ * speed lag rotated the force backwards by omega*(18-10) ms. The tires ride
+ * the cap's slip bias, so they are ALWAYS kinetically sliding: contact force is
+ * mu*N*sign(slip), and the force wave's timing is set by where the slip SIGN
+ * crosses zero — which lags roughly half the speed wave. Calibrated 2026-08-07
+ * by a stick-slip first-principles simulation (tools-side melty_sim) fitted to
+ * the on-floor two-speed drift-direction observations (+90 deg at ~120 rad/s,
+ * +45 at ~165, taps, lead 0.018/offset 0): effective force lag ~10 ms across
+ * tap and hold regimes. DO NOT re-derive from eRPM cross-correlation (speed
+ * domain); re-verify only with the on-floor drift-direction test. */
+#define DRIFT_PHASE_LEAD_S  0.010f  /* force (slip-sign) lag compensation, s      */
 #define THETA_RATE_RADS     3.14159265f  /* rad/s per full ctrl_theta              */
 #define MAX_DSHOT_SPIN      DSHOT_MAX
 #define DSHOT_NEUTRAL       1048.0f

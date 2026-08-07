@@ -232,9 +232,12 @@ int main(void) {
        band below is generous because the delay is per-build (motor/ESC/wheel
        inertia): re-measure per BRINGUP.md Level 5 and retarget on a new robot. */
     {
-        /* (a) The compiled lead must be in the measured band. */
-        ASSERT(DRIFT_PHASE_LEAD_S >= 0.010f && DRIFT_PHASE_LEAD_S <= 0.025f,
-               "PHASE LEAD: compensates the measured ~17 ms actuation delay");
+        /* (a) The compiled lead must be in the measured band. The FORCE lag is
+              ~10 ms (slip-SIGN crossing of the always-sliding tires; sim
+              calibrated against the 2026-08-07 on-floor drift-direction test),
+              NOT the ~20 ms wheel-SPEED lag — speed integrates torque. */
+        ASSERT(DRIFT_PHASE_LEAD_S >= 0.006f && DRIFT_PHASE_LEAD_S <= 0.014f,
+               "PHASE LEAD: compensates the ~10 ms force (slip-sign) lag");
 
         /* (b) Sign/wiring: at spin rate W the wave must be ADVANCED by exactly
               W*LEAD. Both probes spin inside the translation authority band
@@ -317,7 +320,7 @@ int main(void) {
               omega*DRIFT_PHASE_LEAD_S advance so the wave sits on its + plateau
               regardless of the compiled lead. */
         SunshineVars tr = melty_run(255, 127, 100.0f, 100.0f, 1, 8.0f,
-                                    -100.0f * DRIFT_PHASE_LEAD_S);
+                                    -DRIFT_PHASE_OFFSET_RADS - 100.0f * DRIFT_PHASE_LEAD_S);
         ASSERT(tr.dshot_cmd_left > tr.dshot_cmd_right,
                "CAP: drift differential survives the cap");
         ASSERT(tr.dshot_cmd_left > l100.dshot_cmd_left - ALLOW / 2.0f,
@@ -336,7 +339,7 @@ int main(void) {
 
         /* (5c) Partial stick keeps a proportional share of the allowance. */
         SunshineVars half = melty_run(255, 64, 100.0f, 100.0f, 1, 8.0f,
-                                      -100.0f * DRIFT_PHASE_LEAD_S);
+                                      -DRIFT_PHASE_OFFSET_RADS - 100.0f * DRIFT_PHASE_LEAD_S);
         ASSERT_NEAR(cmd_to_wheel_rads(0.5f * (half.dshot_cmd_left + half.dshot_cmd_right), 8.0f),
                     100.0f * GEOM + ALLOW * (1.0f - DRIFT_UNBIAS_FRAC * 64.0f / 127.0f), TOL,
                     "UNBIAS: allowance scales down with stick deflection");
@@ -347,11 +350,11 @@ int main(void) {
               fade lets it spin back up instead), ramping to full authority by
               DRIFT_OMEGA_FADE_HI. */
         SunshineVars f_lo  = melty_run(255, 127, 55.0f, 55.0f, 1, 8.0f,
-                                       -55.0f * DRIFT_PHASE_LEAD_S);
+                                       -DRIFT_PHASE_OFFSET_RADS - 55.0f * DRIFT_PHASE_LEAD_S);
         SunshineVars f_mid = melty_run(255, 127, 72.0f, 72.0f, 1, 8.0f,
-                                       -72.0f * DRIFT_PHASE_LEAD_S);
+                                       -DRIFT_PHASE_OFFSET_RADS - 72.0f * DRIFT_PHASE_LEAD_S);
         SunshineVars f_hi  = melty_run(255, 127, 95.0f, 95.0f, 1, 8.0f,
-                                       -95.0f * DRIFT_PHASE_LEAD_S);
+                                       -DRIFT_PHASE_OFFSET_RADS - 95.0f * DRIFT_PHASE_LEAD_S);
         float d_lo  = 0.5f * (f_lo.dshot_cmd_left  - f_lo.dshot_cmd_right);
         float d_mid = 0.5f * (f_mid.dshot_cmd_left - f_mid.dshot_cmd_right);
         float d_hi  = 0.5f * (f_hi.dshot_cmd_left  - f_hi.dshot_cmd_right);
@@ -364,7 +367,7 @@ int main(void) {
               eRPM-attenuation reading that tire grip confounds. Melty practice
               translates at 2K+ RPM; the drift must stay live there. */
         SunshineVars hi_spin = melty_run(255, 127, 165.0f, 165.0f, 1, 8.0f,
-                                         -165.0f * DRIFT_PHASE_LEAD_S);
+                                         -DRIFT_PHASE_OFFSET_RADS - 165.0f * DRIFT_PHASE_LEAD_S);
         float d_hispin = 0.5f * (hi_spin.dshot_cmd_left - hi_spin.dshot_cmd_right);
         ASSERT(d_hispin > 2.0f, "HIGH SPIN: translation authority is not rolled off");
         ASSERT_NEAR(cmd_to_wheel_rads(0.5f * (hi_spin.dshot_cmd_left + hi_spin.dshot_cmd_right), 8.0f),
