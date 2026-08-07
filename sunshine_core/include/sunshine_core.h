@@ -193,7 +193,18 @@
  * translation (2026-08-06 logs). Wider ramps deliver the same fundamental with
  * less per-edge wheel-KE dump and gyroscopic kick. */
 #define DRIFT_PLATEAU_WIDTH 0.25f   /* fraction of rotation at each +/- peak diff */
-#define DRIFT_AMPLITUDE     0.60f   /* max diff as fraction of available headroom */
+/* 0.30, and the reason is NOT ground force — that saturates at ~±1 m/s of slip
+ * (tire friction), and 0.30 still swings ±~1.9 m/s, so translation force and
+ * speed at driving velocities are unchanged from 0.60. What amplitude DOES
+ * scale is the wheel-rotor gyroscopic tilt torque: body rotation × the wave's
+ * phase-locked wheel-momentum modulation = a steady world-frame tilting torque
+ * ~ I_wheel * omega * delta_omega_wheel (~0.17 N*m at 0.60 / omega=150 — 4x the
+ * F*h moment from the translation force itself; predicted tilt-to-edge-strike
+ * ~0.1-0.2 s, matching every measured onset). Halving the swing halves it.
+ * Do not raise back toward 0.60 to "get more force" — beyond saturation extra
+ * amplitude adds only tilt and slip heat; do not drop below ~0.2 or the swing
+ * leaves saturation and force genuinely falls. */
+#define DRIFT_AMPLITUDE     0.30f   /* max diff as fraction of available headroom */
 #define DRIFT_PHASE_OFFSET_RADS 0.0f /* fixed motor timing offset, rad             */
 /* Low-spin translation fade (2026-08-06 logs). Two measured reasons translation
  * must not run at low spin: (1) the collapse trap — an edge-strike slowdown drops
