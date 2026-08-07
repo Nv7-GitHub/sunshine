@@ -273,8 +273,13 @@
  * TIP_CG_HEIGHT_M (measure: CG height above the FLOOR, wheels on) and the
  * fractions below. Procedure + worked numbers: BRINGUP.md "Tipping budget". */
 #define TIP_BUDGET_FRAC      0.75f   /* fraction of m*g*WC the wave may use     */
-#define TIP_CG_HEIGHT_M      0.020f  /* PER-BUILD: CG height above the floor    */
-#define TIP_FORCE_FRAC       0.35f   /* share of budget reserved for F*h drive  */
+/* Measured: robot is ~21 mm tall with the CG vertically centred -> ~10.5 mm. */
+#define TIP_CG_HEIGHT_M      0.0105f /* PER-BUILD: CG height above the floor    */
+/* Sized from MEASURED tire force, not the mu*N model: spin-up/steady torque
+ * balance across the 2026-08-06/07 logs gives only ~0.3-0.7 N total at ~1 m/s
+ * slip (thin hard urethane, effective mu ~0.1 at operating slip) — so F*h is
+ * small and most of the budget belongs to the wheel/swing term. */
+#define TIP_FORCE_FRAC       0.15f   /* share of budget reserved for F*h drive  */
 #define TIP_PLANT_GAIN       0.5f    /* realized/commanded wheel-speed swing    */
 /* FORCE-lag compensation — NOT the wheel-speed lag. History: 0.018 was set from
  * translation_lag.py's DShot→eRPM cross-correlation (~20 ms), but eRPM is wheel
