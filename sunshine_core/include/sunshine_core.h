@@ -274,7 +274,17 @@
  * favour spin (bias creep returns). 0.7: with only ~30% plant gain the REALIZED
  * swing is ~±1 m/s, so the remaining bias must sit well under that for the
  * braking half to exist at all. */
-#define DRIFT_UNBIAS_FRAC 0.7f
+/* SUPERSEDED COUPLING FIX (2026-08-07 concrete log): the bias used to be
+ * ALLOW*(1 - FRAC*drive), which couples the TRANSLATION bias to the SPIN-UP
+ * allowance knob — raising WHEEL_SLIP_ALLOW_MS for faster spin-up silently
+ * raised the translating bias past the realized wave swing, so slip never
+ * crossed zero and the differential force was EXACTLY zero (both tires push
+ * forward all revolution: pure spin torque; the robot then "translates" only
+ * via wobble/contact chaos — the measured only-moves-while-wobbling symptom).
+ * The bias while translating is now a FIXED remnant, independent of the
+ * allowance: full stick -> DRIFT_TRANSLATE_BIAS_MS, stick released -> full
+ * WHEEL_SLIP_ALLOW_MS, linear in between. */
+#define DRIFT_TRANSLATE_BIAS_MS 0.15f /* m/s: slip bias at full deflection */
 /* ── Anti-tip swing clamp (the strike mechanism, sim-proven) ────────────────
  * MECHANISM, proven in the coupled 6-DOF simulation (tools/melty6dof.py): the
  * tip is driven by the WHEEL-ROTOR gyroscopic reaction — the drift wave
@@ -290,8 +300,14 @@
  * ~0.8 m/s translation; a grippier tire compound both stabilizes tilt further
  * and roughly doubles speed in-sim (grip damps the wobble AND drives harder).
  */
-#define TIP_SWING_RATIO_LO 0.45f /* swing/omega cap below TIP_OMEGA_LO      */
-#define TIP_SWING_RATIO_HI 0.75f /* swing/omega cap above TIP_OMEGA_HI      */
+/* Ratios rescaled x2.5 from the sim calibration (0.45/0.75): the sim's wheels
+ * realize ~0.8 of commanded swing while the REAL plant realizes only 0.2-0.3
+ * (measured, eRPM vs command at spin frequency), and the tilt driver is the
+ * REALIZED momentum swing. The sim-validated realized envelope therefore maps
+ * to a ~2.5x larger COMMANDED swing on the real robot. Re-derive if the plant
+ * gain changes (lighter wheels, ESC settings). */
+#define TIP_SWING_RATIO_LO 1.1f /* cmd swing/omega cap below TIP_OMEGA_LO   */
+#define TIP_SWING_RATIO_HI 1.9f /* cmd swing/omega cap above TIP_OMEGA_HI   */
 #define TIP_OMEGA_LO 125.0f      /* rad/s: ramp start                       */
 #define TIP_OMEGA_HI 170.0f      /* rad/s: ramp end (full ratio)            */
 /* ── Closed-loop wobble damper (schema v6) ─────────────────────────────────

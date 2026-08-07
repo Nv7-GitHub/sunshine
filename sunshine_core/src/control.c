@@ -106,10 +106,12 @@ static float melty_speed_cap(const SunshineState *s, const SunshineVars *v, floa
      * the wave near ZERO slip at full stick — advancing wheel pushes, retreating
      * wheel genuinely brakes, both in the controllable friction range — so
      * translation force is proportional to the stick from the first counts.
-     * DRIFT_UNBIAS_FRAC < 1 keeps a spin-maintenance remnant of the allowance
-     * at full stick (see sunshine_core.h: removing all of it starves the spin
-     * against drag and the robot parks at the fade equilibrium). */
-    float allow_ms = WHEEL_SLIP_ALLOW_MS * (1.0f - DRIFT_UNBIAS_FRAC * drive_mag);
+     * The translating bias is a FIXED remnant (DRIFT_TRANSLATE_BIAS_MS),
+     * decoupled from the spin-up allowance knob — see sunshine_core.h: the old
+     * allowance-proportional form re-created the zero-crossing dead zone
+     * whenever WHEEL_SLIP_ALLOW_MS was raised. */
+    float allow_ms = WHEEL_SLIP_ALLOW_MS
+                     + drive_mag * (DRIFT_TRANSLATE_BIAS_MS - WHEEL_SLIP_ALLOW_MS);
 
     float w_ref    = fmaxf(locked ? fabsf(s->kf_omega) : 0.0f, SUNSHINE_MAG_MIN_OMEGA);
     float w_cap    = w_ref * (WHEEL_CENTER_M / WHEEL_RADIUS_M)   /* rolling rate    */

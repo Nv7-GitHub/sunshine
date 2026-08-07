@@ -331,31 +331,32 @@ int main(void) {
         ASSERT(tr.dshot_cmd_left > l100.dshot_cmd_left - ALLOW / 2.0f,
                "CAP: driving wheel rides above the translating base");
 
-        /* (5b) Translation slip un-bias: at full stick the allowance must drop
-              to its spin-maintenance remnant (1 - DRIFT_UNBIAS_FRAC) so the
-              wave straddles near-zero slip. Measured 2026-08-06: the full
-              +1 m/s bias kept both tires saturated forward for most of the
-              wave — a 1 m/s differential dead zone. Measured 2026-08-07:
-              removing ALL of it starved the spin (~0.5 m/s of slip just pays
-              drag) and the robot parked at the fade equilibrium. Probed at the
-              wave's ZERO-crossing (plateau edge + 90 deg) so the deep
-              throttle-span modulation (whose NEUTRAL bottoming skews a mean)
-              doesn't enter the measurement. */
+        /* (5b) Translation slip un-bias: at full stick the bias drops to the
+              FIXED remnant DRIFT_TRANSLATE_BIAS_MS, INDEPENDENT of the
+              spin-up allowance knob — the old allowance-proportional form
+              re-created the zero-crossing dead zone whenever
+              WHEEL_SLIP_ALLOW_MS was raised (slip never crossing zero =
+              exactly zero differential force = the measured only-moves-
+              while-wobbling symptom). Probed at the wave's ZERO-crossing
+              (plateau edge + 90 deg) so the deep throttle-span modulation
+              (whose NEUTRAL bottoming skews a mean) doesn't enter. */
         const float WAVE_ZERO = 1.5707963f;   /* wave(pi/2) = 0 at PLATEAU 0.25 */
         SunshineVars tr0 = melty_run(255, 127, 100.0f, 100.0f, 1, 8.0f,
                                      -DRIFT_PHASE_OFFSET_RADS - 100.0f * DRIFT_PHASE_LEAD_S
                                      + WAVE_ZERO);
         ASSERT_NEAR(cmd_to_wheel_rads(0.5f * (tr0.dshot_cmd_left + tr0.dshot_cmd_right), 8.0f),
-                    100.0f * GEOM + ALLOW * (1.0f - DRIFT_UNBIAS_FRAC), TOL,
-                    "UNBIAS: full stick keeps only the spin-maintenance remnant");
+                    100.0f * GEOM + DRIFT_TRANSLATE_BIAS_MS / WHEEL_RADIUS_M, TOL,
+                    "UNBIAS: full stick keeps only the fixed bias remnant");
 
         /* (5c) Partial stick keeps a proportional share of the allowance. */
         SunshineVars half = melty_run(255, 64, 100.0f, 100.0f, 1, 8.0f,
                                       -DRIFT_PHASE_OFFSET_RADS - 100.0f * DRIFT_PHASE_LEAD_S
                                       + WAVE_ZERO);
         ASSERT_NEAR(cmd_to_wheel_rads(0.5f * (half.dshot_cmd_left + half.dshot_cmd_right), 8.0f),
-                    100.0f * GEOM + ALLOW * (1.0f - DRIFT_UNBIAS_FRAC * 64.0f / 127.0f), TOL,
-                    "UNBIAS: allowance scales down with stick deflection");
+                    100.0f * GEOM
+                    + (WHEEL_SLIP_ALLOW_MS + (64.0f / 127.0f)
+                       * (DRIFT_TRANSLATE_BIAS_MS - WHEEL_SLIP_ALLOW_MS)) / WHEEL_RADIUS_M,
+                    TOL, "UNBIAS: allowance blends down with stick deflection");
 
         /* (5d) Low-spin translation fade: below DRIFT_OMEGA_FADE_LO the drift
               must be OFF (the measured failure: a collapse leaves the robot
@@ -444,7 +445,7 @@ int main(void) {
         float d_hispin = 0.5f * (hi_spin.dshot_cmd_left - hi_spin.dshot_cmd_right);
         ASSERT(d_hispin > 2.0f, "HIGH SPIN: translation authority is not rolled off");
         ASSERT_NEAR(cmd_to_wheel_rads(0.5f * (hi_spin.dshot_cmd_left + hi_spin.dshot_cmd_right), 8.0f),
-                    165.0f * GEOM + ALLOW * (1.0f - DRIFT_UNBIAS_FRAC), TOL,
+                    165.0f * GEOM + DRIFT_TRANSLATE_BIAS_MS / WHEEL_RADIUS_M, TOL,
                     "HIGH SPIN: cap tracks the actual spin (no governor pull-down)");
         /* With translation faded out, the full spin-up slip allowance returns. */
         ASSERT_NEAR(cmd_to_wheel_rads(0.5f * (f_lo.dshot_cmd_left + f_lo.dshot_cmd_right), 8.0f),
