@@ -205,12 +205,15 @@
  * strikes return. */
 #define DRIFT_AMPLITUDE     0.30f   /* max diff as fraction of available headroom */
 /* MEASURED on-floor 2026-08-07 (two-speed drift-direction test, TUNING.md L5S3,
- * cross-checked against the v45 log's world-frame eRPM-diff demod): the realized
- * force direction erred by a CONSTANT +210 deg (likely a diff-sign flip from the
- * 2026-08-06 motor-config change plus ~30 deg of mount geometry) plus a spin-
- * proportional part (see DRIFT_PHASE_LEAD_S). -2.62 rad ≡ +3.66 rad cancels the
- * constant part. If a future drift test shows W landing ~2x this angle to the
- * RIGHT of the LED, the observation sign was inverted: negate this value. */
+ * fitted with tools/melty_sim.py): the realized force direction erred by a
+ * CONSTANT +210 deg — an ORIGINAL geometry/sign convention error between the
+ * assumed and physical wheel-force direction, present since first build (the
+ * 2026-08-06 motor-config change is ruled out: it compensated a physically
+ * flipped phase wire, and wire-flip + invert-flip cancel, direction-neutral
+ * for the diff). -2.62 rad ≡ +3.66 rad ≡ +210 deg cancels it. Re-measure after
+ * ANY wiring/mount/invert change. If a future drift test shows W landing ~2x
+ * this angle on the other side of the LED, the observation sign was inverted:
+ * negate this value. */
 #define DRIFT_PHASE_OFFSET_RADS (-2.62f) /* fixed geometry/sign offset, rad      */
 /* Low-spin translation fade (2026-08-06 logs). Two measured reasons translation
  * must not run at low spin: (1) the collapse trap — an edge-strike slowdown drops

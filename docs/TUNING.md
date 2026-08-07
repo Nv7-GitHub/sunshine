@@ -235,8 +235,9 @@ the force backwards by `omega × 8 ms`, and the error self-conceals because the
 eRPM cross-check keeps validating it. Measured correctly on-floor (2026-08-07
 two-speed drift-direction test, fitted with `tools/melty_sim.py`):
 **force lag ≈ 10 ms → `DRIFT_PHASE_LEAD_S = 0.010f`**, together with a
-constant `DRIFT_PHASE_OFFSET_RADS = −2.62` (a ≈ +210° geometry/sign offset,
-plausibly introduced by the 2026-08-06 motor-config change). Full procedure:
+constant `DRIFT_PHASE_OFFSET_RADS = −2.62` (a ≈ +210° geometry/sign offset that
+had been present since the original build — no self-referential eRPM check can
+see it). Full procedure:
 BRINGUP.md Level 5 Step 4. `translation_lag.py` is still useful — as a
 speed-lag/ESC-health measurement and an upper bound on the force lag only.
 
