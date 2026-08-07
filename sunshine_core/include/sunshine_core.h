@@ -248,11 +248,16 @@
  * +/-1.8 V (2.5 A, ~0.9 N electrical, the measured slow scoot).
  * differential at driving throttles -> ~1.5-2.5 N net after the measured 0.27
  * plant gain (vs the 0.3-0.45 N measured under the old sizing). */
-/* (A brief 0.30 "contact-minimizing" variant lived here on 2026-08-07 and was
- * restored to 0.60 the same night: the driver confirmed the morning 0.60
- * stick-linear-bias build translated correctly on light presses, so 0.60 is
- * the empirically-working amplitude.) */
-#define DRIFT_AMPLITUDE 0.60f /* max diff as fraction of FULL DShot span */
+/* 1.00 = the reference-robot configuration (2026-08-07, driver decision:
+ * hold-and-go-fast over rub-avoidance). A classic melty hold is rail-to-rail:
+ * advancing wheel to full duty, retreating wheel to stopped, with the mean at
+ * the throttle's rolling equilibrium — which the full-stick un-bias remnant
+ * reproduces. Realized swing at spin frequency ≈ 0.27 x commanded ≈ ±2.3 m/s:
+ * enough to dominate the ~1 m/s hop-injected common-mode slip noise that
+ * randomizes smaller sign-modulated waves (the measured 0.60-amp failure).
+ * If holds rub more than acceptable, lower this — it is now a single-knob
+ * speed-vs-contact tradeoff on a working force channel. */
+#define DRIFT_AMPLITUDE 1.00f /* max diff as fraction of FULL DShot span */
 /* DERIVED from the build geometry and confirmed by the 2026-08-07 two-speed
  * drift test. The wheels push along the TANGENT of the wheel line (90 deg from
  * the wheel axis); the LED sits ON the wheel axis; and the driver convention is
@@ -370,8 +375,13 @@
  * showed the rotor-reaction tilt story only applies to TRANSIENTS — in
  * steady translation the stored wheel momentum is constant and needs no
  * torque — so these caps mainly bound wave on/off and damper-shed edges.) */
-#define TIP_SWING_RATIO_LO 2.0f /* cmd swing/omega cap below TIP_OMEGA_LO   */
-#define TIP_SWING_RATIO_HI 2.8f /* cmd swing/omega cap above TIP_OMEGA_HI   */
+/* Opened to admit the full-span wave at driving spin (amp 1.00 above): the
+ * steady-state analysis shows these caps guard TRANSIENTS (wave on/off,
+ * damper-shed edges), not steady holds, so they are sized to clear the
+ * full-span command at omega >= ~140 while still bounding the low-spin
+ * transient envelope. */
+#define TIP_SWING_RATIO_LO 3.5f /* cmd swing/omega cap below TIP_OMEGA_LO   */
+#define TIP_SWING_RATIO_HI 4.5f /* cmd swing/omega cap above TIP_OMEGA_HI   */
 #define TIP_OMEGA_LO 125.0f      /* rad/s: ramp start                       */
 #define TIP_OMEGA_HI 170.0f      /* rad/s: ramp end (full ratio)            */
 /* ── Closed-loop wobble damper (schema v6) ─────────────────────────────────

@@ -41,8 +41,13 @@ fn spawn_control_loop(controls: Arc<Mutex<ControlState>>,
     std::thread::spawn(move || {
         // These are the REAL ramps; useKeyboard.ts only mirrors them for display.
         // Keep the two in sync when retuning.
-        const T_RISE: f32 = 1.0;
-        const T_FALL: f32 = 1.0;  // was 9.0: a 9 s coast after release only made sense when the robot barely responded
+        // 0.2 s: a held key must BE full deflection, like the reference
+        // robot's joystick. The old 1.0-1.5 s ramps meant every press spent
+        // ~a second crawling through mid-stick, where the stick-linear slip
+        // bias parks the tires in the dead/noise zone — the robot toured the
+        // worst control regime on every press before full stick arrived.
+        const T_RISE: f32 = 0.2;
+        const T_FALL: f32 = 0.25;
         const RATE_THETA: f32 = (127.0 / 40.0) * 60.0;
         const RATE_THROTTLE: f32 = 90.0;
         const SEND_HZ: f32 = 30.0;
