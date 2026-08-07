@@ -117,7 +117,13 @@ export function useKeyboard(mode: Mode, setMode: (m: Mode) => void): RefObject<I
     window.addEventListener('keyup',   onUp);
     window.addEventListener('blur',    onBlur);
 
-    let rafId: number;
+    // The control tick MUST NOT ride requestAnimationFrame: the webview can
+    // throttle/starve rAF independently of visible UI smoothness (measured in
+    // the 2026-08-07 commitW log: control updates at 57 ms instead of 33, with
+    // multi-second stalls freezing the ramps mid-press — "keyboard feels
+    // sluggish" while the UI looks fine). A fixed timer keeps control feel
+    // independent of render scheduling; dt still comes from real elapsed time,
+    // so the ramp tuning is unchanged.
     let lastMs   = 0;
     let sendAcc  = 0;
 
@@ -184,15 +190,14 @@ export function useKeyboard(mode: Mode, setMode: (m: Mode) => void): RefObject<I
         });
       }
 
-      rafId = requestAnimationFrame(tick);
     };
 
-    rafId = requestAnimationFrame(tick);
+    const timerId = window.setInterval(() => tick(performance.now()), 8);
     return () => {
       window.removeEventListener('keydown', onDown);
       window.removeEventListener('keyup',   onUp);
       window.removeEventListener('blur',    onBlur);
-      cancelAnimationFrame(rafId);
+      window.clearInterval(timerId);
     };
   }, [mode]);
 
