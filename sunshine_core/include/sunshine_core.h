@@ -14,7 +14,13 @@
  * (replay.rs read_input) so all pre-v5 logs still parse. Live/wire format
  * follows the current struct on both ends (brain + app rebuilt together). */
 /* v6: SunshineState gains wob_hp / wob_env / wob_ref (appended) — the wobble
- *     damper's accel-z envelope filter states (see WOBBLE_* and control.c). */
+ *     damper's accel-z envelope filter states (see WOBBLE_* and control.c).
+ *
+ * A schema bump changes the TELEMETRY FRAME SIZE, and THREE artifacts compile
+ * it from this header: the brain, the app, AND the receiver
+ * (sunshine_receiver/src/espnow_rx.cpp drops frames whose length mismatches
+ * its compiled ESPNOW_TELEM_SIZE — symptom: controls still work, telemetry
+ * dead, red LED). Rebuild and flash ALL THREE from the same commit. */
 #define SUNSHINE_SCHEMA_VERSION 6U
 
 /* ── Control modes ─────────────────────────────────────────────────────── */
