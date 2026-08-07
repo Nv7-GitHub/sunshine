@@ -248,19 +248,11 @@
  * +/-1.8 V (2.5 A, ~0.9 N electrical, the measured slow scoot).
  * differential at driving throttles -> ~1.5-2.5 N net after the measured 0.27
  * plant gain (vs the 0.3-0.45 N measured under the old sizing). */
-/* 0.60 -> 0.30 (2026-08-07, contact-minimizing config). Tire force is
- * SIGN-modulated and saturates within ~0.2-0.3 m/s of slip; realized swing
- * beyond ~2x that width buys almost no force — but the rotor-reaction tilt
- * torque keeps growing LINEARLY with swing (tau ~ I_w * d(omega_wheel)/dt).
- * The 0.60 config realized ±1-1.5 m/s: over half that swing was pure tilt
- * with zero force return, and the Post_debug log shows press-time ground
- * impulses at EVERY omega band. Halving the commanded swing keeps the
- * saturated force (measured ~0.3 N either way) and halves the tilt driver.
- * This is a deliberate priority choice: minimal ground contact over top
- * speed. The remaining force supports ~0.15-0.25 m/s translation — the
- * ceiling of this tire/inertia hardware ridden cleanly; faster requires
- * softer (foam) tires or more spin inertia, not more amplitude. */
-#define DRIFT_AMPLITUDE 0.30f /* max diff as fraction of FULL DShot span */
+/* (A brief 0.30 "contact-minimizing" variant lived here on 2026-08-07 and was
+ * restored to 0.60 the same night: the driver confirmed the morning 0.60
+ * stick-linear-bias build translated correctly on light presses, so 0.60 is
+ * the empirically-working amplitude.) */
+#define DRIFT_AMPLITUDE 0.60f /* max diff as fraction of FULL DShot span */
 /* DERIVED from the build geometry and confirmed by the 2026-08-07 two-speed
  * drift test. The wheels push along the TANGENT of the wheel line (90 deg from
  * the wheel axis); the LED sits ON the wheel axis; and the driver convention is
@@ -322,19 +314,20 @@
  * The bias while translating is now a FIXED remnant, independent of the
  * allowance: full stick -> DRIFT_TRANSLATE_BIAS_MS, stick released -> full
  * WHEEL_SLIP_ALLOW_MS, linear in between. */
-/* DEAD-ZONE WIDTH FIX (2026-08-07 fixed_ log): "linear in between" left a huge
- * force dead zone across most of the stick — at 30% deflection the bias was
- * still ~2.1 m/s, and the eRPM-vs-rolling slip measurement showed the tires in
- * braking slip only 6-12% of each rev (vs ~25-30% at full stick): sound
- * changes, zero force, zero motion — the exact tap-W symptom. Worse, anything
- * that scales drive_mag down (wobble damper, low-spin fade) silently dragged
- * the bias back UP mid-press, so shed oscillations also swung the slip bias
- * (measured +0.7..+1.8 m/s at full stick when the target was 0.05) and
- * scrambled the force direction. The un-bias now completes by
- * DRIFT_UNBIAS_FULL_STICK of deflection: any deliberate press translates on
- * the same near-zero bias as full stick, and drive_mag shedding only shrinks
- * the wave amplitude, never the bias. */
-#define DRIFT_UNBIAS_FULL_STICK 0.30f /* drive_mag at which bias reaches remnant */
+/* REVERTED EXPERIMENT (2026-08-07, same night): a fast un-bias completing by
+ * 30% deflection (DRIFT_UNBIAS_FULL_STICK 0.30) was tried on the theory that
+ * the stick-linear bias was a light-press force dead zone. The driver
+ * confirmed it as a REGRESSION: the morning stick-linear build moved
+ * correctly per key on light presses; the fast-unbias build did not. The
+ * mechanism (per the Post_debug log): this robot rides a ~22 Hz vertical hop
+ * (~50% low-load duty, common-mode across both wheels — same as the
+ * reference robot it was copied from) that injects ~1 m/s of common-mode
+ * slip noise. Near-zero bias puts the tires in the SIGN-modulation regime
+ * where that noise flips per-wheel force signs and randomizes the net force
+ * (measured: 0.2-0.4 N delivered vs 2-3 N available). A deliberate forward
+ * bias instead rides the friction curve's SLOPE with both wheels sign-pinned
+ * in forward slip: less peak force, but hop-immune. Stick-linear blend keeps
+ * light presses in the working biased regime and full stick at the remnant. */
 /* Sim-swept 2026-08-07 with the coast-down-measured tire friction (mu~0.9,
  * NOT the earlier 0.1 misread): bias vs full-stick translation —
  *   0.00 -> 0.93 m/s but 5.8 deg tilt (over the 5.5 edge budget) and -14
@@ -371,13 +364,14 @@
  * 0.2-0.3 gain against a sim plant that realized far more) were strangling
  * the force. Realized swing at these caps stays at the previously-validated
  * envelope. */
-/* Tightened 2.0/2.8 -> 1.0/1.4 with the amplitude cut above (same measured
- * rationale): under the old caps the robot struck the ground during presses
- * in every omega band while still not translating visibly — the swing was
- * paying full tilt cost above force saturation. These caps put full-stick
- * commanded swing just above the saturation knee. */
-#define TIP_SWING_RATIO_LO 1.0f /* cmd swing/omega cap below TIP_OMEGA_LO   */
-#define TIP_SWING_RATIO_HI 1.4f /* cmd swing/omega cap above TIP_OMEGA_HI   */
+/* (A 1.0/1.4 tightened variant lived here briefly on 2026-08-07 alongside the
+ * 0.30 amplitude; both were restored the same night with the morning
+ * empirically-working configuration. Steady-state analysis that night also
+ * showed the rotor-reaction tilt story only applies to TRANSIENTS — in
+ * steady translation the stored wheel momentum is constant and needs no
+ * torque — so these caps mainly bound wave on/off and damper-shed edges.) */
+#define TIP_SWING_RATIO_LO 2.0f /* cmd swing/omega cap below TIP_OMEGA_LO   */
+#define TIP_SWING_RATIO_HI 2.8f /* cmd swing/omega cap above TIP_OMEGA_HI   */
 #define TIP_OMEGA_LO 125.0f      /* rad/s: ramp start                       */
 #define TIP_OMEGA_HI 170.0f      /* rad/s: ramp end (full ratio)            */
 /* ── Closed-loop wobble damper (schema v6) ─────────────────────────────────

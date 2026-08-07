@@ -348,27 +348,20 @@ int main(void) {
                     100.0f * GEOM + DRIFT_TRANSLATE_BIAS_MS / WHEEL_RADIUS_M, TOL,
                     "UNBIAS: full stick keeps only the fixed bias remnant");
 
-        /* (5c) The un-bias completes by DRIFT_UNBIAS_FULL_STICK: any deliberate
-              press translates on the same near-zero bias as full stick (the old
-              stick-linear blend kept ~2 m/s of bias at tap-depth deflections —
-              slip never reversed, zero force). Probe inside the short ramp
-              (ctrl_y=16, drive 0.126 -> unbias 0.42) and past its knee
-              (ctrl_y=64, drive 0.504 -> unbias saturated at 1). */
-        SunshineVars tap = melty_run(255, 16, 100.0f, 100.0f, 1, 8.0f,
-                                     -DRIFT_PHASE_OFFSET_RADS - 100.0f * DRIFT_PHASE_LEAD_S
-                                     + WAVE_ZERO);
-        float tap_unbias = (16.0f / 127.0f) / DRIFT_UNBIAS_FULL_STICK;
-        ASSERT_NEAR(cmd_to_wheel_rads(0.5f * (tap.dshot_cmd_left + tap.dshot_cmd_right), 8.0f),
-                    100.0f * GEOM
-                    + (WHEEL_SLIP_ALLOW_MS + tap_unbias
-                       * (DRIFT_TRANSLATE_BIAS_MS - WHEEL_SLIP_ALLOW_MS)) / WHEEL_RADIUS_M,
-                    TOL, "UNBIAS: allowance blends down inside the un-bias ramp");
+        /* (5c) Partial stick keeps a proportional share of the allowance —
+              STICK-LINEAR by design (a fast-unbias variant completing at 30%
+              deflection was a driver-confirmed regression: near-zero bias
+              puts light presses in the sign-modulation regime that the
+              robot's ~22 Hz vertical hop noise randomizes; the biased
+              friction-slope regime is hop-immune — see sunshine_core.h). */
         SunshineVars half = melty_run(255, 64, 100.0f, 100.0f, 1, 8.0f,
                                       -DRIFT_PHASE_OFFSET_RADS - 100.0f * DRIFT_PHASE_LEAD_S
                                       + WAVE_ZERO);
         ASSERT_NEAR(cmd_to_wheel_rads(0.5f * (half.dshot_cmd_left + half.dshot_cmd_right), 8.0f),
-                    100.0f * GEOM + DRIFT_TRANSLATE_BIAS_MS / WHEEL_RADIUS_M,
-                    TOL, "UNBIAS: bias already at the remnant by half stick");
+                    100.0f * GEOM
+                    + (WHEEL_SLIP_ALLOW_MS + (64.0f / 127.0f)
+                       * (DRIFT_TRANSLATE_BIAS_MS - WHEEL_SLIP_ALLOW_MS)) / WHEEL_RADIUS_M,
+                    TOL, "UNBIAS: allowance blends down with stick deflection");
 
         /* (5d) Low-spin translation fade: below DRIFT_OMEGA_FADE_LO the drift
               must be OFF (the measured failure: a collapse leaves the robot

@@ -110,14 +110,19 @@ static float melty_speed_cap(const SunshineState *s, const SunshineVars *v, floa
      * decoupled from the spin-up allowance knob — see sunshine_core.h: the old
      * allowance-proportional form re-created the zero-crossing dead zone
      * whenever WHEEL_SLIP_ALLOW_MS was raised.
-     * The blend completes by DRIFT_UNBIAS_FULL_STICK of deflection, NOT at
-     * full stick: a stick-linear blend kept ~2 m/s of bias over most of the
-     * stick (taps modulated the motors audibly with zero force), and let
-     * drive_mag shedding (wobble damper / low-spin fade) drag the bias back
-     * up mid-press — see the DEAD-ZONE WIDTH FIX note in sunshine_core.h. */
-    float unbias   = clampf(drive_mag / DRIFT_UNBIAS_FULL_STICK, 0.0f, 1.0f);
+     * The blend is STICK-LINEAR on purpose (a 2026-08-07 fast-unbias variant
+     * that completed by 30% deflection was a driver-confirmed REGRESSION and
+     * was reverted): on this robot the vertical hop injects ~1 m/s of
+     * common-mode slip noise at each flight/landing cycle, which flips
+     * per-wheel slip SIGNS whenever the bias is near zero — the textbook
+     * zero-centred sign-modulation force gets spent in random directions.
+     * A biased partial press instead modulates force through the friction
+     * curve's SLOPE with both wheels held in forward slip: smaller force,
+     * but sign-proof against the hop — the regime the driver observed
+     * actually translating ("light presses move small amounts in the right
+     * direction"). Full stick still blends down to the remnant. */
     float allow_ms = WHEEL_SLIP_ALLOW_MS
-                     + unbias * (DRIFT_TRANSLATE_BIAS_MS - WHEEL_SLIP_ALLOW_MS);
+                     + drive_mag * (DRIFT_TRANSLATE_BIAS_MS - WHEEL_SLIP_ALLOW_MS);
 
     float w_ref    = fmaxf(locked ? fabsf(s->kf_omega) : 0.0f, SUNSHINE_MAG_MIN_OMEGA);
     float w_cap    = w_ref * (WHEEL_CENTER_M / WHEEL_RADIUS_M)   /* rolling rate    */
