@@ -208,17 +208,22 @@ int main(void) {
         ASSERT(max_abs_sum < 2.0f, "MELTY drift waveform is half-wave antisymmetric");
     }
 
-    /* Differential authority must scale to the available symmetric headroom.
-       At high spin throttle the old base-scaled diff clipped a side to DSHOT_MAX,
-       distorting the waveform and hiding the requested profile from the ESC. */
+    /* Translation authority spans the DRIVER'S throttle (spin_span): the
+       modulation depth is the kinematic translation-speed ceiling, so at full
+       throttle + full stick the wave must swing DEEP — the retreating wheel
+       bottoming at NEUTRAL is standard melty behavior, not clipping to avoid. */
     {
         sunshine_state_init(&s);
-        s.kf_theta = 0.0f;
+        s.kf_theta = -DRIFT_PHASE_OFFSET_RADS - 95.0f * DRIFT_PHASE_LEAD_S; /* + plateau */
         s.kf_omega = 95.0f;    /* inside the translation authority band so drift is live */
         in = make_input(SUNSHINE_MODE_MELTY, 240, 127, 0, 0);
         control_step(&in, &s, &v);
-        ASSERT(v.dshot_cmd_left < DSHOT_MAX - 1.0f, "MELTY high throttle drift does not clip high side");
-        ASSERT(v.dshot_cmd_right > DSHOT_NEUTRAL + 1.0f, "MELTY high throttle drift does not clip low side");
+        float span = 240.0f / 255.0f * (DSHOT_MAX - DSHOT_NEUTRAL);
+        ASSERT(v.dshot_cmd_left - v.dshot_cmd_right >
+               DRIFT_AMPLITUDE * span * 0.8f,
+               "MELTY translation modulation spans the driver throttle, not cap headroom");
+        ASSERT(v.dshot_cmd_left <= DSHOT_MAX && v.dshot_cmd_right >= DSHOT_NEUTRAL,
+               "MELTY modulation stays inside the unipolar spin range");
     }
 
     /* ── MELTY actuation-lag phase lead ────────────────────────────────────
@@ -332,14 +337,22 @@ int main(void) {
               +1 m/s bias kept both tires saturated forward for most of the
               wave — a 1 m/s differential dead zone. Measured 2026-08-07:
               removing ALL of it starved the spin (~0.5 m/s of slip just pays
-              drag) and the robot parked at the fade equilibrium. */
-        ASSERT_NEAR(cmd_to_wheel_rads(0.5f * (tr.dshot_cmd_left + tr.dshot_cmd_right), 8.0f),
+              drag) and the robot parked at the fade equilibrium. Probed at the
+              wave's ZERO-crossing (plateau edge + 90 deg) so the deep
+              throttle-span modulation (whose NEUTRAL bottoming skews a mean)
+              doesn't enter the measurement. */
+        const float WAVE_ZERO = 1.5707963f;   /* wave(pi/2) = 0 at PLATEAU 0.25 */
+        SunshineVars tr0 = melty_run(255, 127, 100.0f, 100.0f, 1, 8.0f,
+                                     -DRIFT_PHASE_OFFSET_RADS - 100.0f * DRIFT_PHASE_LEAD_S
+                                     + WAVE_ZERO);
+        ASSERT_NEAR(cmd_to_wheel_rads(0.5f * (tr0.dshot_cmd_left + tr0.dshot_cmd_right), 8.0f),
                     100.0f * GEOM + ALLOW * (1.0f - DRIFT_UNBIAS_FRAC), TOL,
                     "UNBIAS: full stick keeps only the spin-maintenance remnant");
 
         /* (5c) Partial stick keeps a proportional share of the allowance. */
         SunshineVars half = melty_run(255, 64, 100.0f, 100.0f, 1, 8.0f,
-                                      -DRIFT_PHASE_OFFSET_RADS - 100.0f * DRIFT_PHASE_LEAD_S);
+                                      -DRIFT_PHASE_OFFSET_RADS - 100.0f * DRIFT_PHASE_LEAD_S
+                                      + WAVE_ZERO);
         ASSERT_NEAR(cmd_to_wheel_rads(0.5f * (half.dshot_cmd_left + half.dshot_cmd_right), 8.0f),
                     100.0f * GEOM + ALLOW * (1.0f - DRIFT_UNBIAS_FRAC * 64.0f / 127.0f), TOL,
                     "UNBIAS: allowance scales down with stick deflection");

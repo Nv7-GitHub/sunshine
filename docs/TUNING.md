@@ -125,7 +125,7 @@ MELTY mode applies a differential DShot command that changes with robot angle. T
 
 | Constant | Default | What it controls |
 |----------|---------|-----------------|
-| `DRIFT_AMPLITUDE` | 0.30 | Max differential as a fraction of available symmetric DShot headroom. Sets the wheel-speed swing = translation top-speed ceiling AND the wheel-rotor gyroscopic tilt kick; low-speed force saturates at tire friction regardless. Raise for top speed only with verified direction; drop if edge strikes return. |
+| `DRIFT_AMPLITUDE` | 0.30 | Max differential as a fraction of the **driver's throttle span**. Sets the wheel-speed swing = translation top-speed ceiling AND the wheel-rotor gyroscopic tilt kick; low-speed force saturates at tire friction regardless. Raise for top speed; drop if edge strikes return. At 50% throttle, 0.30 commands roughly ±2.5 m/s of contact-speed swing. |
 | `DRIFT_PLATEAU_WIDTH` | 0.25 | Fraction of full rotation spent at each +1 and -1 plateau. 0.25 gives two 90° plateaus and two 90° ramps (~10 ms at combat spin — matched to the ~20 ms actuation lag; the old 54° ramps commanded reversals the plant rounded off anyway while their harmonics showed as 2x/3x-rev vibration). |
 | `DRIFT_PHASE_OFFSET_RADS` | π | **Derived from geometry**: wheels push along the wheel-line tangent (90° from the wheel axis), the LED sits ON the wheel axis, and W = "toward the light" is encoded as dd = +90° — the two 90°s stack to exactly 0 or π depending on which side the "+diff" wheel sits. This build: π. Flips between π and 0 on any rewiring/remount/invert change — re-run the drift test. |
 | `DRIFT_PHASE_LEAD_S` | 0.005 | Force-lag compensation. Added phase is `kf_omega * DRIFT_PHASE_LEAD_S`. **Measured on-floor** (two-speed drift test with the offset pinned at π; both speeds agree on ~4–5 ms). NOT the eRPM lag — eRPM is wheel *speed*, which lags ~4× the force (see BRINGUP Step 4). |
@@ -150,14 +150,20 @@ The waveform has zero mean over a revolution and satisfies `wave(phase + pi) = -
 
 `phase = robot_angle - drive_dir + DRIFT_PHASE_OFFSET_RADS + kf_omega * DRIFT_PHASE_LEAD_S`
 
-`headroom = min(base - DSHOT_NEUTRAL, DSHOT_MAX - base)`
+`diff = wave(phase) × drive_magnitude × DRIFT_AMPLITUDE × spin_span`
 
-`diff = wave(phase) × drive_magnitude × DRIFT_AMPLITUDE × headroom`
+`dshot_left  = clamp(base + diff)`
+`dshot_right = clamp(base - diff)`
 
-`dshot_left  = base + diff`
-`dshot_right = base - diff`
-
-`headroom` prevents clipping. At low throttle there is little room above neutral; at very high throttle there is little room below max. Translation authority is strongest at moderate spin commands and intentionally fades near full throttle.
+where `spin_span` is the **driver's throttle span** (uncapped) and `base` is the
+capped mean. Translation speed is kinematically the wheel-speed modulation
+depth (each contact point needs `rolling ± v` once per rev while moving at v),
+so the diff scales with the driver's throttle — the classic melty full-range
+modulation — not with the headroom around the capped base, which limited
+translation to ~1 m/s. The retreating wheel bottoming out at `DSHOT_NEUTRAL`
+under deep modulation is normal. **Throttle and `DRIFT_AMPLITUDE` are the
+translation speed knobs**; the cap still governs the mean (idle-spin overspeed
+protection unchanged).
 
 ### Spin rate vs. translation authority (measured)
 

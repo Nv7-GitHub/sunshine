@@ -186,19 +186,24 @@ void control_step(const SunshineInput *in, SunshineState *s, SunshineVars *v) {
                         / (DRIFT_OMEGA_FADE_HI - DRIFT_OMEGA_FADE_LO), 0.0f, 1.0f);
 
     float base = DSHOT_NEUTRAL + spin_span;
-    /* Cap the MEAN wheel command before headroom is derived from it, so the drift
-     * differential scales down together with the capped base. Note the drift wave
-     * still rides above AND below the capped base, so the driving wheel briefly
-     * exceeds the cap while the other brakes — that asymmetry IS the translation
-     * mechanism and must not be clamped away. */
+    /* Cap the MEAN wheel command; the drift wave rides above and below it. */
     base = melty_speed_cap(s, v, base, drive_mag);
-    float headroom = fminf(base - DSHOT_NEUTRAL, DSHOT_MAX - base);
-    if (headroom < 0.0f) headroom = 0.0f;
 
     float phase = wrap_to_pi(robot_angle - drive_dir
                              + DRIFT_PHASE_OFFSET_RADS
                              + s->kf_omega * DRIFT_PHASE_LEAD_S);
-    float diff = drift_wave(phase) * drive_mag * DRIFT_AMPLITUDE * headroom;
+    /* Translation authority spans the DRIVER'S THROTTLE (spin_span), not the
+     * headroom around the capped base. Translation speed IS wheel-speed
+     * modulation depth — while moving at v, each contact point needs
+     * rolling ± v once per rev, so the swing is a hard kinematic speed
+     * ceiling. The old headroom basis limited the swing to ±~1 m/s (snail
+     * pace); classic melties modulate across most of the throttle range.
+     * The advancing wheel rides toward the driver's throttle, the retreating
+     * wheel toward stopped (the [NEUTRAL, MAX] clamp below bottoms it out —
+     * that distortion is standard melty behavior); the cap still governs the
+     * MEAN, so idle-spin overspeed protection is unchanged. Throttle and
+     * DRIFT_AMPLITUDE are therefore the translation speed knobs. */
+    float diff = drift_wave(phase) * drive_mag * DRIFT_AMPLITUDE * spin_span;
 
     v->dshot_cmd_left  = clampf(base + diff, DSHOT_NEUTRAL, DSHOT_MAX);
     v->dshot_cmd_right = clampf(base - diff, DSHOT_NEUTRAL, DSHOT_MAX);
