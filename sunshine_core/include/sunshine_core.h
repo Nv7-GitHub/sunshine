@@ -105,7 +105,17 @@
 #define ROBOT_MASS_KG 0.454f
 #define ROBOT_MOI_KGM2 1.214e-3f /* body yaw inertia                  */
 #define WHEEL_INERTIA_KGM2 6.40744019e-6f /* wheel + motor rotor, each */
-#define MOTOR_R_PHASE_OHM 0.075f
+/* MEASURED FROM LOGS 2026-08-07 (ledger method: commanded-minus-realized slip
+ * surplus 0.99 V at delivered 1.08 A during the allowance-3.0 spin-up), and
+ * independently confirmed by (a) the wave-following gain it predicts
+ * (tau = I_w*R/(Kt*Ke) ~ 76 ms -> gain 0.27 at spin frequency — matching the
+ * measured 0.2-0.3 "plant attenuation") and (b) the brake-decel magnitude.
+ * The old 0.075 was likely the HIGH-KV variant's datasheet row — an 1100 KV
+ * rewind has ~turns^2 more resistance. That single error manufactured the
+ * phantom 10x force expectations, the "ESC bandwidth" and "current limit"
+ * mysteries, and the original cap sizing. Confirm against the motor spec when
+ * known; measure phase-to-phase / 2 if ever unsoldered. */
+#define MOTOR_R_PHASE_OHM 0.92f
 #define BATT_NOMINAL_V 8.4f /* sim pack voltage (2S full-ish)    */
 #define BATT_R_INTERNAL_OHM 0.008f
 #define EARTH_FIELD_UT 25.0f /* horizontal component ONLY, µT     */
@@ -228,7 +238,12 @@
  * 0.30 ≈ ±1.4 m/s ceiling at translating spin. Raise toward 0.45 for top
  * speed once direction is verified clean; drop toward 0.20 if any edge
  * strikes return. */
-#define DRIFT_AMPLITUDE 0.30f /* max diff as fraction of available headroom */
+/* Resized for the MEASURED winding resistance (0.92 ohm, not 0.075): force is
+ * current and current is surplus-voltage / R, so meaningful force needs
+ * multi-volt swings — 0.60 of the throttle span commands ~2.5-3.5 V of
+ * differential at driving throttles -> ~1.5-2.5 N net after the measured 0.27
+ * plant gain (vs the 0.3-0.45 N measured under the old sizing). */
+#define DRIFT_AMPLITUDE 0.60f /* max diff as fraction of throttle span */
 /* DERIVED from the build geometry and confirmed by the 2026-08-07 two-speed
  * drift test. The wheels push along the TANGENT of the wheel line (90 deg from
  * the wheel axis); the LED sits ON the wheel axis; and the driver convention is
@@ -320,8 +335,14 @@
  * REALIZED momentum swing. The sim-validated realized envelope therefore maps
  * to a ~2.5x larger COMMANDED swing on the real robot. Re-derive if the plant
  * gain changes (lighter wheels, ESC settings). */
-#define TIP_SWING_RATIO_LO 1.1f /* cmd swing/omega cap below TIP_OMEGA_LO   */
-#define TIP_SWING_RATIO_HI 1.9f /* cmd swing/omega cap above TIP_OMEGA_HI   */
+/* Opened ~2x again for the measured R: the tilt driver is REALIZED wheel-
+ * momentum swing, and with tau ~76 ms the wheels realize only ~0.27 of the
+ * commanded swing at spin frequency — the prior ratios (sized at an assumed
+ * 0.2-0.3 gain against a sim plant that realized far more) were strangling
+ * the force. Realized swing at these caps stays at the previously-validated
+ * envelope. */
+#define TIP_SWING_RATIO_LO 2.5f /* cmd swing/omega cap below TIP_OMEGA_LO   */
+#define TIP_SWING_RATIO_HI 3.5f /* cmd swing/omega cap above TIP_OMEGA_HI   */
 #define TIP_OMEGA_LO 125.0f      /* rad/s: ramp start                       */
 #define TIP_OMEGA_HI 170.0f      /* rad/s: ramp end (full ratio)            */
 /* ── Closed-loop wobble damper (schema v6) ─────────────────────────────────

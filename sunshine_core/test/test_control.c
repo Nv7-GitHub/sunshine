@@ -444,7 +444,13 @@ int main(void) {
                                          -DRIFT_PHASE_OFFSET_RADS - 165.0f * DRIFT_PHASE_LEAD_S);
         float d_hispin = 0.5f * (hi_spin.dshot_cmd_left - hi_spin.dshot_cmd_right);
         ASSERT(d_hispin > 2.0f, "HIGH SPIN: translation authority is not rolled off");
-        ASSERT_NEAR(cmd_to_wheel_rads(0.5f * (hi_spin.dshot_cmd_left + hi_spin.dshot_cmd_right), 8.0f),
+        /* Mean probed at the wave zero-crossing: deep modulation legitimately
+           bottoms the retreating wheel at NEUTRAL on the plateau, which would
+           skew a plateau mean. */
+        SunshineVars hs0 = melty_run(255, 127, 165.0f, 165.0f, 1, 8.0f,
+                                     -DRIFT_PHASE_OFFSET_RADS - 165.0f * DRIFT_PHASE_LEAD_S
+                                     + WAVE_ZERO);
+        ASSERT_NEAR(cmd_to_wheel_rads(0.5f * (hs0.dshot_cmd_left + hs0.dshot_cmd_right), 8.0f),
                     165.0f * GEOM + DRIFT_TRANSLATE_BIAS_MS / WHEEL_RADIUS_M, TOL,
                     "HIGH SPIN: cap tracks the actual spin (no governor pull-down)");
         /* With translation faded out, the full spin-up slip allowance returns. */
