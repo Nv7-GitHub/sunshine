@@ -248,7 +248,17 @@
  * +/-1.8 V (2.5 A, ~0.9 N electrical, the measured slow scoot).
  * differential at driving throttles -> ~1.5-2.5 N net after the measured 0.27
  * plant gain (vs the 0.3-0.45 N measured under the old sizing). */
-#define DRIFT_AMPLITUDE 0.60f /* max diff as fraction of FULL DShot span */
+/* 0.60 -> 1.00 (2026-08-07 Post_debug log): the delivered translation force,
+ * measured ABSOLUTELY via ground-frame accel demod (calibrated 1g = ~78
+ * counts), is only 0.3-0.4 N — an order below the friction ceiling — and the
+ * plant realizes just ~±1-1.5 m/s of wheel-speed swing from the 0.60 command
+ * (tau = I_w*R/KtKe ~ 78 ms vs the 25-30 Hz rev). Terminal translation speed
+ * against spin-scrub lateral drag is ~(F/muN)*|v_slip| ~ 0.2 m/s — the
+ * measured "snail pace". Reference melties slam rail-to-rail; amplitude is
+ * the one direct multiplier on realized swing that remains. Expect more
+ * ground contact while translating (the tilt bill scales with the same
+ * swing); the working regime is mid-spin holds, not high spin. */
+#define DRIFT_AMPLITUDE 1.00f /* max diff as fraction of FULL DShot span */
 /* DERIVED from the build geometry and confirmed by the 2026-08-07 two-speed
  * drift test. The wheels push along the TANGENT of the wheel line (90 deg from
  * the wheel axis); the LED sits ON the wheel axis; and the driver convention is
@@ -359,8 +369,17 @@
  * 0.2-0.3 gain against a sim plant that realized far more) were strangling
  * the force. Realized swing at these caps stays at the previously-validated
  * envelope. */
-#define TIP_SWING_RATIO_LO 2.0f /* cmd swing/omega cap below TIP_OMEGA_LO   */
-#define TIP_SWING_RATIO_HI 2.8f /* cmd swing/omega cap above TIP_OMEGA_HI   */
+/* Opened 2.0/2.8 -> 3.0/4.2 with the amplitude change above: the old caps
+ * bound deep presses to ~220-250 commanded counts, and at that swing the
+ * robot BOTH failed to translate AND still struck the ground when held
+ * (Post_debug: press-time big-impulse rate 10-18/1000 samples in EVERY omega
+ * band — there is no strike-free press regime under the old clamp, so it was
+ * paying the tilt bill without buying the force). The only session with
+ * visible translation (Moreamplitudeagain, omega ~130, 2-4.6 s holds) ran
+ * comparable tilt rates and survived by riding the contact. These caps admit
+ * the full-span wave at mid spin and up. */
+#define TIP_SWING_RATIO_LO 3.0f /* cmd swing/omega cap below TIP_OMEGA_LO   */
+#define TIP_SWING_RATIO_HI 4.2f /* cmd swing/omega cap above TIP_OMEGA_HI   */
 #define TIP_OMEGA_LO 125.0f      /* rad/s: ramp start                       */
 #define TIP_OMEGA_HI 170.0f      /* rad/s: ramp end (full ratio)            */
 /* ── Closed-loop wobble damper (schema v6) ─────────────────────────────────
