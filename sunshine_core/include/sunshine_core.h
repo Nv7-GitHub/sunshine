@@ -193,14 +193,17 @@
  * translation (2026-08-06 logs). Wider ramps deliver the same fundamental with
  * less per-edge wheel-KE dump and gyroscopic kick. */
 #define DRIFT_PLATEAU_WIDTH 0.25f   /* fraction of rotation at each +/- peak diff */
-/* 0.45 — moderate default while the force-direction question is settled (see
- * NOTE above and DRIFT_PHASE_LEAD_S). The eRPM attenuation at high spin
- * (erpm_bandwidth.py: 0.31 of commanded at 15 Hz spin, 0.19 at 22 Hz) is
- * confounded by tire grip, so it does NOT justify extreme amplitude; and the
- * wheel-speed swing sets the wheel-rotor gyroscopic tilt kick, so gratuitous
- * amplitude buys tilt. Re-tune after the on-floor direction test fixes the
- * phase constants. */
-#define DRIFT_AMPLITUDE     0.45f   /* max diff as fraction of available headroom */
+/* With the force DIRECTION fixed (see DRIFT_PHASE_OFFSET_RADS / _LEAD_S),
+ * amplitude no longer needs to compensate for a misaimed force. What it buys:
+ * the wheel-speed swing sets the translation TOP-SPEED ceiling (the advancing
+ * wheel must out-run rolling by the robot's ground speed) — low-speed force
+ * saturates at tire friction within a modest swing regardless. What it costs:
+ * the same swing sets the wheel-rotor gyroscopic tilt kick (the amplitude
+ * escalation while the force was misaimed is what drove the edge strikes).
+ * 0.30 ≈ ±1.4 m/s ceiling at translating spin. Raise toward 0.45 for top
+ * speed once direction is verified clean; drop toward 0.20 if any edge
+ * strikes return. */
+#define DRIFT_AMPLITUDE     0.30f   /* max diff as fraction of available headroom */
 /* MEASURED on-floor 2026-08-07 (two-speed drift-direction test, TUNING.md L5S3,
  * cross-checked against the v45 log's world-frame eRPM-diff demod): the realized
  * force direction erred by a CONSTANT +210 deg (likely a diff-sign flip from the

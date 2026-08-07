@@ -125,10 +125,10 @@ MELTY mode applies a differential DShot command that changes with robot angle. T
 
 | Constant | Default | What it controls |
 |----------|---------|-----------------|
-| `DRIFT_AMPLITUDE` | 0.60 | Max differential as a fraction of available symmetric DShot headroom. Usable at full value since the slip un-bias (the wave straddles zero slip, so force is proportional). |
+| `DRIFT_AMPLITUDE` | 0.30 | Max differential as a fraction of available symmetric DShot headroom. Sets the wheel-speed swing = translation top-speed ceiling AND the wheel-rotor gyroscopic tilt kick; low-speed force saturates at tire friction regardless. Raise for top speed only with verified direction; drop if edge strikes return. |
 | `DRIFT_PLATEAU_WIDTH` | 0.25 | Fraction of full rotation spent at each +1 and -1 plateau. 0.25 gives two 90° plateaus and two 90° ramps (~10 ms at combat spin — matched to the ~20 ms actuation lag; the old 54° ramps commanded reversals the plant rounded off anyway while their harmonics showed as 2x/3x-rev vibration). |
-| `DRIFT_PHASE_OFFSET_RADS` | 0.0 | Fixed motor-timing offset between the LED/driver heading and the wheel-force waveform. |
-| `DRIFT_PHASE_LEAD_S` | 0.018 | ESC/traction lag compensation. Added phase is `kf_omega * DRIFT_PHASE_LEAD_S`. **Measured, per-build** — `tools/replay/translation_lag.py`, procedure in BRINGUP.md Level 5 Step 4. |
+| `DRIFT_PHASE_OFFSET_RADS` | −2.62 | Fixed geometry/sign offset between the LED/driver heading and the physical wheel-force direction. **Measured on-floor** (BRINGUP Level 5 Step 4). Re-measure after any motor wiring/mount/invert change — flips show up here as ±180°. |
+| `DRIFT_PHASE_LEAD_S` | 0.010 | Force-lag compensation. Added phase is `kf_omega * DRIFT_PHASE_LEAD_S`. **Measured on-floor** (two-speed drift test + `tools/melty_sim.py` fit). NOT the eRPM lag — eRPM is wheel *speed*, which lags ~2× the force (see BRINGUP Step 4). |
 | `DRIFT_OMEGA_FADE_LO` | 60 rad/s | Translation fully off below this spin rate. Breaks the measured collapse trap: an edge-strike slowdown otherwise parks the robot at 55–60 rad/s with the cap braking the wheels while the stick is held. |
 | `DRIFT_OMEGA_FADE_HI` | 85 rad/s | Full translation authority above this. Between LO and HI, `drive_mag` scales linearly. |
 | `THETA_RATE_RADS` | π rad/s | Heading offset rate per full left/right arrow deflection (ctrl_theta = ±127). |
@@ -221,27 +221,24 @@ to settle like a conventional melty. If held-stick translation still walks the
 edge into the floor on hardware, the remaining lever is the forcing duty cycle
 (feather the keys, or revisit duty-cycling the drift in firmware).
 
-### `DRIFT_PHASE_LEAD_S` from the eRPM lag
+### `DRIFT_PHASE_LEAD_S` — measure the FORCE lag on-floor, never from eRPM
 
-The DShot→eRPM lag above turns into a heading-referenced phase error `omega × lag`
-that grows with spin rate — exactly what `DRIFT_PHASE_LEAD_S` compensates.
-
-**Measure it, don't guess it:** `tools/replay/translation_lag.py <log.sun>` cross-
-correlates the logged DShot differential against the eRPM differential over every
-translation window and prints the recommended constant (full procedure: BRINGUP.md
-Level 5 Step 4). Unlike single-frequency demodulation (`erpm_bandwidth.py`) the
-time-domain cross-correlation is not ambiguous modulo one rotation, and the script's
-constant-offset residual check separates lag from a `DRIFT_PHASE_OFFSET_RADS` problem.
-
-**Measured (2026-07-20 translation2 log):** a pure **time delay of ~20 ms** (18–24 ms
-over 24 windows), identical for both spin directions, with **no constant offset** (so
-`DRIFT_PHASE_OFFSET_RADS` stays 0 — the phase convention is correct). Subtracting the
-~3 ms median-5 eRPM telemetry lag leaves **~17 ms of physical actuation delay** →
-`DRIFT_PHASE_LEAD_S = 0.018f`. Uncompensated, this was a 110–150° force-direction
-error at 1000–1300 RPM — the wheel-speed peak landed nearly opposite the commanded
-direction, which is why the robot wobbled and barely translated. Confirm the residual
-direction error on hardware (position cannot be replayed from logs) and refine with
-the two-speed method in Step 3 below.
+The spin-proportional phase error `omega × lag` is what `DRIFT_PHASE_LEAD_S`
+compensates — but the lag that matters is the **force** lag, and it cannot be
+measured from eRPM. History as a warning: `translation_lag.py` measured a clean
+~20 ms DShot→eRPM delay (2026-07-20) and the lead was set to 0.018 from it. But
+eRPM is wheel *speed*, and speed is the *integral* of torque: the tires ride the
+cap's slip bias so they are always kinetically sliding, force is
+`µN·sign(slip)`, and the force wave's timing follows the slip-**sign**
+crossings — roughly **half** the speed lag. The 18 ms lead therefore rotated
+the force backwards by `omega × 8 ms`, and the error self-conceals because the
+eRPM cross-check keeps validating it. Measured correctly on-floor (2026-08-07
+two-speed drift-direction test, fitted with `tools/melty_sim.py`):
+**force lag ≈ 10 ms → `DRIFT_PHASE_LEAD_S = 0.010f`**, together with a
+constant `DRIFT_PHASE_OFFSET_RADS = −2.62` (a ≈ +210° geometry/sign offset,
+plausibly introduced by the 2026-08-06 motor-config change). Full procedure:
+BRINGUP.md Level 5 Step 4. `translation_lag.py` is still useful — as a
+speed-lag/ESC-health measurement and an upper bound on the force lag only.
 
 ### Inverted operation flips the apparent translation direction (not a bug)
 
