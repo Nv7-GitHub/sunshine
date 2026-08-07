@@ -86,12 +86,8 @@ static float map_to_dshot(float v) {
  * up. That is the right trade, since a MELTY robot with no heading reference is
  * undriveable anyway, but it converts "degraded but spinning" into "will not spin
  * up" and is therefore documented in BRINGUP.md so bringup sees it first. */
-/* drive_mag: post-fade deflection (scales the slip un-bias).
- * drive_raw: pre-fade deflection — the governor must see the stick even when
- * the spin is above the rolloff band (where post-fade drive is zero), or it
- * could never brake the robot down into the band. */
 static float melty_speed_cap(const SunshineState *s, const SunshineVars *v, float base,
-                             float drive_mag, float drive_raw) {
+                             float drive_mag) {
     /* Written as a positive-range test so a NaN battery also fails open. */
     if (!(v->batt_voltage >= CAP_VBATT_MIN_V && v->batt_voltage <= CAP_VBATT_MAX_V))
         return base;
@@ -116,10 +112,6 @@ static float melty_speed_cap(const SunshineState *s, const SunshineVars *v, floa
     float allow_ms = WHEEL_SLIP_ALLOW_MS * (1.0f - DRIFT_UNBIAS_FRAC * drive_mag);
 
     float w_ref    = fmaxf(locked ? fabsf(s->kf_omega) : 0.0f, SUNSHINE_MAG_MIN_OMEGA);
-    /* Translation spin governor — see DRIFT_TRANSLATE_OMEGA_RADS. A held stick
-     * blends the reference down to the translating band, so the cap actively
-     * brakes the robot to a speed where the wheels can realize the wave. */
-    w_ref         -= drive_raw * fmaxf(0.0f, w_ref - DRIFT_TRANSLATE_OMEGA_RADS);
     float w_cap    = w_ref * (WHEEL_CENTER_M / WHEEL_RADIUS_M)   /* rolling rate    */
                      + allow_ms / WHEEL_RADIUS_M;                /* + slip allowance */
     float v_needed = (w_cap * RADS_TO_RPM) / MOTOR_KV_RPM_PER_V;
@@ -187,17 +179,11 @@ void control_step(const SunshineInput *in, SunshineState *s, SunshineVars *v) {
     float drive_dir = atan2f(cy, cx);
     float drive_mag = sqrtf(cx*cx + cy*cy) / 127.0f;
     drive_mag       = clampf(drive_mag, 0.0f, 1.0f);
-    float drive_raw = drive_mag;   /* pre-fade, for the spin governor */
     /* Low-spin translation fade — see DRIFT_OMEGA_FADE_* in sunshine_core.h.
      * Applied BEFORE the cap so a faded drive also restores the full spin-up
      * slip allowance (the un-bias scales by the post-fade drive_mag). */
     drive_mag *= clampf((fabsf(s->kf_omega) - DRIFT_OMEGA_FADE_LO)
                         / (DRIFT_OMEGA_FADE_HI - DRIFT_OMEGA_FADE_LO), 0.0f, 1.0f);
-    /* High-spin rolloff — plant-bandwidth gate, see DRIFT_OMEGA_ROLLOFF_* in
-     * sunshine_core.h. Above the band the wheels can't realize the wave, so
-     * commanding it buys tilt and zero force. */
-    drive_mag *= clampf((DRIFT_OMEGA_ROLLOFF_HI - fabsf(s->kf_omega))
-                        / (DRIFT_OMEGA_ROLLOFF_HI - DRIFT_OMEGA_ROLLOFF_LO), 0.0f, 1.0f);
 
     float base = DSHOT_NEUTRAL + spin_span;
     /* Cap the MEAN wheel command before headroom is derived from it, so the drift
@@ -205,7 +191,7 @@ void control_step(const SunshineInput *in, SunshineState *s, SunshineVars *v) {
      * still rides above AND below the capped base, so the driving wheel briefly
      * exceeds the cap while the other brakes — that asymmetry IS the translation
      * mechanism and must not be clamped away. */
-    base = melty_speed_cap(s, v, base, drive_mag, drive_raw);
+    base = melty_speed_cap(s, v, base, drive_mag);
     float headroom = fminf(base - DSHOT_NEUTRAL, DSHOT_MAX - base);
     if (headroom < 0.0f) headroom = 0.0f;
 

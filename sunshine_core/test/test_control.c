@@ -359,33 +359,17 @@ int main(void) {
         ASSERT(d_mid > 2.0f,          "FADE: partial authority inside the fade band");
         ASSERT(d_hi > d_mid,          "FADE: full authority above DRIFT_OMEGA_FADE_HI");
 
-        /* (5f) High-spin rolloff: above the plant-bandwidth band the wheels
-              cannot realize the wave (measured ~20% gain at 22 Hz spin), so
-              commanded translation must roll off to ZERO — it produced only
-              gyroscopic tilt ("strikes with zero movement" on every 130+ rad/s
-              log). Allowance must return with it. */
-        SunshineVars r_mid = melty_run(255, 127, 120.0f, 120.0f, 1, 8.0f,
-                                       -120.0f * DRIFT_PHASE_LEAD_S);
-        SunshineVars r_off = melty_run(255, 127, 145.0f, 145.0f, 1, 8.0f,
-                                       -145.0f * DRIFT_PHASE_LEAD_S);
-        float dr_mid = 0.5f * (r_mid.dshot_cmd_left - r_mid.dshot_cmd_right);
-        float dr_off = 0.5f * (r_off.dshot_cmd_left - r_off.dshot_cmd_right);
-        ASSERT(dr_mid > 1.0f && dr_mid < d_hi, "ROLLOFF: partial authority inside the rolloff band");
-        ASSERT_NEAR(dr_off, 0.0f, 0.5f,        "ROLLOFF: no translation above DRIFT_OMEGA_ROLLOFF_HI");
-
-        /* (5g) Translation spin governor: a held stick above the band blends
-              the cap reference down to DRIFT_TRANSLATE_OMEGA_RADS — the robot
-              is actively braked INTO the band (Limitedspeed log: throttle's
-              no-load equilibrium parks the spin at ~168, above the band, so
-              without this the stick is simply dead). Stick released at the
-              same omega: cap tracks |kf_omega| as before. */
-        ASSERT_NEAR(cmd_to_wheel_rads(0.5f * (r_off.dshot_cmd_left + r_off.dshot_cmd_right), 8.0f),
-                    DRIFT_TRANSLATE_OMEGA_RADS * GEOM + ALLOW, TOL,
-                    "GOVERNOR: held stick above the band targets the translate speed");
-        SunshineVars nostick = melty_run(255, 0, 145.0f, 145.0f, 1, 8.0f, 0.0f);
-        ASSERT_NEAR(cmd_to_wheel_rads(nostick.dshot_cmd_left, 8.0f),
-                    145.0f * GEOM + ALLOW, TOL,
-                    "GOVERNOR: stick released, cap tracks the actual spin");
+        /* (5f) High spin keeps full translation authority: a rolloff + spin
+              governor briefly forced translation below ~1000 RPM, built on an
+              eRPM-attenuation reading that tire grip confounds. Melty practice
+              translates at 2K+ RPM; the drift must stay live there. */
+        SunshineVars hi_spin = melty_run(255, 127, 165.0f, 165.0f, 1, 8.0f,
+                                         -165.0f * DRIFT_PHASE_LEAD_S);
+        float d_hispin = 0.5f * (hi_spin.dshot_cmd_left - hi_spin.dshot_cmd_right);
+        ASSERT(d_hispin > 2.0f, "HIGH SPIN: translation authority is not rolled off");
+        ASSERT_NEAR(cmd_to_wheel_rads(0.5f * (hi_spin.dshot_cmd_left + hi_spin.dshot_cmd_right), 8.0f),
+                    165.0f * GEOM + ALLOW * (1.0f - DRIFT_UNBIAS_FRAC), TOL,
+                    "HIGH SPIN: cap tracks the actual spin (no governor pull-down)");
         /* With translation faded out, the full spin-up slip allowance returns. */
         ASSERT_NEAR(cmd_to_wheel_rads(0.5f * (f_lo.dshot_cmd_left + f_lo.dshot_cmd_right), 8.0f),
                     55.0f * GEOM + ALLOW, TOL,

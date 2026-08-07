@@ -193,18 +193,14 @@
  * translation (2026-08-06 logs). Wider ramps deliver the same fundamental with
  * less per-edge wheel-KE dump and gyroscopic kick. */
 #define DRIFT_PLATEAU_WIDTH 0.25f   /* fraction of rotation at each +/- peak diff */
-/* The PLANT is the constraint, not the tire (measured twice: erpm_bandwidth.py
- * gain 0.31 of commanded at 15 Hz spin -> 0.19 at 22 Hz; confirmed on the
- * 2026-08-07 New3 log — commanded slip swing ±2 m/s realized only ±0.4 at
- * omega 130-150). Rotor+wheel inertia low-passes the wave: above the rolloff
- * band the braking half never physically happens (both wheels stay in forward
- * slip -> ZERO differential force, "sound but no movement") while the motor
- * torque still reacts on the chassis (full tilt kick for nothing). Translation
- * therefore runs at high amplitude INSIDE the band where the plant responds,
- * and is rolled off entirely above it (DRIFT_OMEGA_ROLLOFF_*). With only ~30%
- * plant gain in-band, commanded amplitude must be large to realize a >1 m/s
- * physical swing: 0.70 of headroom. */
-#define DRIFT_AMPLITUDE     0.70f   /* max diff as fraction of available headroom */
+/* 0.45 — moderate default while the force-direction question is settled (see
+ * NOTE above and DRIFT_PHASE_LEAD_S). The eRPM attenuation at high spin
+ * (erpm_bandwidth.py: 0.31 of commanded at 15 Hz spin, 0.19 at 22 Hz) is
+ * confounded by tire grip, so it does NOT justify extreme amplitude; and the
+ * wheel-speed swing sets the wheel-rotor gyroscopic tilt kick, so gratuitous
+ * amplitude buys tilt. Re-tune after the on-floor direction test fixes the
+ * phase constants. */
+#define DRIFT_AMPLITUDE     0.45f   /* max diff as fraction of available headroom */
 #define DRIFT_PHASE_OFFSET_RADS 0.0f /* fixed motor timing offset, rad             */
 /* Low-spin translation fade (2026-08-06 logs). Two measured reasons translation
  * must not run at low spin: (1) the collapse trap — an edge-strike slowdown drops
@@ -219,27 +215,14 @@
  * below the ~90+ rad/s range where translation demonstrably works. */
 #define DRIFT_OMEGA_FADE_LO  60.0f  /* rad/s: translation fully off below        */
 #define DRIFT_OMEGA_FADE_HI  85.0f  /* rad/s: full translation authority above   */
-/* High-spin rolloff — the plant-bandwidth gate (see DRIFT_AMPLITUDE comment).
- * Above ~20 Hz spin the wheels cannot swing their speed through the braking
- * half of the wave, so commanded translation produces no force, only the
- * gyroscopic tilt reaction of the motors fighting their own rotor inertia —
- * measured as "strikes the floor with zero movement" on every 130+ rad/s log.
- * Full authority through ROLLOFF_LO, zero above ROLLOFF_HI. Translate at
- * omega ~85-105 (roughly 35-40% throttle); spin faster only for weapon energy. */
-#define DRIFT_OMEGA_ROLLOFF_LO 105.0f /* rad/s: full translation authority below  */
-#define DRIFT_OMEGA_ROLLOFF_HI 135.0f /* rad/s: translation fully off above       */
-/* Translation spin governor. The rolloff alone is a trap for the DRIVER: the
- * cap always grants rolling + allowance, so spin settles at the THROTTLE's
- * no-load equilibrium (41% throttle -> ~168 rad/s — the 2026-08-07
- * Limitedspeed log shows 100% of stick-held time above the band, zero drift
- * commanded, robot inert). Managing throttle per-maneuver is unreasonable, so
- * holding the stick IS the request to translate: the cap's rate reference
- * blends from |kf_omega| down to this target with raw stick deflection,
- * actively braking the robot into the band (~0.5 s from 165), where the
- * rolloff then grants authority. Release the stick and the cap resumes
- * tracking the throttle equilibrium (spin-up at the allowance rate). Sits at
- * the top of the full-authority band so no more spin is shed than necessary. */
-#define DRIFT_TRANSLATE_OMEGA_RADS 100.0f
+/* NOTE (2026-08-07): a high-spin rolloff + spin governor briefly lived here,
+ * built on reading the eRPM attenuation at 20+ Hz spin as an ESC/plant
+ * bandwidth limit. That reading is confounded: a GRIPPING tire pins wheel
+ * speed near rolling regardless of command, so speed attenuation can mean
+ * force is being transmitted, not that the plant can't respond. Other melties
+ * translate at 2K+ RPM; forcing this robot below ~1000 RPM to translate was
+ * treating the symptom. Removed pending the on-floor force-direction test
+ * (TUNING.md Level 5 Step 3, two-speed method). */
 /* Fraction of the slip allowance the un-bias removes at full stick. 1.0 (remove
  * all of it) was tried on the 2026-08-07 Nosliphopefully log and creates a spin
  * STARVATION equilibrium: holding the pack's drag needs ~0.5 m/s of slip, so
