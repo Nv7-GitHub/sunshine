@@ -240,10 +240,15 @@
  * strikes return. */
 /* Resized for the MEASURED winding resistance (0.92 ohm, not 0.075): force is
  * current and current is surplus-voltage / R, so meaningful force needs
- * multi-volt swings — 0.60 of the throttle span commands ~2.5-3.5 V of
+ * multi-volt swings — 0.60 of the FULL DShot span commands rail-slamming
+ * excursions (advancing wheel toward full duty, retreating toward stop;
+ * the output clamp shapes the asymmetry) independent of cruise throttle —
+ * the classic melty modulation the reference robots use on identical
+ * motors/cells. Old throttle-span basis at 40% throttle delivered only
+ * +/-1.8 V (2.5 A, ~0.9 N electrical, the measured slow scoot).
  * differential at driving throttles -> ~1.5-2.5 N net after the measured 0.27
  * plant gain (vs the 0.3-0.45 N measured under the old sizing). */
-#define DRIFT_AMPLITUDE 0.60f /* max diff as fraction of throttle span */
+#define DRIFT_AMPLITUDE 0.60f /* max diff as fraction of FULL DShot span */
 /* DERIVED from the build geometry and confirmed by the 2026-08-07 two-speed
  * drift test. The wheels push along the TANGENT of the wheel line (90 deg from
  * the wheel axis); the LED sits ON the wheel axis; and the driver convention is

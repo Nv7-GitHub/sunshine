@@ -229,7 +229,18 @@ void control_step(const SunshineInput *in, SunshineState *s, SunshineVars *v) {
      * that distortion is standard melty behavior); the cap still governs the
      * MEAN, so idle-spin overspeed protection is unchanged. Throttle and
      * DRIFT_AMPLITUDE are therefore the translation speed knobs. */
-    float diff = drift_wave(phase) * drive_mag * DRIFT_AMPLITUDE * spin_span;
+    /* Modulation basis = the FULL DShot span, not the throttle span. At 40%
+     * cruise throttle there are ~4.6 V of headroom up to full duty and ~3 V
+     * down to zero; scaling the wave by the throttle span left most of that
+     * unused (±1.8 V commanded at amp 0.6/thr 40% — measured 2.5 A, ~0.9 N,
+     * the "extremely slow scoot"). Classic melty modulation slams toward the
+     * rails; the [NEUTRAL, MAX] clamp below shapes the asymmetric excursion
+     * naturally (advancing wheel toward full duty, retreating toward stop).
+     * Expected at 40-50% throttle: ~±4.6/-3 V -> ~5 A / ~2.6 A regen ->
+     * ~1.5-2 N net — melty-visible translation on the SAME motors/cells the
+     * reference robots use. */
+    float diff = drift_wave(phase) * drive_mag * DRIFT_AMPLITUDE
+                 * (DSHOT_MAX - DSHOT_NEUTRAL);
     /* Anti-tip swing clamp — see TIP_* in sunshine_core.h. The tip driver is
      * the wheel-rotor gyroscopic reaction, and the sim-validated safe envelope
      * is a commanded NO-LOAD wheel-speed swing no larger than ratio(omega) x
