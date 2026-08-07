@@ -290,7 +290,15 @@
  * The bias while translating is now a FIXED remnant, independent of the
  * allowance: full stick -> DRIFT_TRANSLATE_BIAS_MS, stick released -> full
  * WHEEL_SLIP_ALLOW_MS, linear in between. */
-#define DRIFT_TRANSLATE_BIAS_MS 0.15f /* m/s: slip bias at full deflection */
+/* Sim-swept 2026-08-07 with the coast-down-measured tire friction (mu~0.9,
+ * NOT the earlier 0.1 misread): bias vs full-stick translation —
+ *   0.00 -> 0.93 m/s but 5.8 deg tilt (over the 5.5 edge budget) and -14
+ *           rad/s^2 spin drain;
+ *   0.05 -> 0.71 m/s, 4.6 deg, spin near-neutral;   <- knee, shipped
+ *   0.15 -> 0.41 m/s;  0.40+ -> dead zone (0.26-0.30).
+ * MORE bias = SLOWER translation (it shrinks the braking half and pushes both
+ * tires forward); it is spin maintenance, not translation authority. */
+#define DRIFT_TRANSLATE_BIAS_MS 0.05f /* m/s: slip bias at full deflection */
 /* ── Anti-tip swing clamp (the strike mechanism, sim-proven) ────────────────
  * MECHANISM, proven in the coupled 6-DOF simulation (tools/melty6dof.py): the
  * tip is driven by the WHEEL-ROTOR gyroscopic reaction — the drift wave
