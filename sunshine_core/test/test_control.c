@@ -407,6 +407,38 @@ int main(void) {
                    "TIP: MORE swing allowed at higher spin (rising schedule)");
         }
 
+        /* (5g) Closed-loop wobble damper: the measured strike precursor is the
+              accel-z envelope swelling (idle ~90-155 counts, pre-strike
+              215-430). Quiet accel-z -> full authority; a large sustained
+              wobble -> translation fully shed within ~1 s; calm again ->
+              authority recovers. */
+        {
+            SunshineState ws; SunshineVars wv;
+            sunshine_state_init(&ws);
+            ws.kf_omega = 165.0f; ws.spin_rate_lp = 165.0f;
+            memset(&wv, 0, sizeof(wv));
+            wv.mag_valid = 1; wv.batt_voltage = 8.0f;
+            SunshineInput win = make_input(SUNSHINE_MODE_MELTY, 255, 127, 0, 0);
+            float th0 = -DRIFT_PHASE_OFFSET_RADS - 165.0f * DRIFT_PHASE_LEAD_S;
+            /* quiet phase: constant accel_z (gravity-ish) */
+            win.accel_z = 20;
+            for (int i = 0; i < 800; i++) { ws.kf_theta = th0; control_step(&win, &ws, &wv); }
+            float d_quiet = 0.5f * (wv.dshot_cmd_left - wv.dshot_cmd_right);
+            ASSERT(d_quiet > 2.0f, "WOBBLE: full authority while riding clean");
+            /* wobble phase: +/-500 count square at ~15 Hz */
+            for (int i = 0; i < 1200; i++) {
+                win.accel_z = (int16_t)(((i / 33) % 2) ? 520 : -480);
+                ws.kf_theta = th0; control_step(&win, &ws, &wv);
+            }
+            float d_wob = 0.5f * (wv.dshot_cmd_left - wv.dshot_cmd_right);
+            ASSERT_NEAR(d_wob, 0.0f, 0.5f, "WOBBLE: sustained wobble sheds translation fully");
+            /* calm again: authority recovers */
+            win.accel_z = 20;
+            for (int i = 0; i < 2500; i++) { ws.kf_theta = th0; control_step(&win, &ws, &wv); }
+            float d_rec = 0.5f * (wv.dshot_cmd_left - wv.dshot_cmd_right);
+            ASSERT(d_rec > 0.6f * d_quiet, "WOBBLE: authority recovers when the wobble damps");
+        }
+
         SunshineVars hi_spin = melty_run(255, 127, 165.0f, 165.0f, 1, 8.0f,
                                          -DRIFT_PHASE_OFFSET_RADS - 165.0f * DRIFT_PHASE_LEAD_S);
         float d_hispin = 0.5f * (hi_spin.dshot_cmd_left - hi_spin.dshot_cmd_right);

@@ -179,6 +179,30 @@ void control_step(const SunshineInput *in, SunshineState *s, SunshineVars *v) {
     float drive_dir = atan2f(cy, cx);
     float drive_mag = sqrtf(cx*cx + cy*cy) / 127.0f;
     drive_mag       = clampf(drive_mag, 0.0f, 1.0f);
+    /* ── Closed-loop wobble damper — see WOBBLE_* in sunshine_core.h. ──
+     * Runs on raw accel-z at the 1 kHz tick. One-pole coefficients computed
+     * inline (cheap; dt fixed at 1 ms). */
+    {
+        const float dt = 0.001f;
+        float a_hp  = 2.0f * M_PI_F * WOBBLE_HP_HZ  * dt;
+        float a_env = 2.0f * M_PI_F * WOBBLE_ENV_HZ * dt;
+        float a_ref = 2.0f * M_PI_F * WOBBLE_REF_HZ * dt;
+        float azf   = (float)in->accel_z;
+        s->wob_hp  += a_hp * (azf - s->wob_hp);          /* DC tracker        */
+        float wob   = fabsf(azf - s->wob_hp);            /* rectified wobble  */
+        s->wob_env += a_env * (wob - s->wob_env);
+        /* Learn the riding-clean reference only while the stick is released
+         * and the robot is actually spinning (drive corrupts the reference;
+         * rest is meaningless). Seed instantly if unset. */
+        if (drive_mag < 0.15f && fabsf(s->kf_omega) > SUNSHINE_MAG_MIN_OMEGA) {
+            if (s->wob_ref <= 0.0f) s->wob_ref = s->wob_env;
+            else s->wob_ref += a_ref * (s->wob_env - s->wob_ref);
+        }
+        float ref   = fmaxf(s->wob_ref, WOBBLE_REF_MIN);
+        float ratio = s->wob_env / ref;
+        drive_mag  *= clampf((WOBBLE_RATIO_HI - ratio)
+                             / (WOBBLE_RATIO_HI - WOBBLE_RATIO_LO), 0.0f, 1.0f);
+    }
     /* Low-spin translation fade — see DRIFT_OMEGA_FADE_* in sunshine_core.h.
      * Applied BEFORE the cap so a faded drive also restores the full spin-up
      * slip allowance (the un-bias scales by the post-fade drive_mag). */

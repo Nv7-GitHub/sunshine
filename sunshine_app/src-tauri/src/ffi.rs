@@ -39,6 +39,9 @@ pub struct SunshineState {
     // schema v5: LP-smoothed spin freq for the mag band-pass centre (mag_heading.c).
     // Old (<v5) logs lack it; read_padded zero-fills, matching sunshine_state_init.
     pub spin_freq_lp:  f32,
+    pub wob_hp:        f32,
+    pub wob_env:       f32,
+    pub wob_ref:       f32,
 }
 
 /// SunshineVars: 12 floats + 4 u8 flags + 1 float = 48 + 4 + 4 = 56 bytes packed
@@ -66,7 +69,7 @@ pub struct SunshineVars {
 
 const _: () = {
     assert!(size_of::<SunshineInput>() == 30, "SunshineInput size mismatch");
-    assert!(size_of::<SunshineState>() == 56, "SunshineState size mismatch");
+    assert!(size_of::<SunshineState>() == 68, "SunshineState size mismatch");
     assert!(size_of::<SunshineVars>()  == 56, "SunshineVars size mismatch");
 };
 
