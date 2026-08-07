@@ -193,18 +193,20 @@
  * translation (2026-08-06 logs). Wider ramps deliver the same fundamental with
  * less per-edge wheel-KE dump and gyroscopic kick. */
 #define DRIFT_PLATEAU_WIDTH 0.25f   /* fraction of rotation at each +/- peak diff */
-/* 0.30, and the reason is NOT ground force — that saturates at ~±1 m/s of slip
- * (tire friction), and 0.30 still swings ±~1.9 m/s, so translation force and
- * speed at driving velocities are unchanged from 0.60. What amplitude DOES
- * scale is the wheel-rotor gyroscopic tilt torque: body rotation × the wave's
- * phase-locked wheel-momentum modulation = a steady world-frame tilting torque
- * ~ I_wheel * omega * delta_omega_wheel (~0.17 N*m at 0.60 / omega=150 — 4x the
- * F*h moment from the translation force itself; predicted tilt-to-edge-strike
- * ~0.1-0.2 s, matching every measured onset). Halving the swing halves it.
- * Do not raise back toward 0.60 to "get more force" — beyond saturation extra
- * amplitude adds only tilt and slip heat; do not drop below ~0.2 or the swing
- * leaves saturation and force genuinely falls. */
-#define DRIFT_AMPLITUDE     0.30f   /* max diff as fraction of available headroom */
+/* Amplitude sets the wave's wheel-speed SWING, and the swing lives in a measured
+ * box (2026-08-07 New_data log, all numbers verified per-drive-level):
+ *  - force floor: the retreating wheel must reach ≥1 m/s BELOW rolling speed
+ *    (tire saturation) past the ~0.5 m/s spin-maintenance bias, so swing must
+ *    exceed ~1.5-2 m/s or the differential force is a dead zone (0.30 tried:
+ *    swing 1.4 m/s at full stick → realized wheel diff 0.5 m/s, robot barely
+ *    crept and wandered);
+ *  - tilt ceiling: the wheel-rotor gyroscopic torque ~ I_w*omega*dw scales with
+ *    swing — 3.8 m/s (0.60) struck the floor in ~0.15 s, 1.4 m/s only mildly.
+ * 0.45 → swing ≈ 2.1 m/s at omega 130-150: retreating wheel ~-1.6 m/s
+ * (saturated braking), advancing ~+2.6 (saturated push), tilt torque ~55% of
+ * the 0.60 config. Tune WITHIN ~0.35-0.55; outside that you are trading real
+ * force for real strikes or vice versa. */
+#define DRIFT_AMPLITUDE     0.45f   /* max diff as fraction of available headroom */
 #define DRIFT_PHASE_OFFSET_RADS 0.0f /* fixed motor timing offset, rad             */
 /* Low-spin translation fade (2026-08-06 logs). Two measured reasons translation
  * must not run at low spin: (1) the collapse trap — an edge-strike slowdown drops
