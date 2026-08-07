@@ -372,9 +372,20 @@ int main(void) {
         float dr_off = 0.5f * (r_off.dshot_cmd_left - r_off.dshot_cmd_right);
         ASSERT(dr_mid > 1.0f && dr_mid < d_hi, "ROLLOFF: partial authority inside the rolloff band");
         ASSERT_NEAR(dr_off, 0.0f, 0.5f,        "ROLLOFF: no translation above DRIFT_OMEGA_ROLLOFF_HI");
+
+        /* (5g) Translation spin governor: a held stick above the band blends
+              the cap reference down to DRIFT_TRANSLATE_OMEGA_RADS — the robot
+              is actively braked INTO the band (Limitedspeed log: throttle's
+              no-load equilibrium parks the spin at ~168, above the band, so
+              without this the stick is simply dead). Stick released at the
+              same omega: cap tracks |kf_omega| as before. */
         ASSERT_NEAR(cmd_to_wheel_rads(0.5f * (r_off.dshot_cmd_left + r_off.dshot_cmd_right), 8.0f),
+                    DRIFT_TRANSLATE_OMEGA_RADS * GEOM + ALLOW, TOL,
+                    "GOVERNOR: held stick above the band targets the translate speed");
+        SunshineVars nostick = melty_run(255, 0, 145.0f, 145.0f, 1, 8.0f, 0.0f);
+        ASSERT_NEAR(cmd_to_wheel_rads(nostick.dshot_cmd_left, 8.0f),
                     145.0f * GEOM + ALLOW, TOL,
-                    "ROLLOFF: rolled-off translation restores the spin allowance");
+                    "GOVERNOR: stick released, cap tracks the actual spin");
         /* With translation faded out, the full spin-up slip allowance returns. */
         ASSERT_NEAR(cmd_to_wheel_rads(0.5f * (f_lo.dshot_cmd_left + f_lo.dshot_cmd_right), 8.0f),
                     55.0f * GEOM + ALLOW, TOL,

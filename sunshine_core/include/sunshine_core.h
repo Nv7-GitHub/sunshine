@@ -228,6 +228,18 @@
  * omega ~85-105 (roughly 35-40% throttle); spin faster only for weapon energy. */
 #define DRIFT_OMEGA_ROLLOFF_LO 105.0f /* rad/s: full translation authority below  */
 #define DRIFT_OMEGA_ROLLOFF_HI 135.0f /* rad/s: translation fully off above       */
+/* Translation spin governor. The rolloff alone is a trap for the DRIVER: the
+ * cap always grants rolling + allowance, so spin settles at the THROTTLE's
+ * no-load equilibrium (41% throttle -> ~168 rad/s — the 2026-08-07
+ * Limitedspeed log shows 100% of stick-held time above the band, zero drift
+ * commanded, robot inert). Managing throttle per-maneuver is unreasonable, so
+ * holding the stick IS the request to translate: the cap's rate reference
+ * blends from |kf_omega| down to this target with raw stick deflection,
+ * actively braking the robot into the band (~0.5 s from 165), where the
+ * rolloff then grants authority. Release the stick and the cap resumes
+ * tracking the throttle equilibrium (spin-up at the allowance rate). Sits at
+ * the top of the full-authority band so no more spin is shed than necessary. */
+#define DRIFT_TRANSLATE_OMEGA_RADS 100.0f
 /* Fraction of the slip allowance the un-bias removes at full stick. 1.0 (remove
  * all of it) was tried on the 2026-08-07 Nosliphopefully log and creates a spin
  * STARVATION equilibrium: holding the pack's drag needs ~0.5 m/s of slip, so
