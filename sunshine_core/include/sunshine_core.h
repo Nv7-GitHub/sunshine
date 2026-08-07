@@ -248,7 +248,19 @@
  * +/-1.8 V (2.5 A, ~0.9 N electrical, the measured slow scoot).
  * differential at driving throttles -> ~1.5-2.5 N net after the measured 0.27
  * plant gain (vs the 0.3-0.45 N measured under the old sizing). */
-#define DRIFT_AMPLITUDE 0.60f /* max diff as fraction of FULL DShot span */
+/* 0.60 -> 0.30 (2026-08-07, contact-minimizing config). Tire force is
+ * SIGN-modulated and saturates within ~0.2-0.3 m/s of slip; realized swing
+ * beyond ~2x that width buys almost no force — but the rotor-reaction tilt
+ * torque keeps growing LINEARLY with swing (tau ~ I_w * d(omega_wheel)/dt).
+ * The 0.60 config realized ±1-1.5 m/s: over half that swing was pure tilt
+ * with zero force return, and the Post_debug log shows press-time ground
+ * impulses at EVERY omega band. Halving the commanded swing keeps the
+ * saturated force (measured ~0.3 N either way) and halves the tilt driver.
+ * This is a deliberate priority choice: minimal ground contact over top
+ * speed. The remaining force supports ~0.15-0.25 m/s translation — the
+ * ceiling of this tire/inertia hardware ridden cleanly; faster requires
+ * softer (foam) tires or more spin inertia, not more amplitude. */
+#define DRIFT_AMPLITUDE 0.30f /* max diff as fraction of FULL DShot span */
 /* DERIVED from the build geometry and confirmed by the 2026-08-07 two-speed
  * drift test. The wheels push along the TANGENT of the wheel line (90 deg from
  * the wheel axis); the LED sits ON the wheel axis; and the driver convention is
@@ -359,8 +371,13 @@
  * 0.2-0.3 gain against a sim plant that realized far more) were strangling
  * the force. Realized swing at these caps stays at the previously-validated
  * envelope. */
-#define TIP_SWING_RATIO_LO 2.0f /* cmd swing/omega cap below TIP_OMEGA_LO   */
-#define TIP_SWING_RATIO_HI 2.8f /* cmd swing/omega cap above TIP_OMEGA_HI   */
+/* Tightened 2.0/2.8 -> 1.0/1.4 with the amplitude cut above (same measured
+ * rationale): under the old caps the robot struck the ground during presses
+ * in every omega band while still not translating visibly — the swing was
+ * paying full tilt cost above force saturation. These caps put full-stick
+ * commanded swing just above the saturation knee. */
+#define TIP_SWING_RATIO_LO 1.0f /* cmd swing/omega cap below TIP_OMEGA_LO   */
+#define TIP_SWING_RATIO_HI 1.4f /* cmd swing/omega cap above TIP_OMEGA_HI   */
 #define TIP_OMEGA_LO 125.0f      /* rad/s: ramp start                       */
 #define TIP_OMEGA_HI 170.0f      /* rad/s: ramp end (full ratio)            */
 /* ── Closed-loop wobble damper (schema v6) ─────────────────────────────────
