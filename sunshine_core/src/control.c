@@ -184,6 +184,11 @@ void control_step(const SunshineInput *in, SunshineState *s, SunshineVars *v) {
      * slip allowance (the un-bias scales by the post-fade drive_mag). */
     drive_mag *= clampf((fabsf(s->kf_omega) - DRIFT_OMEGA_FADE_LO)
                         / (DRIFT_OMEGA_FADE_HI - DRIFT_OMEGA_FADE_LO), 0.0f, 1.0f);
+    /* High-spin rolloff — plant-bandwidth gate, see DRIFT_OMEGA_ROLLOFF_* in
+     * sunshine_core.h. Above the band the wheels can't realize the wave, so
+     * commanding it buys tilt and zero force. */
+    drive_mag *= clampf((DRIFT_OMEGA_ROLLOFF_HI - fabsf(s->kf_omega))
+                        / (DRIFT_OMEGA_ROLLOFF_HI - DRIFT_OMEGA_ROLLOFF_LO), 0.0f, 1.0f);
 
     float base = DSHOT_NEUTRAL + spin_span;
     /* Cap the MEAN wheel command before headroom is derived from it, so the drift

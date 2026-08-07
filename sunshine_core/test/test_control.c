@@ -30,10 +30,11 @@ static float melty_halfdiff_omega(float phase, float omega, uint8_t throttle) {
 }
 
 static float melty_halfdiff_at(float phase, uint8_t throttle) {
-    /* Waveform-shape probe. Translation fades out below DRIFT_OMEGA_FADE_HI, so
-       probe at a spinning rate and cancel the omega*lead advance so `phase` is
-       still the wave's own argument. */
-    const float W = 125.0f;
+    /* Waveform-shape probe. Translation fades out below DRIFT_OMEGA_FADE_HI and
+       rolls off above DRIFT_OMEGA_ROLLOFF_LO, so probe inside the full-authority
+       band and cancel the omega*lead advance so `phase` is still the wave's own
+       argument. */
+    const float W = 95.0f;
     return melty_halfdiff_omega(phase - W * DRIFT_PHASE_LEAD_S, W, throttle);
 }
 
@@ -213,7 +214,7 @@ int main(void) {
     {
         sunshine_state_init(&s);
         s.kf_theta = 0.0f;
-        s.kf_omega = 200.0f;   /* above the translation fade band so drift is live */
+        s.kf_omega = 95.0f;    /* inside the translation authority band so drift is live */
         in = make_input(SUNSHINE_MODE_MELTY, 240, 127, 0, 0);
         control_step(&in, &s, &v);
         ASSERT(v.dshot_cmd_left < DSHOT_MAX - 1.0f, "MELTY high throttle drift does not clip high side");
@@ -236,11 +237,12 @@ int main(void) {
                "PHASE LEAD: compensates the measured ~17 ms actuation delay");
 
         /* (b) Sign/wiring: at spin rate W the wave must be ADVANCED by exactly
-              W*LEAD. Both probes spin above the translation fade band (omega=0
-              would fade the drift to zero), so compare W against W2 with the
-              phase pre-shifted by (W-W2)*LEAD: both then evaluate the wave at
-              theta + W*LEAD, and a retard (sign flip) breaks the match. */
-        const float W = 125.0f, W2 = 150.0f;    /* rad/s, mid-log spin rates */
+              W*LEAD. Both probes spin inside the translation authority band
+              (omega=0 would fade the drift to zero; 135+ rolls it off), so
+              compare W against W2 with the phase pre-shifted by (W-W2)*LEAD:
+              both then evaluate the wave at theta + W*LEAD, and a retard (sign
+              flip) breaks the match. */
+        const float W = 95.0f, W2 = 100.0f;     /* rad/s, in-band spin rates */
         for (float th = -3.0f; th <= 3.0f; th += 0.37f) {
             float spinning = melty_halfdiff_omega(th, W, 100);
             float advanced = melty_halfdiff_omega(th + (W - W2) * DRIFT_PHASE_LEAD_S,
@@ -356,6 +358,23 @@ int main(void) {
         ASSERT_NEAR(d_lo, 0.0f, 0.5f, "FADE: no translation below DRIFT_OMEGA_FADE_LO");
         ASSERT(d_mid > 2.0f,          "FADE: partial authority inside the fade band");
         ASSERT(d_hi > d_mid,          "FADE: full authority above DRIFT_OMEGA_FADE_HI");
+
+        /* (5f) High-spin rolloff: above the plant-bandwidth band the wheels
+              cannot realize the wave (measured ~20% gain at 22 Hz spin), so
+              commanded translation must roll off to ZERO — it produced only
+              gyroscopic tilt ("strikes with zero movement" on every 130+ rad/s
+              log). Allowance must return with it. */
+        SunshineVars r_mid = melty_run(255, 127, 120.0f, 120.0f, 1, 8.0f,
+                                       -120.0f * DRIFT_PHASE_LEAD_S);
+        SunshineVars r_off = melty_run(255, 127, 145.0f, 145.0f, 1, 8.0f,
+                                       -145.0f * DRIFT_PHASE_LEAD_S);
+        float dr_mid = 0.5f * (r_mid.dshot_cmd_left - r_mid.dshot_cmd_right);
+        float dr_off = 0.5f * (r_off.dshot_cmd_left - r_off.dshot_cmd_right);
+        ASSERT(dr_mid > 1.0f && dr_mid < d_hi, "ROLLOFF: partial authority inside the rolloff band");
+        ASSERT_NEAR(dr_off, 0.0f, 0.5f,        "ROLLOFF: no translation above DRIFT_OMEGA_ROLLOFF_HI");
+        ASSERT_NEAR(cmd_to_wheel_rads(0.5f * (r_off.dshot_cmd_left + r_off.dshot_cmd_right), 8.0f),
+                    145.0f * GEOM + ALLOW, TOL,
+                    "ROLLOFF: rolled-off translation restores the spin allowance");
         /* With translation faded out, the full spin-up slip allowance returns. */
         ASSERT_NEAR(cmd_to_wheel_rads(0.5f * (f_lo.dshot_cmd_left + f_lo.dshot_cmd_right), 8.0f),
                     55.0f * GEOM + ALLOW, TOL,

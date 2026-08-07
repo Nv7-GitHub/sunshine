@@ -193,20 +193,18 @@
  * translation (2026-08-06 logs). Wider ramps deliver the same fundamental with
  * less per-edge wheel-KE dump and gyroscopic kick. */
 #define DRIFT_PLATEAU_WIDTH 0.25f   /* fraction of rotation at each +/- peak diff */
-/* Amplitude sets the wave's wheel-speed SWING, and the swing lives in a measured
- * box (2026-08-07 New_data log, all numbers verified per-drive-level):
- *  - force floor: the retreating wheel must reach ≥1 m/s BELOW rolling speed
- *    (tire saturation) past the ~0.5 m/s spin-maintenance bias, so swing must
- *    exceed ~1.5-2 m/s or the differential force is a dead zone (0.30 tried:
- *    swing 1.4 m/s at full stick → realized wheel diff 0.5 m/s, robot barely
- *    crept and wandered);
- *  - tilt ceiling: the wheel-rotor gyroscopic torque ~ I_w*omega*dw scales with
- *    swing — 3.8 m/s (0.60) struck the floor in ~0.15 s, 1.4 m/s only mildly.
- * 0.45 → swing ≈ 2.1 m/s at omega 130-150: retreating wheel ~-1.6 m/s
- * (saturated braking), advancing ~+2.6 (saturated push), tilt torque ~55% of
- * the 0.60 config. Tune WITHIN ~0.35-0.55; outside that you are trading real
- * force for real strikes or vice versa. */
-#define DRIFT_AMPLITUDE     0.45f   /* max diff as fraction of available headroom */
+/* The PLANT is the constraint, not the tire (measured twice: erpm_bandwidth.py
+ * gain 0.31 of commanded at 15 Hz spin -> 0.19 at 22 Hz; confirmed on the
+ * 2026-08-07 New3 log — commanded slip swing ±2 m/s realized only ±0.4 at
+ * omega 130-150). Rotor+wheel inertia low-passes the wave: above the rolloff
+ * band the braking half never physically happens (both wheels stay in forward
+ * slip -> ZERO differential force, "sound but no movement") while the motor
+ * torque still reacts on the chassis (full tilt kick for nothing). Translation
+ * therefore runs at high amplitude INSIDE the band where the plant responds,
+ * and is rolled off entirely above it (DRIFT_OMEGA_ROLLOFF_*). With only ~30%
+ * plant gain in-band, commanded amplitude must be large to realize a >1 m/s
+ * physical swing: 0.70 of headroom. */
+#define DRIFT_AMPLITUDE     0.70f   /* max diff as fraction of available headroom */
 #define DRIFT_PHASE_OFFSET_RADS 0.0f /* fixed motor timing offset, rad             */
 /* Low-spin translation fade (2026-08-06 logs). Two measured reasons translation
  * must not run at low spin: (1) the collapse trap — an edge-strike slowdown drops
@@ -221,6 +219,15 @@
  * below the ~90+ rad/s range where translation demonstrably works. */
 #define DRIFT_OMEGA_FADE_LO  60.0f  /* rad/s: translation fully off below        */
 #define DRIFT_OMEGA_FADE_HI  85.0f  /* rad/s: full translation authority above   */
+/* High-spin rolloff — the plant-bandwidth gate (see DRIFT_AMPLITUDE comment).
+ * Above ~20 Hz spin the wheels cannot swing their speed through the braking
+ * half of the wave, so commanded translation produces no force, only the
+ * gyroscopic tilt reaction of the motors fighting their own rotor inertia —
+ * measured as "strikes the floor with zero movement" on every 130+ rad/s log.
+ * Full authority through ROLLOFF_LO, zero above ROLLOFF_HI. Translate at
+ * omega ~85-105 (roughly 35-40% throttle); spin faster only for weapon energy. */
+#define DRIFT_OMEGA_ROLLOFF_LO 105.0f /* rad/s: full translation authority below  */
+#define DRIFT_OMEGA_ROLLOFF_HI 135.0f /* rad/s: translation fully off above       */
 /* Fraction of the slip allowance the un-bias removes at full stick. 1.0 (remove
  * all of it) was tried on the 2026-08-07 Nosliphopefully log and creates a spin
  * STARVATION equilibrium: holding the pack's drag needs ~0.5 m/s of slip, so
@@ -230,8 +237,10 @@
  * allowance at full stick pays that drag bill while staying negligible against
  * the multi-m/s wave swing, so no force dead zone returns. Raise FRAC toward 1
  * for purer zero-slip translation (more spin bleed); lower it toward 0 to
- * favour spin (bias creep returns). */
-#define DRIFT_UNBIAS_FRAC    0.5f
+ * favour spin (bias creep returns). 0.7: with only ~30% plant gain the REALIZED
+ * swing is ~±1 m/s, so the remaining bias must sit well under that for the
+ * braking half to exist at all. */
+#define DRIFT_UNBIAS_FRAC    0.7f
 /* ESC/traction lag compensation. PER-BUILD: measured, not designed — re-run
  * tools/replay/translation_lag.py on a translation log for any new robot
  * (procedure: BRINGUP.md Level 5). On the 2026-07-20 translation2 log the
