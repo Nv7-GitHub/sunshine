@@ -310,6 +310,19 @@
  * The bias while translating is now a FIXED remnant, independent of the
  * allowance: full stick -> DRIFT_TRANSLATE_BIAS_MS, stick released -> full
  * WHEEL_SLIP_ALLOW_MS, linear in between. */
+/* DEAD-ZONE WIDTH FIX (2026-08-07 fixed_ log): "linear in between" left a huge
+ * force dead zone across most of the stick — at 30% deflection the bias was
+ * still ~2.1 m/s, and the eRPM-vs-rolling slip measurement showed the tires in
+ * braking slip only 6-12% of each rev (vs ~25-30% at full stick): sound
+ * changes, zero force, zero motion — the exact tap-W symptom. Worse, anything
+ * that scales drive_mag down (wobble damper, low-spin fade) silently dragged
+ * the bias back UP mid-press, so shed oscillations also swung the slip bias
+ * (measured +0.7..+1.8 m/s at full stick when the target was 0.05) and
+ * scrambled the force direction. The un-bias now completes by
+ * DRIFT_UNBIAS_FULL_STICK of deflection: any deliberate press translates on
+ * the same near-zero bias as full stick, and drive_mag shedding only shrinks
+ * the wave amplitude, never the bias. */
+#define DRIFT_UNBIAS_FULL_STICK 0.30f /* drive_mag at which bias reaches remnant */
 /* Sim-swept 2026-08-07 with the coast-down-measured tire friction (mu~0.9,
  * NOT the earlier 0.1 misread): bias vs full-stick translation —
  *   0.00 -> 0.93 m/s but 5.8 deg tilt (over the 5.5 edge budget) and -14
@@ -363,11 +376,23 @@
  * wobble grows, automatic recovery as it damps. Thresholds from the measured
  * ratios (thrash/idle ≈ 2.3-4.5x). WOBBLE_REF_MIN keeps the ratio sane on an
  * unusually quiet floor. */
+/* THRESHOLDS RAISED (2026-08-07 fixed_ log): the 1.6-2.6 band sat INSIDE the
+ * vibration band of healthy hard translation. Reconstructing the damper state
+ * offline from accel-z showed the press-time env/ref ratio median at 1.7 —
+ * pinned to the old shed onset — with the damper oscillating drive_mag between
+ * 0.2 and 0.6 every ~0.3 s at full stick. That made it a translation GOVERNOR
+ * with a limit cycle: force builds -> normal translating vibration crosses 1.6
+ * -> force shed -> vibration falls -> force returns. Net force measured 0.15 N
+ * (shed) vs 1.2-1.4 N (free) with the direction smeared by the cycling — the
+ * drunken-stagger, only-moves-while-grinding session. Measured bands: idle
+ * spin p75 = 1.06 (max 1.95), coherent clean translation 1.1-3.1, strike
+ * thrash up to 5.4. The band now starts ABOVE everything translation does
+ * (3.5) and sheds fully only at genuine-thrash levels (5.0). */
 #define WOBBLE_HP_HZ 3.0f     /* accel-z DC-tracking cutoff (pass the wobble)   */
 #define WOBBLE_ENV_HZ 2.5f    /* fast envelope LP: ~60-100 ms reaction          */
 #define WOBBLE_REF_HZ 0.15f   /* riding-clean reference LP (learn while idle)   */
-#define WOBBLE_RATIO_LO 1.6f  /* env/ref where shedding starts                  */
-#define WOBBLE_RATIO_HI 2.6f  /* env/ref where translation is fully shed        */
+#define WOBBLE_RATIO_LO 3.5f  /* env/ref where shedding starts                  */
+#define WOBBLE_RATIO_HI 5.0f  /* env/ref where translation is fully shed        */
 #define WOBBLE_REF_MIN 40.0f  /* counts: reference floor                        */
 /* FORCE-lag compensation — NOT the wheel-speed lag. History: 0.018 was set from
  * translation_lag.py's DShot→eRPM cross-correlation (~20 ms), but eRPM is wheel

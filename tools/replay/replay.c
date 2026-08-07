@@ -154,7 +154,7 @@ int main(int argc, char **argv){
            "kf_theta,kf_omega,omega_accel,mag_angle,est_theta,est_omega,"
            "mag_x_filt,mag_y_filt,heading_deg,led_on,mag_valid,accel_sat,dshot_l,dshot_r,"
            "erpm_left,erpm_right,mag_x,mag_y,accel_x,accel_y,theta_offset,"
-           "batt_voltage,spin_rate_lp,accel_z,mag_z,"
+           "batt_voltage,spin_rate_lp,accel_z,mag_z,wob_env,wob_ref,"
            "stored_kf_theta,stored_kf_omega,stored_theta_offset,"
            "stored_est_theta,stored_mag_angle,stored_led_on\n");
 
@@ -194,7 +194,7 @@ int main(int argc, char **argv){
                    /* %.3f for the battery: schema v5 quantises batt_offset at
                       1 mV/LSB, so three decimals is exactly lossless and no more.
                       %.6f for spin_rate_lp to match the other rad/s channels. */
-                   "%.1f,%.1f,%d,%d,%d,%d,%.6f,%.3f,%.6f,%d,%d",
+                   "%.1f,%.1f,%d,%d,%d,%d,%.6f,%.3f,%.6f,%d,%d,%.1f,%.1f",
                    in.time_us, in.mode, in.ctrl_x, in.ctrl_y, in.ctrl_theta, in.ctrl_throttle,
                    dequantize_dshot(in.dshot_left_q), dequantize_dshot(in.dshot_right_q),
                    in.dshot_left_q, in.dshot_right_q,
@@ -204,7 +204,8 @@ int main(int argc, char **argv){
                    v.dshot_cmd_left, v.dshot_cmd_right,
                    v.erpm_left, v.erpm_right,
                    in.mag_x, in.mag_y, in.accel_x, in.accel_y, st.theta_offset,
-                   v.batt_voltage, st.spin_rate_lp, in.accel_z, in.mag_z);
+                   v.batt_voltage, st.spin_rate_lp, in.accel_z, in.mag_z,
+                   st.wob_env, st.wob_ref);
             if (k == 0) printf(",%.6f,%.6f,%.6f",
                                frame_state.kf_theta, frame_state.kf_omega, frame_state.theta_offset);
             else if (num_states >= 2 && k == num_in/2)

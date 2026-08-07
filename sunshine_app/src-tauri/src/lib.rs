@@ -39,8 +39,10 @@ fn spawn_control_loop(controls: Arc<Mutex<ControlState>>,
                       serial: Arc<Mutex<Option<SerialConnection>>>,
                       keys: Arc<Mutex<KeyTargets>>) {
     std::thread::spawn(move || {
-        const T_RISE: f32 = 1.5;
-        const T_FALL: f32 = 1.5;  // was 9.0: a 9 s coast after release only made sense when the robot barely responded
+        // These are the REAL ramps; useKeyboard.ts only mirrors them for display.
+        // Keep the two in sync when retuning.
+        const T_RISE: f32 = 1.0;
+        const T_FALL: f32 = 1.0;  // was 9.0: a 9 s coast after release only made sense when the robot barely responded
         const RATE_THETA: f32 = (127.0 / 40.0) * 60.0;
         const RATE_THROTTLE: f32 = 90.0;
         const SEND_HZ: f32 = 30.0;

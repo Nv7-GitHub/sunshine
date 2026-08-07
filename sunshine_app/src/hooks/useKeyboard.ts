@@ -72,8 +72,8 @@ export interface InputState {
 // TUNING: T_FALL alone sets ripple — raise it for less. T_RISE sets how much one
 // tap is worth. Both together set d*, so changing either shifts the tap rate that
 // holds a constant level.
-const T_RISE = 1.5;               // s, 0 → full deflection while held
-const T_FALL = 1.5;               // s, full deflection → 0 while released (display mirror; real ramps in Rust)
+const T_RISE = 1.0;               // s, 0 → full deflection while held
+const T_FALL = 1.0;               // s, full deflection → 0 while released (display mirror; real ramps in Rust)
 const RATE_XY_UP   = 127 / T_RISE;  // counts/second
 const RATE_XY_DOWN = 127 / T_FALL;  // counts/second
 
