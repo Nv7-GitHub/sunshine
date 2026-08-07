@@ -379,6 +379,33 @@ int main(void) {
               governor briefly forced translation below ~1000 RPM, built on an
               eRPM-attenuation reading that tire grip confounds. Melty practice
               translates at 2K+ RPM; the drift must stay live there. */
+        /* (5f2) Tipping-budget clamp: the commanded differential's wheel-rotor
+              moment (I_w * omega * swing) plus the force reserve must stay
+              inside the stance budget (weight x half-track). Verify the clamp
+              enforces exactly that bound, and that it scales ~1/omega (more
+              swing allowed at lower spin). */
+        {
+            float budget = TIP_BUDGET_FRAC * ROBOT_MASS_KG * 9.81f * WHEEL_CENTER_M
+                           - TIP_FORCE_RESERVE_NM;
+            for (float om_t = 100.0f; om_t <= 250.0f; om_t += 75.0f) {
+                SunshineVars tb = melty_run(255, 127, om_t, om_t, 1, 8.0f,
+                                            -DRIFT_PHASE_OFFSET_RADS - om_t * DRIFT_PHASE_LEAD_S);
+                float d = 0.5f * (tb.dshot_cmd_left - tb.dshot_cmd_right);
+                float rpc = (8.0f / (DSHOT_MAX - DSHOT_NEUTRAL))
+                            * MOTOR_KV_RPM_PER_V * (2.0f * 3.14159265f / 60.0f);
+                float moment = TIP_PLANT_GAIN * WHEEL_INERTIA_KGM2 * om_t * rpc * d;
+                ASSERT(moment <= budget * 1.02f,
+                       "TIP: commanded wheel-rotor moment stays inside the stance budget");
+            }
+            SunshineVars t_lo = melty_run(255, 127, 100.0f, 100.0f, 1, 8.0f,
+                                          -DRIFT_PHASE_OFFSET_RADS - 100.0f * DRIFT_PHASE_LEAD_S);
+            SunshineVars t_hi = melty_run(255, 127, 250.0f, 250.0f, 1, 8.0f,
+                                          -DRIFT_PHASE_OFFSET_RADS - 250.0f * DRIFT_PHASE_LEAD_S);
+            ASSERT(0.5f * (t_lo.dshot_cmd_left - t_lo.dshot_cmd_right) >
+                   0.5f * (t_hi.dshot_cmd_left - t_hi.dshot_cmd_right) + 1.0f,
+                   "TIP: budget allows more swing at lower spin (~1/omega)");
+        }
+
         SunshineVars hi_spin = melty_run(255, 127, 165.0f, 165.0f, 1, 8.0f,
                                          -DRIFT_PHASE_OFFSET_RADS - 165.0f * DRIFT_PHASE_LEAD_S);
         float d_hispin = 0.5f * (hi_spin.dshot_cmd_left - hi_spin.dshot_cmd_right);

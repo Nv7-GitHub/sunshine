@@ -251,6 +251,26 @@
  * swing is ~±1 m/s, so the remaining bias must sit well under that for the
  * braking half to exist at all. */
 #define DRIFT_UNBIAS_FRAC    0.7f
+/* ── Tipping budget (the strike mechanism, finally derived) ─────────────────
+ * A two-wheel stance's maximum restoring moment is weight x half-track:
+ * m*g*WHEEL_CENTER_M = 0.18 N*m for this build. Any translation-locked moment
+ * above it lifts the inside wheel and rotates the robot onto its edge —
+ * deterministically, on any floor, at any spin. The applied moments:
+ *   force term:  F * TIP_CG_HEIGHT_M          (translation force below the CG)
+ *   wheel term:  I_w * omega * dOmega_wheel   (rotor momentum swing, world-DC)
+ * At full asphalt-grip force + deep modulation these summed to ~120-130% of
+ * budget — the measured instant tip-and-grind. The clamp below bounds the
+ * commanded differential so force reserve + wheel term stay under
+ * TIP_BUDGET_FRAC of the stance budget. TIP_PLANT_GAIN accounts for the
+ * wheels realizing only part of the commanded swing at spin frequency
+ * (measured 0.2-0.5); raising it is CONSERVATIVE (smaller clamp).
+ * Speed impact: allowed swing ~ +/-2.5 m/s at omega 120-150, ~+/-1.5 at 250.
+ * Mechanical levers (linear gains): wider wheel track, lower CG height above
+ * FLOOR, lighter wheel/rotor assemblies, more (low-mounted) mass. */
+#define TIP_BUDGET_FRAC      0.75f   /* fraction of m*g*WC the wave may use     */
+#define TIP_CG_HEIGHT_M      0.020f  /* CG height above the floor               */
+#define TIP_FORCE_RESERVE_NM 0.060f  /* F*h allowance (~2-3 N of drive force)   */
+#define TIP_PLANT_GAIN       0.5f    /* realized/commanded wheel-speed swing    */
 /* FORCE-lag compensation — NOT the wheel-speed lag. History: 0.018 was set from
  * translation_lag.py's DShot→eRPM cross-correlation (~20 ms), but eRPM is wheel
  * SPEED, and speed is the INTEGRAL of torque — compensating force with the
