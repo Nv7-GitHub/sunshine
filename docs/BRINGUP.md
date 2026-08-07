@@ -493,11 +493,58 @@ Tune in this order:
    o'clock at both speeds. If you changed wheels/motors/wiring mid-tune, re-do
    Step 4 in full (the constant offset is exactly what such changes move).
 
+### Step 6: The tipping budget (why melties tip onto their edge, per-robot)
+
+A two-wheel stance's maximum restoring moment is **weight × half-track**:
+
+```
+M_budget = m · g · WHEEL_CENTER_M          (this build: 0.454·9.81·0.0405 = 0.18 N·m)
+```
+
+Tire stiffness does not raise this — it saturates when the inside wheel unloads.
+Any translation-locked moment above it lifts that wheel and rotates the robot
+onto its shell edge, deterministically, on any floor, at any spin rate. Two
+moments switch on with translation:
+
+```
+force term:  F · TIP_CG_HEIGHT_M           (drive force acts at the floor, below the CG;
+                                            F saturates at µ·m·g — grippier floor = bigger)
+wheel term:  ~½ · I_w · ω · Δω_wheel       (conservation of angular momentum: the wave
+                                            modulates flywheels whose axles the chassis
+                                            swings at ω — NOT a motor-torque limit, no
+                                            amount of ESC current changes it)
+```
+
+On this build at asphalt grip + deep modulation these summed to ~120–130% of
+budget — the instant tip-and-grind. The firmware clamp (`TIP_*` in
+`sunshine_core.h`) bounds the commanded differential so the wheel term stays
+within `TIP_BUDGET_FRAC·(1−TIP_FORCE_FRAC)` of budget; everything scales from
+the per-robot constants automatically:
+
+```
+allowed wheel-speed swing  Δω_max  ∝  m · WHEEL_CENTER_M / (I_w · ω)
+```
+
+**Per-robot procedure:**
+1. `ROBOT_MASS_KG`, `WHEEL_CENTER_M`, `WHEEL_INERTIA_KGM2` — already per-build
+   (scale, CAD). The wheel inertia must include the motor rotor/bell; rim mass
+   dominates (a 10 g rim at 22 mm is 4.8e-6 kg·m² by itself).
+2. Measure `TIP_CG_HEIGHT_M`: CG height above the **floor**, wheels on — not
+   the CG's position inside the robot.
+3. Leave `TIP_FORCE_FRAC` ≈ 0.35 (reserves ~µ-independent drive force for
+   3–4 m/s² of acceleration) and `TIP_PLANT_GAIN` ≈ 0.5 unless calibrated.
+4. Check margin: if the clamp limits your top speed below what you want, the
+   levers are **all linear**: wider wheel track, lower CG-above-floor (chassis
+   height — independent of the CG being centered internally), lighter
+   wheel/rotor assemblies, more low-mounted mass. A build with 55 mm half-track
+   at 650 g has 2.0× this robot's budget = 2× the allowed swing at equal spin.
+
 ### Pass criteria
 
 - Robot translates in the commanded direction at ≥ 3 of 4 compass points (N/S/E/W)
 - No wheel slip causing uncontrolled spin-out
 - LED remains stationary during translation inputs
+- The inside wheel stays loaded during full translation (no edge ride / grinding)
 - Robot can be steered to a target location reliably
 
 ---

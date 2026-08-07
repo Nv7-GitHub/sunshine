@@ -385,8 +385,8 @@ int main(void) {
               enforces exactly that bound, and that it scales ~1/omega (more
               swing allowed at lower spin). */
         {
-            float budget = TIP_BUDGET_FRAC * ROBOT_MASS_KG * 9.81f * WHEEL_CENTER_M
-                           - TIP_FORCE_RESERVE_NM;
+            float budget = TIP_BUDGET_FRAC * (1.0f - TIP_FORCE_FRAC)
+                           * ROBOT_MASS_KG * 9.81f * WHEEL_CENTER_M;
             for (float om_t = 100.0f; om_t <= 250.0f; om_t += 75.0f) {
                 SunshineVars tb = melty_run(255, 127, om_t, om_t, 1, 8.0f,
                                             -DRIFT_PHASE_OFFSET_RADS - om_t * DRIFT_PHASE_LEAD_S);

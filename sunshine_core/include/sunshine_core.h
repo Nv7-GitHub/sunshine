@@ -266,10 +266,15 @@
  * (measured 0.2-0.5); raising it is CONSERVATIVE (smaller clamp).
  * Speed impact: allowed swing ~ +/-2.5 m/s at omega 120-150, ~+/-1.5 at 250.
  * Mechanical levers (linear gains): wider wheel track, lower CG height above
- * FLOOR, lighter wheel/rotor assemblies, more (low-mounted) mass. */
+ * FLOOR, lighter wheel/rotor assemblies, more (low-mounted) mass.
+ * Every term scales from the per-robot constants (mass, wheel track, wheel
+ * inertia, KV) so a wider/lower/heavier build AUTOMATICALLY gains speed:
+ * allowed swing  dOmega ~ m*WC / (I_w*omega).  Per-build inputs:
+ * TIP_CG_HEIGHT_M (measure: CG height above the FLOOR, wheels on) and the
+ * fractions below. Procedure + worked numbers: BRINGUP.md "Tipping budget". */
 #define TIP_BUDGET_FRAC      0.75f   /* fraction of m*g*WC the wave may use     */
-#define TIP_CG_HEIGHT_M      0.020f  /* CG height above the floor               */
-#define TIP_FORCE_RESERVE_NM 0.060f  /* F*h allowance (~2-3 N of drive force)   */
+#define TIP_CG_HEIGHT_M      0.020f  /* PER-BUILD: CG height above the floor    */
+#define TIP_FORCE_FRAC       0.35f   /* share of budget reserved for F*h drive  */
 #define TIP_PLANT_GAIN       0.5f    /* realized/commanded wheel-speed swing    */
 /* FORCE-lag compensation — NOT the wheel-speed lag. History: 0.018 was set from
  * translation_lag.py's DShot→eRPM cross-correlation (~20 ms), but eRPM is wheel

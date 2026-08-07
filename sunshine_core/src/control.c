@@ -210,8 +210,8 @@ void control_step(const SunshineInput *in, SunshineState *s, SunshineVars *v) {
      * per-count wheel moment is I_w * |omega| * (no-load rad/s per DShot count),
      * battery-scaled like the cap. Fail open on implausible battery. */
     if (v->batt_voltage >= 5.0f && v->batt_voltage <= 10.0f && fabsf(s->kf_omega) > 1.0f) {
-        float budget = TIP_BUDGET_FRAC * ROBOT_MASS_KG * 9.81f * WHEEL_CENTER_M
-                       - TIP_FORCE_RESERVE_NM;
+        float budget = TIP_BUDGET_FRAC * (1.0f - TIP_FORCE_FRAC)
+                       * ROBOT_MASS_KG * 9.81f * WHEEL_CENTER_M;
         float radspercount = (v->batt_voltage / (DSHOT_MAX - DSHOT_NEUTRAL))
                              * MOTOR_KV_RPM_PER_V * (2.0f * M_PI_F / 60.0f);
         float nm_per_count = TIP_PLANT_GAIN * WHEEL_INERTIA_KGM2
