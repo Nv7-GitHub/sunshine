@@ -208,6 +208,17 @@
  * below the ~90+ rad/s range where translation demonstrably works. */
 #define DRIFT_OMEGA_FADE_LO  60.0f  /* rad/s: translation fully off below        */
 #define DRIFT_OMEGA_FADE_HI  85.0f  /* rad/s: full translation authority above   */
+/* Fraction of the slip allowance the un-bias removes at full stick. 1.0 (remove
+ * all of it) was tried on the 2026-08-07 Nosliphopefully log and creates a spin
+ * STARVATION equilibrium: holding the pack's drag needs ~0.5 m/s of slip, so
+ * with zero bias a held stick bleeds spin until the omega-fade partially
+ * restores the allowance — the robot parked at ~75 rad/s (fade ~0.6, measured
+ * mean slip +0.53 m/s) for as long as W was held. Keeping (1 - FRAC) of the
+ * allowance at full stick pays that drag bill while staying negligible against
+ * the multi-m/s wave swing, so no force dead zone returns. Raise FRAC toward 1
+ * for purer zero-slip translation (more spin bleed); lower it toward 0 to
+ * favour spin (bias creep returns). */
+#define DRIFT_UNBIAS_FRAC    0.5f
 /* ESC/traction lag compensation. PER-BUILD: measured, not designed — re-run
  * tools/replay/translation_lag.py on a translation log for any new robot
  * (procedure: BRINGUP.md Level 5). On the 2026-07-20 translation2 log the

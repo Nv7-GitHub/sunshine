@@ -196,10 +196,14 @@ bias turned out to be a translation **dead zone** — with both wheels parked at
 off forward saturation (light presses audibly modulated the motors but produced
 almost no force), and the amplitudes that did translate put the advancing wheel
 3+ m/s into slip, dumping energy and bouncing the robot. The cap therefore scales
-the allowance by `(1 − drive_mag)`: stick centred → full allowance (spin-up
-torque unchanged); full stick → the wave straddles **zero** slip, so force is
-proportional to the stick from the first counts and full `DRIFT_AMPLITUDE` is
-usable. Translation also fades out below `DRIFT_OMEGA_FADE_LO`–`HI` (see table)
+the allowance by `(1 − DRIFT_UNBIAS_FRAC · drive_mag)`: stick centred → full
+allowance (spin-up torque unchanged); full stick → only a spin-maintenance
+remnant of the allowance remains and the wave straddles near-zero slip, so force
+is proportional to the stick from the first counts and full `DRIFT_AMPLITUDE` is
+usable. The remnant is not optional: removing ALL bias (FRAC = 1.0, tried on the
+2026-08-07 log) starves the spin — holding the pack against drag needs ~0.5 m/s
+of slip — and a held stick bled down to a stable crawl at the fade equilibrium
+(~75 rad/s, measured mean slip +0.53 m/s). Translation also fades out below `DRIFT_OMEGA_FADE_LO`–`HI` (see table)
 so a slowed robot spins back up instead of staying trapped just above the mag
 floor.
 

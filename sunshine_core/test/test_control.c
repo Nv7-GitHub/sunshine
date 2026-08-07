@@ -321,22 +321,22 @@ int main(void) {
         ASSERT(tr.dshot_cmd_left > l100.dshot_cmd_left - ALLOW / 2.0f,
                "CAP: driving wheel rides above the translating base");
 
-        /* (5b) Translation slip un-bias: at full stick the slip allowance must
-              collapse to zero so the wave straddles ZERO slip. Measured on the
-              2026-08-06 logs: with the +1 m/s bias, both tires sat saturated
-              forward for most of the wave (friction saturates within a few
-              tenths of m/s), so light presses produced sound but ~no force — a
-              1 m/s differential dead zone — and only deep-saturation amplitudes
-              translated at all. Mean command = pure rolling speed at full stick. */
+        /* (5b) Translation slip un-bias: at full stick the allowance must drop
+              to its spin-maintenance remnant (1 - DRIFT_UNBIAS_FRAC) so the
+              wave straddles near-zero slip. Measured 2026-08-06: the full
+              +1 m/s bias kept both tires saturated forward for most of the
+              wave — a 1 m/s differential dead zone. Measured 2026-08-07:
+              removing ALL of it starved the spin (~0.5 m/s of slip just pays
+              drag) and the robot parked at the fade equilibrium. */
         ASSERT_NEAR(cmd_to_wheel_rads(0.5f * (tr.dshot_cmd_left + tr.dshot_cmd_right), 8.0f),
-                    100.0f * GEOM, TOL,
-                    "UNBIAS: full-stick translation centres the wave on zero slip");
+                    100.0f * GEOM + ALLOW * (1.0f - DRIFT_UNBIAS_FRAC), TOL,
+                    "UNBIAS: full stick keeps only the spin-maintenance remnant");
 
         /* (5c) Partial stick keeps a proportional share of the allowance. */
         SunshineVars half = melty_run(255, 64, 100.0f, 100.0f, 1, 8.0f,
                                       -100.0f * DRIFT_PHASE_LEAD_S);
         ASSERT_NEAR(cmd_to_wheel_rads(0.5f * (half.dshot_cmd_left + half.dshot_cmd_right), 8.0f),
-                    100.0f * GEOM + ALLOW * (1.0f - 64.0f / 127.0f), TOL,
+                    100.0f * GEOM + ALLOW * (1.0f - DRIFT_UNBIAS_FRAC * 64.0f / 127.0f), TOL,
                     "UNBIAS: allowance scales down with stick deflection");
 
         /* (5d) Low-spin translation fade: below DRIFT_OMEGA_FADE_LO the drift

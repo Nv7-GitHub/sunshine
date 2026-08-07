@@ -102,11 +102,14 @@ static float melty_speed_cap(const SunshineState *s, const SunshineVars *v, floa
      * off forward saturation and produces ~zero force (measured on the
      * 2026-08-06 logs: light presses modulated the motors audibly but barely
      * translated; only deep-saturation amplitudes translated, which is also
-     * what bounced the robot). Scaling the allowance by (1 - drive_mag) centres
-     * the wave on ZERO slip at full stick — advancing wheel pushes, retreating
+     * what bounced the robot). Scaling the allowance down with drive_mag centres
+     * the wave near ZERO slip at full stick — advancing wheel pushes, retreating
      * wheel genuinely brakes, both in the controllable friction range — so
-     * translation force is proportional to the stick from the first counts. */
-    float allow_ms = WHEEL_SLIP_ALLOW_MS * (1.0f - drive_mag);
+     * translation force is proportional to the stick from the first counts.
+     * DRIFT_UNBIAS_FRAC < 1 keeps a spin-maintenance remnant of the allowance
+     * at full stick (see sunshine_core.h: removing all of it starves the spin
+     * against drag and the robot parks at the fade equilibrium). */
+    float allow_ms = WHEEL_SLIP_ALLOW_MS * (1.0f - DRIFT_UNBIAS_FRAC * drive_mag);
 
     float w_ref    = fmaxf(locked ? fabsf(s->kf_omega) : 0.0f, SUNSHINE_MAG_MIN_OMEGA);
     float w_cap    = w_ref * (WHEEL_CENTER_M / WHEEL_RADIUS_M)   /* rolling rate    */
