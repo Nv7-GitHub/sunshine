@@ -98,8 +98,21 @@ export function useKeyboard(mode: Mode, setMode: (m: Mode) => void): RefObject<I
   const keys     = useRef(new Set<string>());
 
   useEffect(() => {
+    // Key state goes STRAIGHT to the backend on every event — the ramps run in
+    // a native Rust thread (spawn_control_loop) that the webview scheduler
+    // cannot throttle (measured stalls up to 8.6 s froze the old in-webview
+    // ramps mid-press). The local tick below is a display mirror only.
+    const pushKeys = () => {
+      const k = keys.current;
+      invoke('set_key_targets', {
+        x:     k.has('KeyA') ? -1 : k.has('KeyD') ? 1 : 0,
+        y:     k.has('KeyW') ?  1 : k.has('KeyS') ? -1 : 0,
+        theta: k.has('ArrowLeft') ? -1 : k.has('ArrowRight') ? 1 : 0,
+        thr:   k.has('ArrowUp') ? 1 : k.has('ArrowDown') ? -1 : 0,
+      });
+    };
     const onDown = (e: KeyboardEvent) => {
-      if (!e.repeat) keys.current.add(e.code);
+      if (!e.repeat) { keys.current.add(e.code); pushKeys(); }
       if (e.code === 'ArrowUp' || e.code === 'ArrowDown' ||
           e.code === 'ArrowLeft' || e.code === 'ArrowRight') {
         e.preventDefault();
@@ -108,11 +121,10 @@ export function useKeyboard(mode: Mode, setMode: (m: Mode) => void): RefObject<I
         setMode(0);
       }
     };
-    const onUp = (e: KeyboardEvent) => keys.current.delete(e.code);
+    const onUp = (e: KeyboardEvent) => { keys.current.delete(e.code); pushKeys(); };
     // A window that loses focus mid-hold never sees the keyup, so the key would
-    // stay latched in the set and hold the target pinned at full deflection. That
-    // was survivable with a 0.3 s decay; with TAU_RELEASE it is not.
-    const onBlur = () => keys.current.clear();
+    // stay latched in the set and hold the target pinned at full deflection.
+    const onBlur = () => { keys.current.clear(); pushKeys(); };
     window.addEventListener('keydown', onDown);
     window.addEventListener('keyup',   onUp);
     window.addEventListener('blur',    onBlur);
@@ -179,16 +191,10 @@ export function useKeyboard(mode: Mode, setMode: (m: Mode) => void): RefObject<I
         f.x = 0; f.y = 0; f.theta = 0;
       }
 
+      // No sends from the webview: the backend ramp thread owns transmission.
+      // This tick only mirrors the ramps for the on-screen control display.
       sendAcc += dt;
-      if (sendAcc >= 1 / SEND_HZ) {
-        sendAcc = 0;   // reset even while DISABLED, so the accumulator can't run away
-        if (mode !== 0) invoke('set_controls', {
-          x:        Math.round(f.x),
-          y:        Math.round(f.y),
-          theta:    Math.round(f.theta),
-          throttle: Math.round(f.throttle),
-        });
-      }
+      if (sendAcc >= 1 / SEND_HZ) sendAcc = 0;
 
     };
 
