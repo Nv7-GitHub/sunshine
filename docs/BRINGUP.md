@@ -493,51 +493,37 @@ Tune in this order:
    o'clock at both speeds. If you changed wheels/motors/wiring mid-tune, re-do
    Step 4 in full (the constant offset is exactly what such changes move).
 
-### Step 6: The tipping budget (why melties tip onto their edge, per-robot)
+### Step 6: The anti-tip swing clamp (why melties tip, sim-proven, per-robot)
 
-A two-wheel stance's maximum restoring moment is **weight × half-track**:
+**Mechanism** (established with the coupled 6-DOF simulation,
+`tools/melty6dof.py`, which reproduces this robot's measured instant-tip from
+pure contact physics): the tip driver is the **wheel-rotor gyroscopic
+reaction**. The drift wave modulates the wheels — flywheels whose axles the
+spinning chassis carries around — and the reaction is a world-frame tilting
+moment ~ `I_w · ω · Δω_wheel`. It is NOT a motor-torque limit (more ESC current
+makes it worse, not better), and it is phase-blind (in-sim, correcting the
+phase constants alone changed nothing, while the same config with 13× lighter
+wheels did not tip at all *and* translated 50% faster).
 
-```
-M_budget = m · g · WHEEL_CENTER_M          (this build: 0.454·9.81·0.0405 = 0.18 N·m)
-```
-
-Tire stiffness does not raise this — it saturates when the inside wheel unloads.
-Any translation-locked moment above it lifts that wheel and rotates the robot
-onto its shell edge, deterministically, on any floor, at any spin rate. Two
-moments switch on with translation:
-
-```
-force term:  F · TIP_CG_HEIGHT_M           (drive force acts at the floor, below the CG;
-                                            F saturates at µ·m·g — grippier floor = bigger)
-wheel term:  ~½ · I_w · ω · Δω_wheel       (conservation of angular momentum: the wave
-                                            modulates flywheels whose axles the chassis
-                                            swings at ω — NOT a motor-torque limit, no
-                                            amount of ESC current changes it)
-```
-
-On this build at asphalt grip + deep modulation these summed to ~120–130% of
-budget — the instant tip-and-grind. The firmware clamp (`TIP_*` in
-`sunshine_core.h`) bounds the commanded differential so the wheel term stays
-within `TIP_BUDGET_FRAC·(1−TIP_FORCE_FRAC)` of budget; everything scales from
-the per-robot constants automatically:
-
-```
-allowed wheel-speed swing  Δω_max  ∝  m · WHEEL_CENTER_M / (I_w · ω)
-```
+The sim-mapped safe envelope: the commanded no-load wheel-speed swing may not
+exceed **ratio(ω) × body rate**, where the safe ratio *rises* with spin
+(gyroscopic stiffness): `TIP_SWING_RATIO_LO` below `TIP_OMEGA_LO` ramping to
+`TIP_SWING_RATIO_HI` above `TIP_OMEGA_HI`. Grid-validated on this build (ω
+100–220, throttle 100–190, multiple roughness seeds): worst tilt 4.9° against
+the 5.5° edge budget, zero edge contact. Translate at ω ≥ ~150 for the widest
+envelope — high spin is the SAFE regime.
 
 **Per-robot procedure:**
-1. `ROBOT_MASS_KG`, `WHEEL_CENTER_M`, `WHEEL_INERTIA_KGM2` — already per-build
-   (scale, CAD). The wheel inertia must include the motor rotor/bell; rim mass
-   dominates (a 10 g rim at 22 mm is 4.8e-6 kg·m² by itself).
-2. Measure `TIP_CG_HEIGHT_M`: CG height above the **floor**, wheels on — not
-   the CG's position inside the robot.
-3. Leave `TIP_FORCE_FRAC` ≈ 0.35 (reserves ~µ-independent drive force for
-   3–4 m/s² of acceleration) and `TIP_PLANT_GAIN` ≈ 0.5 unless calibrated.
-4. Check margin: if the clamp limits your top speed below what you want, the
-   levers are **all linear**: wider wheel track, lower CG-above-floor (chassis
-   height — independent of the CG being centered internally), lighter
-   wheel/rotor assemblies, more low-mounted mass. A build with 55 mm half-track
-   at 650 g has 2.0× this robot's budget = 2× the allowed swing at equal spin.
+1. `WHEEL_INERTIA_KGM2` must be honest (CAD, including motor rotor/bell; a
+   10 g rim at 22 mm is 4.8e-6 kg·m² by itself — rim mass dominates).
+2. Update the physical constants in `tools/melty6dof.py` (they mirror this
+   header) and re-run its calibration + grid; retune `TIP_SWING_RATIO_*` /
+   `TIP_OMEGA_*` to the new no-tip frontier.
+3. Speed levers, all confirmed in-sim: **lighter wheel/rotor assemblies**
+   (directly shrinks the tip moment — the single biggest win), **grippier tire
+   compound** (grip damps the tilt wobble AND drives harder: µ 0.12→0.5
+   roughly doubled translation speed while *reducing* tilt), wider track /
+   more mass (stance), higher spin while translating.
 
 ### Pass criteria
 

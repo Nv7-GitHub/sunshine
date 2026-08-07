@@ -204,22 +204,23 @@ void control_step(const SunshineInput *in, SunshineState *s, SunshineVars *v) {
      * MEAN, so idle-spin overspeed protection is unchanged. Throttle and
      * DRIFT_AMPLITUDE are therefore the translation speed knobs. */
     float diff = drift_wave(phase) * drive_mag * DRIFT_AMPLITUDE * spin_span;
-    /* Tipping-budget clamp — see TIP_* in sunshine_core.h. Bound the commanded
-     * differential so the wheel-rotor reaction moment plus the force reserve
-     * stays inside the stance's restoring budget (weight x half-track). The
-     * per-count wheel moment is I_w * |omega| * (no-load rad/s per DShot count),
-     * battery-scaled like the cap. Fail open on implausible battery. */
-    if (v->batt_voltage >= 5.0f && v->batt_voltage <= 10.0f && fabsf(s->kf_omega) > 1.0f) {
-        float budget = TIP_BUDGET_FRAC * (1.0f - TIP_FORCE_FRAC)
-                       * ROBOT_MASS_KG * 9.81f * WHEEL_CENTER_M;
+    /* Anti-tip swing clamp — see TIP_* in sunshine_core.h. The tip driver is
+     * the wheel-rotor gyroscopic reaction, and the sim-validated safe envelope
+     * is a commanded NO-LOAD wheel-speed swing no larger than ratio(omega) x
+     * the body rate — the ratio RISES with spin (gyroscopic stiffness), the
+     * opposite of the earlier 1/omega budget clamp whose low-spin permissiveness
+     * the sim showed to be catastrophic. Battery-scaled; fail open on an
+     * implausible battery reading. */
+    if (v->batt_voltage >= 5.0f && v->batt_voltage <= 10.0f) {
+        float w = fabsf(s->kf_omega);
+        float ratio = TIP_SWING_RATIO_LO
+                      + (TIP_SWING_RATIO_HI - TIP_SWING_RATIO_LO)
+                        * clampf((w - TIP_OMEGA_LO) / (TIP_OMEGA_HI - TIP_OMEGA_LO),
+                                 0.0f, 1.0f);
         float radspercount = (v->batt_voltage / (DSHOT_MAX - DSHOT_NEUTRAL))
                              * MOTOR_KV_RPM_PER_V * (2.0f * M_PI_F / 60.0f);
-        float nm_per_count = TIP_PLANT_GAIN * WHEEL_INERTIA_KGM2
-                             * fabsf(s->kf_omega) * radspercount;
-        if (nm_per_count > 1e-9f) {
-            float diff_max = budget / nm_per_count;
-            diff = clampf(diff, -diff_max, diff_max);
-        }
+        float diff_max = ratio * w / radspercount;
+        diff = clampf(diff, -diff_max, diff_max);
     }
 
     v->dshot_cmd_left  = clampf(base + diff, DSHOT_NEUTRAL, DSHOT_MAX);

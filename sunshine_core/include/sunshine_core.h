@@ -251,36 +251,24 @@
  * swing is ~±1 m/s, so the remaining bias must sit well under that for the
  * braking half to exist at all. */
 #define DRIFT_UNBIAS_FRAC    0.7f
-/* ── Tipping budget (the strike mechanism, finally derived) ─────────────────
- * A two-wheel stance's maximum restoring moment is weight x half-track:
- * m*g*WHEEL_CENTER_M = 0.18 N*m for this build. Any translation-locked moment
- * above it lifts the inside wheel and rotates the robot onto its edge —
- * deterministically, on any floor, at any spin. The applied moments:
- *   force term:  F * TIP_CG_HEIGHT_M          (translation force below the CG)
- *   wheel term:  I_w * omega * dOmega_wheel   (rotor momentum swing, world-DC)
- * At full asphalt-grip force + deep modulation these summed to ~120-130% of
- * budget — the measured instant tip-and-grind. The clamp below bounds the
- * commanded differential so force reserve + wheel term stay under
- * TIP_BUDGET_FRAC of the stance budget. TIP_PLANT_GAIN accounts for the
- * wheels realizing only part of the commanded swing at spin frequency
- * (measured 0.2-0.5); raising it is CONSERVATIVE (smaller clamp).
- * Speed impact: allowed swing ~ +/-2.5 m/s at omega 120-150, ~+/-1.5 at 250.
- * Mechanical levers (linear gains): wider wheel track, lower CG height above
- * FLOOR, lighter wheel/rotor assemblies, more (low-mounted) mass.
- * Every term scales from the per-robot constants (mass, wheel track, wheel
- * inertia, KV) so a wider/lower/heavier build AUTOMATICALLY gains speed:
- * allowed swing  dOmega ~ m*WC / (I_w*omega).  Per-build inputs:
- * TIP_CG_HEIGHT_M (measure: CG height above the FLOOR, wheels on) and the
- * fractions below. Procedure + worked numbers: BRINGUP.md "Tipping budget". */
-#define TIP_BUDGET_FRAC      0.75f   /* fraction of m*g*WC the wave may use     */
-/* Measured: CG sits ~21 mm above the floor (robot is 40 mm tall — tire height). */
-#define TIP_CG_HEIGHT_M      0.021f  /* PER-BUILD: CG height above the floor    */
-/* Sized from MEASURED tire force, not the mu*N model: spin-up/steady torque
- * balance across the 2026-08-06/07 logs gives only ~0.3-0.7 N total at ~1 m/s
- * slip (thin hard urethane, effective mu ~0.1 at operating slip) — so F*h is
- * small and most of the budget belongs to the wheel/swing term. */
-#define TIP_FORCE_FRAC       0.15f   /* share of budget reserved for F*h drive  */
-#define TIP_PLANT_GAIN       0.5f    /* realized/commanded wheel-speed swing    */
+/* ── Anti-tip swing clamp (the strike mechanism, sim-proven) ────────────────
+ * MECHANISM, proven in the coupled 6-DOF simulation (tools/melty6dof.py): the
+ * tip is driven by the WHEEL-ROTOR gyroscopic reaction — the drift wave
+ * modulates flywheels whose axles the spinning chassis carries around, and the
+ * reaction is a tilting moment ~ I_w * omega * dOmega_wheel. In-sim ablation:
+ * same config with feather wheels (I_w/13) does not tip AND translates 50%
+ * faster; phase correction alone changes nothing (the tip is phase-blind, as
+ * the driver argued). The safe commanded swing grows ~linearly with spin
+ * (higher spin = gyroscopically stiffer): clamp the NO-LOAD wheel-speed swing
+ * to a ratio of the body rate, ramped with omega. Grid-validated (omega
+ * 100-220, throttle 100-190, seeds): worst tilt 4.9 deg vs the 5.5 deg edge
+ * budget, zero edge contact. On the current low-grip urethane this allows
+ * ~0.8 m/s translation; a grippier tire compound both stabilizes tilt further
+ * and roughly doubles speed in-sim (grip damps the wobble AND drives harder). */
+#define TIP_SWING_RATIO_LO   0.45f   /* swing/omega cap below TIP_OMEGA_LO      */
+#define TIP_SWING_RATIO_HI   0.75f   /* swing/omega cap above TIP_OMEGA_HI      */
+#define TIP_OMEGA_LO         125.0f  /* rad/s: ramp start                       */
+#define TIP_OMEGA_HI         170.0f  /* rad/s: ramp end (full ratio)            */
 /* FORCE-lag compensation — NOT the wheel-speed lag. History: 0.018 was set from
  * translation_lag.py's DShot→eRPM cross-correlation (~20 ms), but eRPM is wheel
  * SPEED, and speed is the INTEGRAL of torque — compensating force with the
