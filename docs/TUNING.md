@@ -127,8 +127,8 @@ MELTY mode applies a differential DShot command that changes with robot angle. T
 |----------|---------|-----------------|
 | `DRIFT_AMPLITUDE` | 0.30 | Max differential as a fraction of available symmetric DShot headroom. Sets the wheel-speed swing = translation top-speed ceiling AND the wheel-rotor gyroscopic tilt kick; low-speed force saturates at tire friction regardless. Raise for top speed only with verified direction; drop if edge strikes return. |
 | `DRIFT_PLATEAU_WIDTH` | 0.25 | Fraction of full rotation spent at each +1 and -1 plateau. 0.25 gives two 90° plateaus and two 90° ramps (~10 ms at combat spin — matched to the ~20 ms actuation lag; the old 54° ramps commanded reversals the plant rounded off anyway while their harmonics showed as 2x/3x-rev vibration). |
-| `DRIFT_PHASE_OFFSET_RADS` | −2.62 | Fixed geometry/sign offset between the LED/driver heading and the physical wheel-force direction. **Measured on-floor** (BRINGUP Level 5 Step 4). Re-measure after any motor wiring/mount/invert change — flips show up here as ±180°. |
-| `DRIFT_PHASE_LEAD_S` | 0.010 | Force-lag compensation. Added phase is `kf_omega * DRIFT_PHASE_LEAD_S`. **Measured on-floor** (two-speed drift test + `tools/melty_sim.py` fit). NOT the eRPM lag — eRPM is wheel *speed*, which lags ~2× the force (see BRINGUP Step 4). |
+| `DRIFT_PHASE_OFFSET_RADS` | π | **Derived from geometry**: wheels push along the wheel-line tangent (90° from the wheel axis), the LED sits ON the wheel axis, and W = "toward the light" is encoded as dd = +90° — the two 90°s stack to exactly 0 or π depending on which side the "+diff" wheel sits. This build: π. Flips between π and 0 on any rewiring/remount/invert change — re-run the drift test. |
+| `DRIFT_PHASE_LEAD_S` | 0.005 | Force-lag compensation. Added phase is `kf_omega * DRIFT_PHASE_LEAD_S`. **Measured on-floor** (two-speed drift test with the offset pinned at π; both speeds agree on ~4–5 ms). NOT the eRPM lag — eRPM is wheel *speed*, which lags ~4× the force (see BRINGUP Step 4). |
 | `DRIFT_OMEGA_FADE_LO` | 60 rad/s | Translation fully off below this spin rate. Breaks the measured collapse trap: an edge-strike slowdown otherwise parks the robot at 55–60 rad/s with the cap braking the wheels while the stick is held. |
 | `DRIFT_OMEGA_FADE_HI` | 85 rad/s | Full translation authority above this. Between LO and HI, `drive_mag` scales linearly. |
 | `THETA_RATE_RADS` | π rad/s | Heading offset rate per full left/right arrow deflection (ctrl_theta = ±127). |
@@ -233,11 +233,11 @@ cap's slip bias so they are always kinetically sliding, force is
 crossings — roughly **half** the speed lag. The 18 ms lead therefore rotated
 the force backwards by `omega × 8 ms`, and the error self-conceals because the
 eRPM cross-check keeps validating it. Measured correctly on-floor (2026-08-07
-two-speed drift-direction test, fitted with `tools/melty_sim.py`):
-**force lag ≈ 10 ms → `DRIFT_PHASE_LEAD_S = 0.010f`**, together with a
-constant `DRIFT_PHASE_OFFSET_RADS = −2.62` (a ≈ +210° geometry/sign offset that
-had been present since the original build — no self-referential eRPM check can
-see it). Full procedure:
+two-speed drift-direction test, with `DRIFT_PHASE_OFFSET_RADS` pinned at the
+geometrically derived π — LED on the wheel axis + the W = dd+90° driver
+convention stack to exactly 0 or π, and this build is π): both speeds agree on
+**force lag ≈ 4–5 ms → `DRIFT_PHASE_LEAD_S = 0.005f`**. No self-referential
+eRPM check can see either constant. Full procedure:
 BRINGUP.md Level 5 Step 4. `translation_lag.py` is still useful — as a
 speed-lag/ESC-health measurement and an upper bound on the force lag only.
 

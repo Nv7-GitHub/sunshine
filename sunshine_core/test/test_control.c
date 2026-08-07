@@ -233,11 +233,11 @@ int main(void) {
        inertia): re-measure per BRINGUP.md Level 5 and retarget on a new robot. */
     {
         /* (a) The compiled lead must be in the measured band. The FORCE lag is
-              ~10 ms (slip-SIGN crossing of the always-sliding tires; sim
-              calibrated against the 2026-08-07 on-floor drift-direction test),
-              NOT the ~20 ms wheel-SPEED lag — speed integrates torque. */
-        ASSERT(DRIFT_PHASE_LEAD_S >= 0.006f && DRIFT_PHASE_LEAD_S <= 0.014f,
-               "PHASE LEAD: compensates the ~10 ms force (slip-sign) lag");
+              ~4-5 ms (two-speed drift test with the offset pinned at the
+              geometrically derived pi), NOT the ~20 ms wheel-SPEED lag —
+              speed integrates torque. */
+        ASSERT(DRIFT_PHASE_LEAD_S >= 0.001f && DRIFT_PHASE_LEAD_S <= 0.009f,
+               "PHASE LEAD: compensates the ~4-5 ms force lag, not the speed lag");
 
         /* (b) Sign/wiring: at spin rate W the wave must be ADVANCED by exactly
               W*LEAD. Both probes spin inside the translation authority band

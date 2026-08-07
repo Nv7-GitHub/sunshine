@@ -451,19 +451,25 @@ crossings, not the speed wave.
    `DRIFT_PHASE_OFFSET_RADS` (sign: positive offset moves the observed drift
    clockwise for a CCW-spinning robot). The **slope** (degrees per rad/s) is the
    lead error: `true_lead = compiled_lead − slope_in_rad_per_rad/s`.
-4. To disentangle the two cleanly — and to sanity-check against the robot's
-   physics — fit the observations with `tools/melty_sim.py` (stick-slip tire +
-   motor model + the real control law): sweep its hardware-offset parameter `H`
-   until the sim reproduces both observed angles under the compiled constants,
-   then set `DRIFT_PHASE_OFFSET_RADS = -H` (wrapped) and take the lead the sim
-   calibrates. Update the "PHASE LEAD" band in `test_control.c`, rebuild,
-   reflash, re-run the taps: drift should land near 12 o'clock at both speeds.
+4. **Pin the constant part with geometry before fitting.** The wheels push
+   along the wheel-line tangent (90° from the wheel axis), and the driver
+   convention W = "toward the light" is encoded as `dd = +90°` — so if the LED
+   sits ON the wheel axis (this build), the stack-up is **exactly 0 or π**,
+   nothing in between, and the drift test just resolves the binary and the
+   lead: with the offset pinned, the two speeds must agree on a single lead
+   (that agreement is your cross-check). If the LED sits elsewhere, its body
+   angle relative to the wheel axis enters the constant — derive it, then
+   verify. `tools/melty_sim.py` (stick-slip tire + motor model + the real
+   control law) is available to sanity-check the fit against the robot's
+   physics. Update the "PHASE LEAD" band in `test_control.c`, rebuild, reflash,
+   re-run the taps: drift should land near 12 o'clock at both speeds.
 
 Reference: on this robot the 2026-08-07 measurement was +90° at ω≈120 and +45°
-at ω≈165 → `H = +210°` → `DRIFT_PHASE_OFFSET_RADS = -2.62f` (≡ +210°) and
-`DRIFT_PHASE_LEAD_S = 0.010f`. `translation_lag.py` remains useful only as a
-**speed-lag** measurement (ESC/motor health, upper bound on force lag) — never
-set the lead from it.
+at ω≈165 with lead 0.018/offset 0 → offset pinned at **π** (LED on the wheel
+axis, "+diff" wheel side) → both speeds agree on a force lag of ~4–5 ms →
+`DRIFT_PHASE_OFFSET_RADS = 3.14159265f`, `DRIFT_PHASE_LEAD_S = 0.005f`.
+`translation_lag.py` remains useful only as a **speed-lag** measurement
+(ESC/motor health, upper bound on force lag) — never set the lead from it.
 
 ### Step 5: Tune drift parameters
 

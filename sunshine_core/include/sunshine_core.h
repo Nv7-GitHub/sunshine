@@ -204,17 +204,19 @@
  * speed once direction is verified clean; drop toward 0.20 if any edge
  * strikes return. */
 #define DRIFT_AMPLITUDE     0.30f   /* max diff as fraction of available headroom */
-/* MEASURED on-floor 2026-08-07 (two-speed drift-direction test, TUNING.md L5S3,
- * fitted with tools/melty_sim.py): the realized force direction erred by a
- * CONSTANT +210 deg — an ORIGINAL geometry/sign convention error between the
- * assumed and physical wheel-force direction, present since first build (the
- * 2026-08-06 motor-config change is ruled out: it compensated a physically
- * flipped phase wire, and wire-flip + invert-flip cancel, direction-neutral
- * for the diff). -2.62 rad ≡ +3.66 rad ≡ +210 deg cancels it. Re-measure after
- * ANY wiring/mount/invert change. If a future drift test shows W landing ~2x
- * this angle on the other side of the LED, the observation sign was inverted:
- * negate this value. */
-#define DRIFT_PHASE_OFFSET_RADS (-2.62f) /* fixed geometry/sign offset, rad      */
+/* DERIVED from the build geometry and confirmed by the 2026-08-07 two-speed
+ * drift test. The wheels push along the TANGENT of the wheel line (90 deg from
+ * the wheel axis); the LED sits ON the wheel axis; and the driver convention is
+ * W = toward the light with W encoded as dd = +90 deg. The two 90s stack to
+ * exactly 0 or 180 depending on which physical side the firmware's "+diff"
+ * wheel sits — no other term contributes (mag zero and filter delays shift the
+ * LED and the wave identically and cancel). The binary resolves to 180: with
+ * offset 0, W pushed exactly AWAY from the light. Pinning 180 here makes the
+ * on-floor readings (+90 deg err at omega~120, +45 at ~165, compiled lead
+ * 0.018) internally consistent with a single force lag of ~4-5 ms (see
+ * DRIFT_PHASE_LEAD_S). If the "+diff" wheel side ever changes (rewiring,
+ * remount, invert flip), this flips between pi and 0 — re-run the drift test. */
+#define DRIFT_PHASE_OFFSET_RADS 3.14159265f /* wheel-side geometry: pi, not 0    */
 /* Low-spin translation fade (2026-08-06 logs). Two measured reasons translation
  * must not run at low spin: (1) the collapse trap — an edge-strike slowdown drops
  * kf_omega, the cap follows it down and (with ESC complementary-PWM braking)
@@ -258,10 +260,12 @@
  * crosses zero — which lags roughly half the speed wave. Calibrated 2026-08-07
  * by a stick-slip first-principles simulation (tools-side melty_sim) fitted to
  * the on-floor two-speed drift-direction observations (+90 deg at ~120 rad/s,
- * +45 at ~165, taps, lead 0.018/offset 0): effective force lag ~10 ms across
- * tap and hold regimes. DO NOT re-derive from eRPM cross-correlation (speed
+ * +45 at ~165, taps, lead 0.018/offset 0): with DRIFT_PHASE_OFFSET_RADS pinned
+ * at the geometrically derived pi, the two observations agree on a single
+ * force lag of tau ~ 4-5 ms (120: 4.9 ms, 165: 3.7 ms — the internal agreement
+ * is the cross-check). DO NOT re-derive from eRPM cross-correlation (speed
  * domain); re-verify only with the on-floor drift-direction test. */
-#define DRIFT_PHASE_LEAD_S  0.010f  /* force (slip-sign) lag compensation, s      */
+#define DRIFT_PHASE_LEAD_S  0.005f  /* force (slip-sign) lag compensation, s      */
 #define THETA_RATE_RADS     3.14159265f  /* rad/s per full ctrl_theta              */
 #define MAX_DSHOT_SPIN      DSHOT_MAX
 #define DSHOT_NEUTRAL       1048.0f
