@@ -10,18 +10,16 @@ export interface InputState {
   throttle: number;
 }
 
-// Linear ramp rates (units/frame @ ~60 fps). Key held → ramps toward ±127; released
-// → decays to 0. TUNING: bigger = snappier, smaller = smoother "pulse WASD like a
-// stick". Ramp-UP is kept smooth (traction-limited accel), but decay-to-0 (RELEASE)
-// is faster so you can stop / reverse quickly — the old symmetric ~1.4 s stop felt
-// sluggish. 127/40 ≈ 0.66 s to full; release 127/18 ≈ 0.30 s to stop.
-const RATE_XY_UP   = 127 / 40;   // hold: ramp to full in ~0.66 s
-const RATE_XY_DOWN = 127 / 18;   // release: decay to 0 in ~0.30 s
-const RATE_THETA   = 127 / 40;
+// Linear ramp rate (units/frame @ ~60 fps). Key held → ramps toward ±127; released
+// → decays to 0. The rate is SYMMETRIC: rise and decay take the same time, so a tap
+// puts the same area under the curve going up as coming back down and WASD behaves
+// like a self-centring stick. TUNING: bigger = snappier, smaller = smoother.
+// 127/40 ≈ 0.66 s to full, and ≈ 0.66 s back to zero.
+const RATE_XY    = 127 / 40;
+const RATE_THETA = 127 / 40;
 
-// Ramp toward target; use the faster DOWN rate whenever moving toward 0.
-function moveToward(current: number, target: number, rateUp: number, rateDown?: number): number {
-  const rate = (rateDown !== undefined && Math.abs(target) < Math.abs(current)) ? rateDown : rateUp;
+// Ramp toward target at a fixed rate, in either direction.
+function moveToward(current: number, target: number, rate: number): number {
   if (current < target) return Math.min(target, current + rate);
   if (current > target) return Math.max(target, current - rate);
   return current;
@@ -62,8 +60,8 @@ export function useKeyboard(mode: Mode, setMode: (m: Mode) => void): RefObject<I
       if (k.has('ArrowDown')) t.throttle = Math.max(0,   t.throttle - 1.5);
 
       const f = filtered.current;
-      f.x     = moveToward(f.x,     t.x,     RATE_XY_UP, RATE_XY_DOWN);
-      f.y     = moveToward(f.y,     t.y,     RATE_XY_UP, RATE_XY_DOWN);
+      f.x     = moveToward(f.x,     t.x,     RATE_XY);
+      f.y     = moveToward(f.y,     t.y,     RATE_XY);
       f.theta = moveToward(f.theta, t.theta, RATE_THETA);
       f.throttle = t.throttle;
 
