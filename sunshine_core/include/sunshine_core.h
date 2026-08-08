@@ -86,21 +86,17 @@
  * fixed available torque at any spin rate. A flat percentage instead would
  * starve the robot of torque at low spin and still permit the runaway at high
  * spin. */
-/* EFFECTIVE rolling radius UNDER LOAD, not the free diameter / 2. Foam
- * compresses several mm under the robot's weight, so its rolling radius is
- * measured, not read off calipers. Measured 2026-08-08 (Foam_wheel log):
- * during steady quiet spin the motors sat at 98% of no-load speed (dshot
- * 1436 -> 3.18 V -> 3500 rpm no-load vs 3429 measured), i.e. near-zero
- * torque, yet the 22 mm conversion showed +2 m/s of "slip" — impossible
- * without ~6 A the voltage can't supply. That apparent slip is a radius
- * error: r_true = 22 mm * v_body/v_wheel ≈ 16.5 mm. A wrong radius here
- * poisons the speed cap (real headroom = allow − (22/r − 1)·v_roll → zero
- * near ω≈190) and centres the drift wave below TRUE rolling speed, turning
- * the wave's bottom half into a brake — the ω 150→68 crash on every hold
- * in that log, with near-zero ground strikes. Re-measure after any wheel
- * change: quiet-spin apparent slip at the no-load operating point must
- * read ≈0. */
-#define WHEEL_RADIUS_M 0.0165f     /* wheel rolling radius, m (loaded, foam) */
+/* NOTE (2026-08-08 Foam_wheel log): a briefly-shipped 0.0165 here was WRONG
+ * (user confirmed diameter unchanged). The +2 m/s apparent slip at the motor
+ * no-load operating point that motivated it is REAL slip at near-zero force:
+ * the foam wheels were mounted eccentrically, and runout e at wheel-rev
+ * frequency (57 Hz at ω≈145) forces e·(2πf)² ≈ 6 g per 0.5 mm — the wheels
+ * hammer instead of roll, contact is intermittent slams (erpm ripple 17×
+ * baseline at the 25.8 Hz coning frequency = wheels alternately gripping
+ * and flying), and average traction collapses. Fix is mechanical: true the
+ * wheels. Diagnostic to keep: quiet-spin slip at no-load torque ≈ 0 is the
+ * health check for wheel/ground coupling. */
+#define WHEEL_RADIUS_M 0.022f      /* wheel rolling radius, m              */
 #define WHEEL_CENTER_M 0.0405f     /* wheel contact patch to spin axis, m  */
 #define MOTOR_KV_RPM_PER_V 1100.0f /* nameplate, rpm/V (no-load)           */
 #define MOTOR_POLE_PAIRS 7         /* 14-pole motor -> 7 pole pairs        */
