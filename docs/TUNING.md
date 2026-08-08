@@ -125,12 +125,10 @@ MELTY mode applies a differential DShot command that changes with robot angle. T
 
 | Constant | Default | What it controls |
 |----------|---------|-----------------|
-| `DRIFT_AMPLITUDE` | 0.60 | Max differential as a fraction of the **full DShot span** — independent of cruise throttle, so the wave slams toward the rails like classic melty modulation (the output clamp shapes the asymmetric excursion). Force is current: the swing voltage over winding R sets translation force. |
-| `DRIFT_PLATEAU_WIDTH` | 0.25 | Fraction of full rotation spent at each +1 and -1 plateau. 0.25 gives two 90° plateaus and two 90° ramps (~10 ms at combat spin — matched to the ~20 ms actuation lag; the old 54° ramps commanded reversals the plant rounded off anyway while their harmonics showed as 2x/3x-rev vibration). |
-| `DRIFT_PHASE_OFFSET_RADS` | π | **Derived from geometry**: wheels push along the wheel-line tangent (90° from the wheel axis), the LED sits ON the wheel axis, and W = "toward the light" is encoded as dd = +90° — the two 90°s stack to exactly 0 or π depending on which side the "+diff" wheel sits. This build: π. Flips between π and 0 on any rewiring/remount/invert change — re-run the drift test. |
-| `DRIFT_PHASE_LEAD_S` | 0.005 | Force-lag compensation. Added phase is `kf_omega * DRIFT_PHASE_LEAD_S`. **Measured on-floor** (two-speed drift test with the offset pinned at π; both speeds agree on ~4–5 ms). NOT the eRPM lag — eRPM is wheel *speed*, which lags ~4× the force (see BRINGUP Step 4). |
-| `DRIFT_OMEGA_FADE_LO` | 60 rad/s | Translation fully off below this spin rate. Breaks the measured collapse trap: an edge-strike slowdown otherwise parks the robot at 55–60 rad/s with the cap braking the wheels while the stick is held. |
-| `DRIFT_OMEGA_FADE_HI` | 85 rad/s | Full translation authority above this. Between LO and HI, `drive_mag` scales linearly. |
+| `DRIFT_AMPLITUDE` | 0.40 | Max differential as a fraction of available symmetric DShot headroom. |
+| `DRIFT_PLATEAU_WIDTH` | 0.35 | Fraction of full rotation spent at each +1 and -1 plateau. 0.35 gives two 126° plateaus and two 54° ramps. |
+| `DRIFT_PHASE_OFFSET_RADS` | 0.0 | Fixed motor-timing offset between the LED/driver heading and the wheel-force waveform. |
+| `DRIFT_PHASE_LEAD_S` | 0.018 | ESC/traction lag compensation. Added phase is `kf_omega * DRIFT_PHASE_LEAD_S`. **Measured, per-build** — `tools/replay/translation_lag.py`, procedure in BRINGUP.md Level 5 Step 4. |
 | `THETA_RATE_RADS` | π rad/s | Heading offset rate per full left/right arrow deflection (ctrl_theta = ±127). |
 
 ### How the pulse works
@@ -150,20 +148,14 @@ The waveform has zero mean over a revolution and satisfies `wave(phase + pi) = -
 
 `phase = robot_angle - drive_dir + DRIFT_PHASE_OFFSET_RADS + kf_omega * DRIFT_PHASE_LEAD_S`
 
-`diff = wave(phase) × drive_magnitude × DRIFT_AMPLITUDE × spin_span`
+`headroom = min(base - DSHOT_NEUTRAL, DSHOT_MAX - base)`
 
-`dshot_left  = clamp(base + diff)`
-`dshot_right = clamp(base - diff)`
+`diff = wave(phase) × drive_magnitude × DRIFT_AMPLITUDE × headroom`
 
-where the basis is the **full DShot span** (rail-to-rail, cruise-throttle-independent) and `base` is the
-capped mean. Translation speed is kinematically the wheel-speed modulation
-depth (each contact point needs `rolling ± v` once per rev while moving at v),
-so the diff scales with the driver's throttle — the classic melty full-range
-modulation — not with the headroom around the capped base, which limited
-translation to ~1 m/s. The retreating wheel bottoming out at `DSHOT_NEUTRAL`
-under deep modulation is normal. **Throttle and `DRIFT_AMPLITUDE` are the
-translation speed knobs**; the cap still governs the mean (idle-spin overspeed
-protection unchanged).
+`dshot_left  = base + diff`
+`dshot_right = base - diff`
+
+`headroom` prevents clipping. At low throttle there is little room above neutral; at very high throttle there is little room below max. Translation authority is strongest at moderate spin commands and intentionally fades near full throttle.
 
 ### Spin rate vs. translation authority (measured)
 
@@ -190,62 +182,33 @@ revolution and the differential force was ~zero *regardless of the commanded
 waveform*. Symptom: motors audibly modulate, eRPM visibly modulates, robot barely
 moves and wobbles inconsistently (the residual forces are normal-load fluctuations,
 not the drift wave). The wheel-speed cap fixes this as a side effect of fixing the
-bounce: it bounds mean slip near the rolling speed, so the drift wave can swing
-the retreating wheel down through zero slip into braking — one wheel pushing, the
-other braking = a real once-per-rev force differential. Consequence: **do not
-"fix" weak translation by disabling or loosening the cap** — that removes the
-very condition translation needs.
+bounce: it pins mean slip at `WHEEL_SLIP_ALLOW_MS` (1.0 m/s), so the drift wave now
+swings the retreating wheel down through zero slip into braking — one wheel
+saturated forward, the other near-zero/braking = a real once-per-rev force
+differential. Consequence: **do not "fix" weak translation by disabling or loosening
+the cap** — that removes the very condition translation needs.
 
-**Slip un-bias while translating (2026-08-06):** a fixed `WHEEL_SLIP_ALLOW_MS`
-bias turned out to be a translation **dead zone** — with both wheels parked at
-+1 m/s forward slip, the wave's first ~1 m/s of differential moves neither tire
-off forward saturation (light presses audibly modulated the motors but produced
-almost no force), and the amplitudes that did translate put the advancing wheel
-3+ m/s into slip, dumping energy and bouncing the robot. The cap therefore scales
-the allowance by `(1 − DRIFT_UNBIAS_FRAC · drive_mag)`: stick centred → full
-allowance (spin-up torque unchanged); full stick → only a spin-maintenance
-remnant of the allowance remains and the wave straddles near-zero slip, so force
-is proportional to the stick from the first counts and full `DRIFT_AMPLITUDE` is
-usable. The remnant is not optional: removing ALL bias (FRAC = 1.0, tried on the
-2026-08-07 log) starves the spin — holding the pack against drag needs ~0.5 m/s
-of slip — and a held stick bled down to a stable crawl at the fade equilibrium
-(~75 rad/s, measured mean slip +0.53 m/s). Translation also fades out below `DRIFT_OMEGA_FADE_LO`–`HI` (see table)
-so a slowed robot spins back up instead of staying trapped just above the mag
-floor.
+### `DRIFT_PHASE_LEAD_S` from the eRPM lag
 
-### Sustained translation and tilt (watch this on hardware)
+The DShot→eRPM lag above turns into a heading-referenced phase error `omega × lag`
+that grows with spin rate — exactly what `DRIFT_PHASE_LEAD_S` compensates.
 
-The translation force is world-fixed and acts at the contact patches, below the
-CG — so it tilts the spin axis while applied. On the pre-un-bias 2026-08-06 logs,
-sustained full deflection tilted to edge strike in ~0.25–0.5 s (1×-rev coning
-line in `accel_z`: 12→148 counts in 0.25 s; recovery ~0.4 s after release), and
-every logged collapse had a held stick. Much of that violence came from the
-deep-saturation regime (bounces breaking wheel contact, which removes the
-restoring moment that normally lets a melty settle at a small steady tilt) — the
-slip un-bias and wider ramps remove that, so sustained translation is expected
-to settle like a conventional melty. If held-stick translation still walks the
-edge into the floor on hardware, the remaining lever is the forcing duty cycle
-(feather the keys, or revisit duty-cycling the drift in firmware).
+**Measure it, don't guess it:** `tools/replay/translation_lag.py <log.sun>` cross-
+correlates the logged DShot differential against the eRPM differential over every
+translation window and prints the recommended constant (full procedure: BRINGUP.md
+Level 5 Step 4). Unlike single-frequency demodulation (`erpm_bandwidth.py`) the
+time-domain cross-correlation is not ambiguous modulo one rotation, and the script's
+constant-offset residual check separates lag from a `DRIFT_PHASE_OFFSET_RADS` problem.
 
-### `DRIFT_PHASE_LEAD_S` — measure the FORCE lag on-floor, never from eRPM
-
-The spin-proportional phase error `omega × lag` is what `DRIFT_PHASE_LEAD_S`
-compensates — but the lag that matters is the **force** lag, and it cannot be
-measured from eRPM. History as a warning: `translation_lag.py` measured a clean
-~20 ms DShot→eRPM delay (2026-07-20) and the lead was set to 0.018 from it. But
-eRPM is wheel *speed*, and speed is the *integral* of torque: the tires ride the
-cap's slip bias so they are always kinetically sliding, force is
-`µN·sign(slip)`, and the force wave's timing follows the slip-**sign**
-crossings — roughly **half** the speed lag. The 18 ms lead therefore rotated
-the force backwards by `omega × 8 ms`, and the error self-conceals because the
-eRPM cross-check keeps validating it. Measured correctly on-floor (2026-08-07
-two-speed drift-direction test, with `DRIFT_PHASE_OFFSET_RADS` pinned at the
-geometrically derived π — LED on the wheel axis + the W = dd+90° driver
-convention stack to exactly 0 or π, and this build is π): both speeds agree on
-**force lag ≈ 4–5 ms → `DRIFT_PHASE_LEAD_S = 0.005f`**. No self-referential
-eRPM check can see either constant. Full procedure:
-BRINGUP.md Level 5 Step 4. `translation_lag.py` is still useful — as a
-speed-lag/ESC-health measurement and an upper bound on the force lag only.
+**Measured (2026-07-20 translation2 log):** a pure **time delay of ~20 ms** (18–24 ms
+over 24 windows), identical for both spin directions, with **no constant offset** (so
+`DRIFT_PHASE_OFFSET_RADS` stays 0 — the phase convention is correct). Subtracting the
+~3 ms median-5 eRPM telemetry lag leaves **~17 ms of physical actuation delay** →
+`DRIFT_PHASE_LEAD_S = 0.018f`. Uncompensated, this was a 110–150° force-direction
+error at 1000–1300 RPM — the wheel-speed peak landed nearly opposite the commanded
+direction, which is why the robot wobbled and barely translated. Confirm the residual
+direction error on hardware (position cannot be replayed from logs) and refine with
+the two-speed method in Step 3 below.
 
 ### Inverted operation flips the apparent translation direction (not a bug)
 

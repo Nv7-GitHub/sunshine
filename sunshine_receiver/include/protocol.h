@@ -1,7 +1,6 @@
 #pragma once
 #include <stdint.h>
 #include <string.h>
-#include "sunshine_core.h"   // -I ../sunshine_core/include (platformio.ini)
 
 // ── Frame format ─────────────────────────────────────────────────────────────
 // [0xAA][type:1B][len:2B LE][payload:NB][checksum:1B XOR of payload bytes]
@@ -28,13 +27,12 @@ static constexpr uint8_t STATUS_INIT_ERROR       = 0x04;
 // Brain sends 20 inputs per ESP-NOW v2 packet (50 Hz; requires IDF >= 5.4 for the
 // >250-byte payload). Two SunshineState snapshots per frame give 100 Hz real
 // state; vars are not sent (host recomputes them). Layout: 2 (frame_id) + 1
-// (type) + 2*sizeof(SunshineState) + 20*sizeof(SunshineInput) — DERIVED from the
-// shared header so a schema bump can no longer desynchronize the receiver (the
-// hard-coded 715 here silently dropped EVERY frame after schema v6 grew the
-// state: espnow_rx.cpp rejects wrong-length packets, controls kept working, LED
-// sat red). The literal 20 mirrors INPUTS_PER_FRAME in brain telemetry.cpp.
-static constexpr uint16_t ESPNOW_TELEM_SIZE  =
-    (uint16_t)(2 + 1 + 2 * sizeof(SunshineState) + 20 * sizeof(SunshineInput));
+// (type) + 2*56 (SunshineState, schema v5) + 20*30 (SunshineInput) = 715. Keep in
+// sync with brain telemetry.cpp FRAME_SIZE — a mismatch makes espnow_rx.cpp drop
+// EVERY frame (it rejects wrong-length packets). Bump this whenever SunshineState
+// or SunshineInput changes size. (schema v5: SunshineState 52→56, SunshineInput
+// 29→30 for the int16 batt_offset.)
+static constexpr uint16_t ESPNOW_TELEM_SIZE  = 715;
 static constexpr uint16_t CTRL_PAYLOAD_SIZE  = 5;   // mode+x+y+theta+throttle
 static constexpr uint16_t HEARTBEAT_SIZE     = 4;
 static constexpr uint16_t RSSI_SIZE          = 1;

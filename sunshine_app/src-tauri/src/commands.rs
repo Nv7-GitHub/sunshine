@@ -317,15 +317,6 @@ pub fn set_mode(mode: u8, state: State<'_, AppState>) {
     send_current_controls(&state);
 }
 
-/// Raw key directions from the frontend (-1/0/+1 per axis). The backend ramp
-/// thread (lib.rs spawn_control_loop) integrates these; the webview no longer
-/// runs any control timing.
-#[tauri::command]
-pub fn set_key_targets(x: i8, y: i8, theta: i8, thr: i8, state: State<'_, AppState>) {
-    let mut k = state.key_targets.lock();
-    k.x = x; k.y = y; k.theta = theta; k.thr = thr;
-}
-
 #[tauri::command]
 pub fn set_controls(
     x: i8, y: i8, theta: i8, throttle: u8,

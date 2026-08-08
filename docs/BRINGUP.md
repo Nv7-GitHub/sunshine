@@ -426,50 +426,25 @@ In the host app:
 > fast enough — measured in the logs, and it also rotates the effective direction with
 > speed). Bring throttle up only until the LED is steady and spin is stable.
 
-### Step 4: Measure the force direction (`DRIFT_PHASE_OFFSET_RADS` + `DRIFT_PHASE_LEAD_S`)
+### Step 4: Characterize the actuation delay (`DRIFT_PHASE_LEAD_S`)
 
-**Do this before hand-tuning anything, and do it ON THE FLOOR.** The force
-direction has a constant part (geometry / sign conventions — a motor-config or
-wiring change can silently flip it 180°) and a spin-proportional part (the force
-lag). **Neither can be trusted from eRPM analysis**: `translation_lag.py`
-cross-correlates command against eRPM, which is wheel **speed** — speed is the
-integral of torque and lags ~2× the force. On this robot that mistake set the
-lead to 18 ms when the force lag is ~10 ms, rotating the force backwards by
-`omega * 8 ms`, and it *self-conceals* (the eRPM check validates the wrong lead).
-The tires ride the cap's slip bias so they are always kinetically sliding:
-force is `mu*N*sign(slip)`, and its timing is set by the slip-**sign**
-crossings, not the speed wave.
+**Do this before hand-tuning anything.** There is a delay between commanding a DShot value and the wheel actually changing speed (ESC + motor + wheel inertia). At melty spin rates even ~15 ms rotates the translation force by >100°, and the symptom is exactly "motors audibly modulate but the robot only wobbles / drifts the wrong way". The delay is a property of your motor/ESC/wheel build, so **measure it, don't guess it** — and it *can* be measured from a log, unlike the direction sign.
 
-**The two-speed drift-direction test** (the only measurement that sees force):
+1. **Record a characterization log.** In MELTY at a moderate, steady spin throttle (LED stationary), hold each of W / A / S / D for ~2–3 seconds, with a second of no input between. A minute of this is plenty. Bouncing or brief airborne time is fine — the analysis takes a median over many windows.
+2. **Run the analyzer** on the log the app just saved:
 
-1. Flat open floor. Spin at ~30% throttle, LED steady. Give short **taps** of W
-   and note the drift direction relative to the LED as a clock position
-   (LED = 12 o'clock). Repeat until confident.
-2. Repeat at ~50% throttle. You now have two direction errors at two known spin
-   rates (read `kf_omega` from the log the app saved).
-3. The **constant** part of the error (extrapolated to zero spin) is
-   `DRIFT_PHASE_OFFSET_RADS` (sign: positive offset moves the observed drift
-   clockwise for a CCW-spinning robot). The **slope** (degrees per rad/s) is the
-   lead error: `true_lead = compiled_lead − slope_in_rad_per_rad/s`.
-4. **Pin the constant part with geometry before fitting.** The wheels push
-   along the wheel-line tangent (90° from the wheel axis), and the driver
-   convention W = "toward the light" is encoded as `dd = +90°` — so if the LED
-   sits ON the wheel axis (this build), the stack-up is **exactly 0 or π**,
-   nothing in between, and the drift test just resolves the binary and the
-   lead: with the offset pinned, the two speeds must agree on a single lead
-   (that agreement is your cross-check). If the LED sits elsewhere, its body
-   angle relative to the wheel axis enters the constant — derive it, then
-   verify. `tools/melty_sim.py` (stick-slip tire + motor model + the real
-   control law) is available to sanity-check the fit against the robot's
-   physics. Update the "PHASE LEAD" band in `test_control.c`, rebuild, reflash,
-   re-run the taps: drift should land near 12 o'clock at both speeds.
+   ```bash
+   .venv/bin/python tools/replay/translation_lag.py ~/Documents/sunshine_logs/<your_log>.sun
+   ```
 
-Reference: on this robot the 2026-08-07 measurement was +90° at ω≈120 and +45°
-at ω≈165 with lead 0.018/offset 0 → offset pinned at **π** (LED on the wheel
-axis, "+diff" wheel side) → both speeds agree on a force lag of ~4–5 ms →
-`DRIFT_PHASE_OFFSET_RADS = 3.14159265f`, `DRIFT_PHASE_LEAD_S = 0.005f`.
-`translation_lag.py` remains useful only as a **speed-lag** measurement
-(ESC/motor health, upper bound on force lag) — never set the lead from it.
+   (It runs `tools/replay/build/replay` itself — build it first: `cd tools/replay/build && cmake .. && cmake --build .`)
+3. **Read the output.** Per window it prints the cross-correlation delay (ms) and a residual constant offset (deg); at the bottom, the recommended `DRIFT_PHASE_LEAD_S`. Sanity checks:
+   - `peak_r` mostly > 0.5 — the wheels are coherently following the drift wave. If not, fix eRPM telemetry (Level 2) first.
+   - Per-window delays should agree within a few ms, **including across both spin directions** if you logged any inverted running — that agreement is what proves it's a pure time delay.
+   - `offset residual` should be near 0°. A large residual (≫25°) means a constant phase error — that's a `DRIFT_PHASE_OFFSET_RADS` / convention problem, not lag; investigate before proceeding.
+4. **Set `DRIFT_PHASE_LEAD_S`** in `sunshine_core/include/sunshine_core.h` to the printed value, update the measured band in `test_control.c` ("PHASE LEAD" block) to bracket it, rebuild, reflash, and re-run Step 3. Translation direction should now be roughly right at any spin speed.
+
+Reference: on this robot the measured delay was ~20 ms (≈3 ms of which is eRPM telemetry lag, which the script subtracts) → `DRIFT_PHASE_LEAD_S = 0.018f`.
 
 ### Step 5: Tune drift parameters
 
@@ -477,10 +452,10 @@ See `TUNING.md` for the full drift tuning procedure. Constants are in `sunshine_
 
 | Parameter | Effect |
 |-----------|--------|
-| `DRIFT_AMPLITUDE` | Sets the wheel-speed swing: the translation **top-speed ceiling** and the wheel-rotor gyroscopic tilt kick — NOT low-speed force, which saturates at tire friction within a modest swing. Keep moderate; raise only for top speed, and only after phase is verified (a misaimed force "needs" huge amplitude, which is the tilt/strike spiral). |
+| `DRIFT_AMPLITUDE` | Translation strength as a fraction of available DShot headroom. Increase only after phase is roughly correct. |
 | `DRIFT_PLATEAU_WIDTH` | Fraction of each rotation spent at each +1/-1 differential plateau. Higher is more rectangle-like; lower gives wider ramps. |
-| `DRIFT_PHASE_OFFSET_RADS` | Fixed geometry/sign offset between the LED/driver heading and the wheel-force direction, **measured on-floor in Step 4**. Re-measure after ANY motor wiring, mounting, or `MOTOR_*_INVERT` change — a flip shows up here as ±180°. |
-| `DRIFT_PHASE_LEAD_S` | Spin-proportional force-lag compensation, **measured on-floor in Step 4** (slip-sign lag, ~half the eRPM speed lag). Added phase is `kf_omega * DRIFT_PHASE_LEAD_S`. |
+| `DRIFT_PHASE_OFFSET_RADS` | Fixed motor timing offset between the LED/driver heading and the wheel-force waveform. Default `0.0f`; the Step 4 offset-residual check should confirm it stays ~0. |
+| `DRIFT_PHASE_LEAD_S` | Speed-dependent ESC/traction lag compensation, **measured in Step 4**. Added phase is `kf_omega * DRIFT_PHASE_LEAD_S`. |
 | `THETA_RATE_RADS` | How fast the driver heading reference rotates with left/right arrow. This rotates the LED reference, not motor timing. |
 
 Tune in this order:
@@ -489,48 +464,13 @@ Tune in this order:
 2. If W still produces a consistent sideways/backwards drift **that is the same angle at different spin speeds**, adjust `DRIFT_PHASE_OFFSET_RADS` in 15-30 degree steps (`0.26f` to `0.52f` rad). Positive values advance the motor waveform in the code's CCW-positive phase convention; if the correction gets worse, use the opposite sign. (A direction error that *grows with spin speed* means the lead is off instead — re-measure Step 4, or nudge `DRIFT_PHASE_LEAD_S` by 1-2 ms: at 240 rad/s, `0.001f` is ~14° of phase.)
 3. After direction is repeatable, raise or lower `DRIFT_AMPLITUDE`. If the robot still barely moves but the direction is correct, increase it. If spin speed collapses or it chatters, decrease it.
 4. Adjust `DRIFT_PLATEAU_WIDTH` only after amplitude/phase are sane. Higher values dwell longer at max command and approach a rectangle; lower values widen the ramps and are gentler for the ESC/wheel.
-5. After tuning, repeat the Step 4 two-speed taps — drift should stay near 12
-   o'clock at both speeds. If you changed wheels/motors/wiring mid-tune, re-do
-   Step 4 in full (the constant offset is exactly what such changes move).
-
-### Step 6: The anti-tip swing clamp (why melties tip, sim-proven, per-robot)
-
-**Mechanism** (established with the coupled 6-DOF simulation,
-`tools/melty6dof.py`, which reproduces this robot's measured instant-tip from
-pure contact physics): the tip driver is the **wheel-rotor gyroscopic
-reaction**. The drift wave modulates the wheels — flywheels whose axles the
-spinning chassis carries around — and the reaction is a world-frame tilting
-moment ~ `I_w · ω · Δω_wheel`. It is NOT a motor-torque limit (more ESC current
-makes it worse, not better), and it is phase-blind (in-sim, correcting the
-phase constants alone changed nothing, while the same config with 13× lighter
-wheels did not tip at all *and* translated 50% faster).
-
-The sim-mapped safe envelope: the commanded no-load wheel-speed swing may not
-exceed **ratio(ω) × body rate**, where the safe ratio *rises* with spin
-(gyroscopic stiffness): `TIP_SWING_RATIO_LO` below `TIP_OMEGA_LO` ramping to
-`TIP_SWING_RATIO_HI` above `TIP_OMEGA_HI`. Grid-validated on this build (ω
-100–220, throttle 100–190, multiple roughness seeds): worst tilt 4.9° against
-the 5.5° edge budget, zero edge contact. Translate at ω ≥ ~150 for the widest
-envelope — high spin is the SAFE regime.
-
-**Per-robot procedure:**
-1. `WHEEL_INERTIA_KGM2` must be honest (CAD, including motor rotor/bell; a
-   10 g rim at 22 mm is 4.8e-6 kg·m² by itself — rim mass dominates).
-2. Update the physical constants in `tools/melty6dof.py` (they mirror this
-   header) and re-run its calibration + grid; retune `TIP_SWING_RATIO_*` /
-   `TIP_OMEGA_*` to the new no-tip frontier.
-3. Speed levers, all confirmed in-sim: **lighter wheel/rotor assemblies**
-   (directly shrinks the tip moment — the single biggest win), **grippier tire
-   compound** (grip damps the tilt wobble AND drives harder: µ 0.12→0.5
-   roughly doubled translation speed while *reducing* tilt), wider track /
-   more mass (stance), higher spin while translating.
+5. After tuning, log another translation run and re-run `translation_lag.py` — the offset residual should stay ~0 and the delay unchanged; if you changed wheels/motors mid-tune, re-do Step 4.
 
 ### Pass criteria
 
 - Robot translates in the commanded direction at ≥ 3 of 4 compass points (N/S/E/W)
 - No wheel slip causing uncontrolled spin-out
 - LED remains stationary during translation inputs
-- The inside wheel stays loaded during full translation (no edge ride / grinding)
 - Robot can be steered to a target location reliably
 
 ---

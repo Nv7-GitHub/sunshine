@@ -86,8 +86,7 @@ static float map_to_dshot(float v) {
  * up. That is the right trade, since a MELTY robot with no heading reference is
  * undriveable anyway, but it converts "degraded but spinning" into "will not spin
  * up" and is therefore documented in BRINGUP.md so bringup sees it first. */
-static float melty_speed_cap(const SunshineState *s, const SunshineVars *v, float base,
-                             float drive_mag) {
+static float melty_speed_cap(const SunshineState *s, const SunshineVars *v, float base) {
     /* Written as a positive-range test so a NaN battery also fails open. */
     if (!(v->batt_voltage >= CAP_VBATT_MIN_V && v->batt_voltage <= CAP_VBATT_MAX_V))
         return base;
@@ -95,38 +94,9 @@ static float melty_speed_cap(const SunshineState *s, const SunshineVars *v, floa
     /* Same lock condition brain.c uses to decide whether to trust the mag rate. */
     int locked = v->mag_valid && fabsf(s->spin_rate_lp) > SUNSHINE_MAG_MIN_OMEGA;
 
-    /* Translation slip un-bias. The slip allowance exists to give spin-up torque,
-     * but during translation it is a FORCE DEAD ZONE: tire friction saturates
-     * within a few tenths of m/s of slip, so with both wheels biased +1 m/s
-     * forward the drift wave's first ~1 m/s of differential moves neither tire
-     * off forward saturation and produces ~zero force (measured on the
-     * 2026-08-06 logs: light presses modulated the motors audibly but barely
-     * translated; only deep-saturation amplitudes translated, which is also
-     * what bounced the robot). Scaling the allowance down with drive_mag centres
-     * the wave near ZERO slip at full stick — advancing wheel pushes, retreating
-     * wheel genuinely brakes, both in the controllable friction range — so
-     * translation force is proportional to the stick from the first counts.
-     * The translating bias is a FIXED remnant (DRIFT_TRANSLATE_BIAS_MS),
-     * decoupled from the spin-up allowance knob — see sunshine_core.h: the old
-     * allowance-proportional form re-created the zero-crossing dead zone
-     * whenever WHEEL_SLIP_ALLOW_MS was raised.
-     * The blend is STICK-LINEAR on purpose (a 2026-08-07 fast-unbias variant
-     * that completed by 30% deflection was a driver-confirmed REGRESSION and
-     * was reverted): on this robot the vertical hop injects ~1 m/s of
-     * common-mode slip noise at each flight/landing cycle, which flips
-     * per-wheel slip SIGNS whenever the bias is near zero — the textbook
-     * zero-centred sign-modulation force gets spent in random directions.
-     * A biased partial press instead modulates force through the friction
-     * curve's SLOPE with both wheels held in forward slip: smaller force,
-     * but sign-proof against the hop — the regime the driver observed
-     * actually translating ("light presses move small amounts in the right
-     * direction"). Full stick still blends down to the remnant. */
-    float allow_ms = WHEEL_SLIP_ALLOW_MS
-                     + drive_mag * (DRIFT_TRANSLATE_BIAS_MS - WHEEL_SLIP_ALLOW_MS);
-
     float w_ref    = fmaxf(locked ? fabsf(s->kf_omega) : 0.0f, SUNSHINE_MAG_MIN_OMEGA);
     float w_cap    = w_ref * (WHEEL_CENTER_M / WHEEL_RADIUS_M)   /* rolling rate    */
-                     + allow_ms / WHEEL_RADIUS_M;                /* + slip allowance */
+                     + WHEEL_SLIP_ALLOW_MS / WHEEL_RADIUS_M;     /* + slip allowance */
     float v_needed = (w_cap * RADS_TO_RPM) / MOTOR_KV_RPM_PER_V;
     float cap      = DSHOT_NEUTRAL + (v_needed / v->batt_voltage) * (DSHOT_MAX - DSHOT_NEUTRAL);
 
@@ -192,84 +162,21 @@ void control_step(const SunshineInput *in, SunshineState *s, SunshineVars *v) {
     float drive_dir = atan2f(cy, cx);
     float drive_mag = sqrtf(cx*cx + cy*cy) / 127.0f;
     drive_mag       = clampf(drive_mag, 0.0f, 1.0f);
-    /* ── Closed-loop wobble damper — see WOBBLE_* in sunshine_core.h. ──
-     * Runs on raw accel-z at the 1 kHz tick. One-pole coefficients computed
-     * inline (cheap; dt fixed at 1 ms). */
-    {
-        const float dt = 0.001f;
-        float a_hp  = 2.0f * M_PI_F * WOBBLE_HP_HZ  * dt;
-        float a_env = 2.0f * M_PI_F * WOBBLE_ENV_HZ * dt;
-        float a_ref = 2.0f * M_PI_F * WOBBLE_REF_HZ * dt;
-        float azf   = (float)in->accel_z;
-        s->wob_hp  += a_hp * (azf - s->wob_hp);          /* DC tracker        */
-        float wob   = fabsf(azf - s->wob_hp);            /* rectified wobble  */
-        s->wob_env += a_env * (wob - s->wob_env);
-        /* Learn the riding-clean reference only while the stick is released
-         * and the robot is actually spinning (drive corrupts the reference;
-         * rest is meaningless). Seed instantly if unset. */
-        if (drive_mag < 0.15f && fabsf(s->kf_omega) > SUNSHINE_MAG_MIN_OMEGA) {
-            if (s->wob_ref <= 0.0f) s->wob_ref = s->wob_env;
-            else s->wob_ref += a_ref * (s->wob_env - s->wob_ref);
-        }
-        float ref   = fmaxf(s->wob_ref, WOBBLE_REF_MIN);
-        float ratio = s->wob_env / ref;
-        drive_mag  *= clampf((WOBBLE_RATIO_HI - ratio)
-                             / (WOBBLE_RATIO_HI - WOBBLE_RATIO_LO), 0.0f, 1.0f);
-    }
-    /* Low-spin translation fade — see DRIFT_OMEGA_FADE_* in sunshine_core.h.
-     * Applied BEFORE the cap so a faded drive also restores the full spin-up
-     * slip allowance (the un-bias scales by the post-fade drive_mag). */
-    drive_mag *= clampf((fabsf(s->kf_omega) - DRIFT_OMEGA_FADE_LO)
-                        / (DRIFT_OMEGA_FADE_HI - DRIFT_OMEGA_FADE_LO), 0.0f, 1.0f);
 
     float base = DSHOT_NEUTRAL + spin_span;
-    /* Cap the MEAN wheel command; the drift wave rides above and below it. */
-    base = melty_speed_cap(s, v, base, drive_mag);
+    /* Cap the MEAN wheel command before headroom is derived from it, so the drift
+     * differential scales down together with the capped base. Note the drift wave
+     * still rides above AND below the capped base, so the driving wheel briefly
+     * exceeds the cap while the other brakes — that asymmetry IS the translation
+     * mechanism and must not be clamped away. */
+    base = melty_speed_cap(s, v, base);
+    float headroom = fminf(base - DSHOT_NEUTRAL, DSHOT_MAX - base);
+    if (headroom < 0.0f) headroom = 0.0f;
 
     float phase = wrap_to_pi(robot_angle - drive_dir
                              + DRIFT_PHASE_OFFSET_RADS
                              + s->kf_omega * DRIFT_PHASE_LEAD_S);
-    /* Translation authority spans the DRIVER'S THROTTLE (spin_span), not the
-     * headroom around the capped base. Translation speed IS wheel-speed
-     * modulation depth — while moving at v, each contact point needs
-     * rolling ± v once per rev, so the swing is a hard kinematic speed
-     * ceiling. The old headroom basis limited the swing to ±~1 m/s (snail
-     * pace); classic melties modulate across most of the throttle range.
-     * The advancing wheel rides toward the driver's throttle, the retreating
-     * wheel toward stopped (the [NEUTRAL, MAX] clamp below bottoms it out —
-     * that distortion is standard melty behavior); the cap still governs the
-     * MEAN, so idle-spin overspeed protection is unchanged. Throttle and
-     * DRIFT_AMPLITUDE are therefore the translation speed knobs. */
-    /* Modulation basis = the FULL DShot span, not the throttle span. At 40%
-     * cruise throttle there are ~4.6 V of headroom up to full duty and ~3 V
-     * down to zero; scaling the wave by the throttle span left most of that
-     * unused (±1.8 V commanded at amp 0.6/thr 40% — measured 2.5 A, ~0.9 N,
-     * the "extremely slow scoot"). Classic melty modulation slams toward the
-     * rails; the [NEUTRAL, MAX] clamp below shapes the asymmetric excursion
-     * naturally (advancing wheel toward full duty, retreating toward stop).
-     * Expected at 40-50% throttle: ~±4.6/-3 V -> ~5 A / ~2.6 A regen ->
-     * ~1.5-2 N net — melty-visible translation on the SAME motors/cells the
-     * reference robots use. */
-    float diff = drift_wave(phase) * drive_mag * DRIFT_AMPLITUDE
-                 * (DSHOT_MAX - DSHOT_NEUTRAL);
-    /* Anti-tip swing clamp — see TIP_* in sunshine_core.h. The tip driver is
-     * the wheel-rotor gyroscopic reaction, and the sim-validated safe envelope
-     * is a commanded NO-LOAD wheel-speed swing no larger than ratio(omega) x
-     * the body rate — the ratio RISES with spin (gyroscopic stiffness), the
-     * opposite of the earlier 1/omega budget clamp whose low-spin permissiveness
-     * the sim showed to be catastrophic. Battery-scaled; fail open on an
-     * implausible battery reading. */
-    if (v->batt_voltage >= 5.0f && v->batt_voltage <= 10.0f) {
-        float w = fabsf(s->kf_omega);
-        float ratio = TIP_SWING_RATIO_LO
-                      + (TIP_SWING_RATIO_HI - TIP_SWING_RATIO_LO)
-                        * clampf((w - TIP_OMEGA_LO) / (TIP_OMEGA_HI - TIP_OMEGA_LO),
-                                 0.0f, 1.0f);
-        float radspercount = (v->batt_voltage / (DSHOT_MAX - DSHOT_NEUTRAL))
-                             * MOTOR_KV_RPM_PER_V * (2.0f * M_PI_F / 60.0f);
-        float diff_max = ratio * w / radspercount;
-        diff = clampf(diff, -diff_max, diff_max);
-    }
+    float diff = drift_wave(phase) * drive_mag * DRIFT_AMPLITUDE * headroom;
 
     v->dshot_cmd_left  = clampf(base + diff, DSHOT_NEUTRAL, DSHOT_MAX);
     v->dshot_cmd_right = clampf(base - diff, DSHOT_NEUTRAL, DSHOT_MAX);
