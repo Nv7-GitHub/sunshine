@@ -39,7 +39,7 @@ DSHOT_NEUTRAL        = 1048.0       # DShot value at zero throttle
 DSHOT_MAX            = 2047.0       # DShot full scale
 MAG_MIN_OMEGA        = 16.0 * np.pi # SUNSHINE_MAG_MIN_OMEGA, ~480 RPM
 ERPM_PER_RADS        = WHEEL_CENTER_M / WHEEL_RADIUS_M * 60/(2*np.pi) * MOTOR_POLE_PAIRS
-DEFAULT_ALLOW_MS     = 1.0          # WHEEL_SLIP_ALLOW_MS the build ships
+DEFAULT_ALLOW_MS     = 5.0          # WHEEL_SLIP_ALLOW_MS the build ships
 
 DRIVEN_MARGIN = 20.0   # DShot counts above neutral before eRPM is measurable at all
 

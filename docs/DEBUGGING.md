@@ -317,6 +317,7 @@ ratio <= 1 + WHEEL_SLIP_ALLOW_MS / (|w_body| * WHEEL_CENTER_M)
 | body rate | 50 rad/s | 100 rad/s | 150 rad/s |
 |---|---|---|---|
 | ceiling at allow = 1.0 m/s | 1.49 | 1.25 | 1.17 |
+| ceiling at allow = 5.0 m/s (**shipping**) | 3.47 | 2.23 | 1.82 |
 
 Two things legitimately sit above that line and neither is a fault: the drift wave rides
 above the capped `base` (that asymmetry *is* translation), and below the mag-lock
@@ -325,6 +326,10 @@ at very low spin is large by construction — at 20 rad/s the ceiling is ~3.8. J
 ratio only above lock. A surviving 2×+ tail at 100 rad/s or more means the cap is not
 being applied: check the mode is MELTY (TANK is uncapped by design) and check
 `var.batt_voltage` per the note below.
+
+The bind statistics below were measured at `WHEEL_SLIP_ALLOW_MS = 1.0`; the build now
+ships 5.0 (see BRINGUP.md "Wheel slip threshold"), so the cap binds on materially fewer
+samples — re-run `wheel_slip.py` rather than trusting these percentages.
 
 At `WHEEL_SLIP_ALLOW_MS = 1.0` the cap binds on ~76 % of driven MELTY samples, and the
 amount it removes shrinks with spin rate — median ~170 DShot counts below 50 rad/s, ~68

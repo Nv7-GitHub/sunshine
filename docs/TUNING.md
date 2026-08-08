@@ -182,7 +182,7 @@ revolution and the differential force was ~zero *regardless of the commanded
 waveform*. Symptom: motors audibly modulate, eRPM visibly modulates, robot barely
 moves and wobbles inconsistently (the residual forces are normal-load fluctuations,
 not the drift wave). The wheel-speed cap fixes this as a side effect of fixing the
-bounce: it pins mean slip at `WHEEL_SLIP_ALLOW_MS` (1.0 m/s), so the drift wave now
+bounce: it pins mean slip under `WHEEL_SLIP_ALLOW_MS` (5.0 m/s max), so the drift wave now
 swings the retreating wheel down through zero slip into braking — one wheel
 saturated forward, the other near-zero/braking = a real once-per-rev force
 differential. Consequence: **do not "fix" weak translation by disabling or loosening

@@ -73,12 +73,20 @@
  * percentage of rolling speed. Traction force is I = (V_cmd − backEMF)/R, so a
  * fixed slip speed is a fixed slip VOLTAGE and therefore a fixed current — a fixed
  * available torque at any spin rate. A flat percentage instead would starve the
- * robot of torque at low spin and still permit the runaway at high spin. */
+ * robot of torque at low spin and still permit the runaway at high spin.
+ *
+ * The value is a MAXIMUM allowed slip of 5 m/s at the contact patch. Below that
+ * the cap is inactive and the motors run open-loop off the throttle; at the cap
+ * the commanded wheel speed is exactly (rolling speed the body rate demands) +
+ * 5 m/s, which is the ceiling on stored wheel kinetic energy available to be
+ * dumped into a touchdown traction spike. Raise it for faster spin-up at the
+ * cost of bounce; lower it for a calmer robot that accelerates more slowly.
+ * See docs/BRINGUP.md "Wheel slip threshold". */
 #define WHEEL_RADIUS_M      0.022f   /* wheel rolling radius, m              */
 #define WHEEL_CENTER_M      0.0405f  /* wheel contact patch to spin axis, m  */
 #define MOTOR_KV_RPM_PER_V  1100.0f  /* nameplate, rpm/V (no-load)           */
 #define MOTOR_POLE_PAIRS    7        /* 14-pole motor -> 7 pole pairs        */
-#define WHEEL_SLIP_ALLOW_MS 1.0f     /* allowed slip at the contact patch, m/s */
+#define WHEEL_SLIP_ALLOW_MS 5.0f     /* MAX allowed slip at contact patch, m/s */
 
 /* ── Robot plant / environment (per-build; used by the host SIMULATION only) ──
  * The C core does not read these, but they live here so ALL per-robot numbers

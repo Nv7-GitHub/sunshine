@@ -466,6 +466,60 @@ Tune in this order:
 4. Adjust `DRIFT_PLATEAU_WIDTH` only after amplitude/phase are sane. Higher values dwell longer at max command and approach a rectangle; lower values widen the ramps and are gentler for the ESC/wheel.
 5. After tuning, log another translation run and re-run `translation_lag.py` — the offset residual should stay ~0 and the delay unchanged; if you changed wheels/motors mid-tune, re-do Step 4.
 
+### Wheel slip threshold (`WHEEL_SLIP_ALLOW_MS`)
+
+**The build ships a maximum allowed slip of 5.0 m/s at the contact patch.**
+
+`melty_speed_cap()` in `sunshine_core/src/control.c` clamps the mean MELTY wheel
+command to the no-load speed that the *measured* body rate demands, plus this
+allowance:
+
+```
+w_cap = |kf_omega| * WHEEL_CENTER_M / WHEEL_RADIUS_M   (rolling speed the body rate demands)
+      + WHEEL_SLIP_ALLOW_MS / WHEEL_RADIUS_M           (the slip allowance)
+```
+
+so 5.0 m/s is a **ceiling on slip, not a target**. Under the cap the wheels are
+free to run anywhere from zero slip up to 5 m/s of surplus contact-patch speed;
+the cap only forbids commanding more than that. It is a fixed slip **speed**, not
+a percentage of rolling speed — because traction current is
+`I = (V_cmd - backEMF) / R`, a fixed slip speed is a fixed slip voltage
+(5.0 m/s ÷ `WHEEL_RADIUS_M` ÷ `MOTOR_KV_RPM_PER_V` ≈ **1.97 V**, ~23 % of a
+full 2S pack) and therefore a fixed available torque at any spin rate. A
+percentage would starve torque at low spin and still permit runaway at high spin.
+
+What it costs in each direction:
+
+| Move | Effect |
+|------|--------|
+| **Raise** the allowance | Faster spin-up and more reserve torque, at the price of more stored wheel kinetic energy to dump into a traction spike on touchdown — i.e. more vertical bounce. |
+| **Lower** the allowance | Calmer, less bouncy robot; slower spin-up, and if taken too low the tires can stop sliding altogether, which kills translation (see below). |
+
+**Do not "fix" weak translation by loosening or disabling the cap.** Translation
+depends on the tires being *kinetically sliding* so that contact force is
+`mu*N*sign(slip)` and the drift wave can swing the retreating wheel through zero
+slip into braking. The cap is what pins mean slip in that regime; removing it
+puts both tires at saturated `mu*N` all revolution and the force differential
+goes to ~zero. `docs/TUNING.md` has the full account.
+
+**Re-choosing it for a new robot.** Do not guess — sweep it against a real log:
+
+```bash
+python3 tools/replay/wheel_slip.py <log.csv> --allow 1,2,3,5,8
+```
+
+It reports commanded vs. capped DShot and the resulting slip distribution over
+the whole log. Pick the smallest allowance that still spins the robot up at the
+rate you want. Then check the airborne ceiling it implies —
+`ratio <= 1 + WHEEL_SLIP_ALLOW_MS / (|w_body| * WHEEL_CENTER_M)` — against the
+measured `eRPM / body-rate` ratio per `docs/DEBUGGING.md`; at 5.0 m/s that
+ceiling is 3.47 at 50 rad/s, 2.23 at 100, and 1.82 at 150. A surviving tail
+above the line at 100 rad/s or more means the cap is not being applied at all.
+
+> A dead magnetometer interacts with this cap — see the warning under Step 2.
+> With no heading lock the rate reference falls back to `SUNSHINE_MAG_MIN_OMEGA`
+> and the command sits at a fixed unlocked ceiling, so MELTY will not spin up.
+
 ### Pass criteria
 
 - Robot translates in the commanded direction at ≥ 3 of 4 compass points (N/S/E/W)
