@@ -86,11 +86,25 @@
  * fixed available torque at any spin rate. A flat percentage instead would
  * starve the robot of torque at low spin and still permit the runaway at high
  * spin. */
-#define WHEEL_RADIUS_M 0.022f      /* wheel rolling radius, m              */
+/* EFFECTIVE rolling radius UNDER LOAD, not the free diameter / 2. Foam
+ * compresses several mm under the robot's weight, so its rolling radius is
+ * measured, not read off calipers. Measured 2026-08-08 (Foam_wheel log):
+ * during steady quiet spin the motors sat at 98% of no-load speed (dshot
+ * 1436 -> 3.18 V -> 3500 rpm no-load vs 3429 measured), i.e. near-zero
+ * torque, yet the 22 mm conversion showed +2 m/s of "slip" — impossible
+ * without ~6 A the voltage can't supply. That apparent slip is a radius
+ * error: r_true = 22 mm * v_body/v_wheel ≈ 16.5 mm. A wrong radius here
+ * poisons the speed cap (real headroom = allow − (22/r − 1)·v_roll → zero
+ * near ω≈190) and centres the drift wave below TRUE rolling speed, turning
+ * the wave's bottom half into a brake — the ω 150→68 crash on every hold
+ * in that log, with near-zero ground strikes. Re-measure after any wheel
+ * change: quiet-spin apparent slip at the no-load operating point must
+ * read ≈0. */
+#define WHEEL_RADIUS_M 0.0165f     /* wheel rolling radius, m (loaded, foam) */
 #define WHEEL_CENTER_M 0.0405f     /* wheel contact patch to spin axis, m  */
 #define MOTOR_KV_RPM_PER_V 1100.0f /* nameplate, rpm/V (no-load)           */
 #define MOTOR_POLE_PAIRS 7         /* 14-pole motor -> 7 pole pairs        */
-#define WHEEL_SLIP_ALLOW_MS 3.0f   /* allowed slip at the contact patch, m/s */
+#define WHEEL_SLIP_ALLOW_MS 5.0f   /* allowed slip at the contact patch, m/s */
 
 /* ── Robot plant / environment (per-build; used by the host SIMULATION only) ──
  * The C core does not read these, but they live here so ALL per-robot numbers
@@ -104,7 +118,10 @@
  */
 #define ROBOT_MASS_KG 0.454f
 #define ROBOT_MOI_KGM2 1.214e-3f /* body yaw inertia                  */
-#define WHEEL_INERTIA_KGM2 6.40744019e-6f /* wheel + motor rotor, each */
+#define WHEEL_INERTIA_KGM2 6.40744019e-6f /* wheel + motor rotor, each.
+   STALE since the 2026-08-08 foam-wheel swap (foam is lighter and smaller
+   radius -> lower inertia). Sim-only; re-derive from a spin-up log's
+   cmd->wheel time constant when sim fidelity matters again. */
 /* MEASURED FROM LOGS 2026-08-07 (ledger method: commanded-minus-realized slip
  * surplus 0.99 V at delivered 1.08 A during the allowance-3.0 spin-up), and
  * independently confirmed by (a) the wave-following gain it predicts
