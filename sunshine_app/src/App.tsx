@@ -7,7 +7,7 @@ import GraphPanel from './components/GraphPanel';
 import DriverStation from './components/DriverStation';
 import './App.css';
 
-const DEFAULT_CHANNELS = ['real.kf_theta', 'real.kf_omega'];
+const DEFAULT_CHANNELS = ['real.kf_omega', 'var.batt_voltage', 'input.mag_x', 'input.mag_y'];
 
 export default function App() {
   const state    = useAppState();

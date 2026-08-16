@@ -43,7 +43,7 @@ Plot `vars.omega_from_accel` and `vars.est_omega` simultaneously.
 
 #### Step 2: Verify mag threshold
 
-Plot `vars.mag_valid`. It should become 1 (true) at around 480 RPM (16π ≈ 50.3 rad/s). If the robot never crosses this threshold, check that `est_omega` is tracking correctly (Step 1).
+Plot `vars.mag_valid`. It should become 1 (true) at around 480 RPM (16π ≈ 50.3 rad/s). If the robot never crosses this threshold, check that `est_omega` is tracking correctly (Step 1). If the LED never locks while spinning fast, also check `input.mag_x/y` for a dead/frozen sensor (zero variance = no data) before touching thresholds.
 
 The threshold is defined by `SUNSHINE_MAG_MIN_OMEGA = 16π rad/s` in `sunshine_core.h`. It's set by the spin-tracking band-pass (`mag_heading.c`): the band's lower edge is ≈ 0.75·spin-freq, and below ~8 Hz spin that edge sinks toward the slow average-ESC-current band (which the 2nd-order skirt no longer rejects well) and the tangential-accel inflation of `est_omega` grows. Hard-iron DC is killed at any speed by the band-pass's zero at DC, so it isn't what sets the minimum.
 
@@ -83,30 +83,36 @@ lag across the stop.
   the mag-valid time at 1.5 Hz; the residual is brief impact glitches (cutoff-
   independent), so 1.5 Hz is a good default.
 
-#### Angular-rate source: mag rotation rate during translation
+#### Angular-rate source: accel magnitude + mag sign (v5 mag-rate REVERTED)
 
-The Kalman rate update has **two** sensors, each failing during translation:
+The Kalman rate comes from the **accel magnitude** (`omega_from_accel = √(a_c/r)`)
+with the **mag's sign** (`state->spin_rate_lp` — the accel can't sense CW/CCW).
 
-- **Accelerometer** (`omega_from_accel = √(a_c/r)`): linear body acceleration adds a
-  once-per-rev term, so the magnitude both wobbles (integrating into ±30° heading
-  swings — the "LED fluctuates" the driver reports) and is biased high (Jensen → slow
-  drift). It also can't sense CW/CCW.
-- **Magnetometer rotation rate** (`state->spin_rate_lp`): the B-field's rotation is
-  unaffected by linear acceleration, so it's unbiased and already low-passed.
+The v5 design instead drove the rate from the mag's own rotation rate while the mag
+was valid, reasoning it is unbiased by linear acceleration during translation. That
+was **reverted on the 2026-08-15 steel-arena log**: every venue measured so far has
+AC magnetic interference tones inside the spin band (a ~9.77 Hz harmonic comb at
+19.5/29.3/39.1/48.8 Hz — the 102.4 ms WiFi-beacon period — plus 50/100 Hz mains-like
+tones, 2–7 µT; both home logs and the arena show them). An in-band tone beats
+against the Earth line and wobbles `mag_angle` at |f_spin − f_tone| (3–13 Hz).
+The angle update tracks that wobble roughly 1:1, but a *rate* derived from the angle
+DIFFERENTIATES it — multiplying the wobble by the beat frequency — so the mag-rate
+path amplified it into ±10–20 rad/s of `kf_omega` wobble: the arena's
+"locks, bounces all over, locks" LED. Measured with the replay bounce metric
+(2 s quadratic-detrend residual of `kf_theta`):
 
-So `brain.c` drives the Kalman rate from the **mag rotation rate whenever the mag is
-valid** (`|spin_rate_lp| > SUNSHINE_MAG_MIN_OMEGA`), and only falls back to the accel
-magnitude below that (spin-up / low spin, where the accel is fine and is the only
-source). Measured on real logs this cut the translation LED excursion from ~33° to
-~23° (toward the ~19° pure-spin baseline) **and** reduced drift — no tradeoff, because
-the mag rate is both smooth and unbiased. It also handles inversion for free
-(`spin_rate_lp` is already signed by the mag's rotation sense).
+| config | arena stationary p50/p90 | home stationary p50/p90 | home translating p50 |
+|---|---|---|---|
+| v5 mag rate | 25.7° / 143.5° | 22.2° / 44.9° | 24.6° |
+| accel rate + mag sign | **11.7° / 26.4°** | 21.3° / 43.9° | 24.8° |
 
-History: an earlier attempt low-passed the *accel* rate instead. It cut the jitter but
-the accel's Jensen bias then showed as a slow drift (the wobble had been keeping the
-Kalman covariance — and thus the mag correction — high). The mag-rate source avoids
-that because it has no bias to leak. `spin_freq_lp` is still used only to centre the
-band-pass (loop-independent).
+The v5 translation benefit does not reproduce (the interference exists at home too);
+the accel's once-per-rev translation wobble sits at the spin frequency where the KF
+attenuates it, and its +2–12% Jensen bias is cancelled by the strong mag angle
+anchor (`KF_R_MAG = 0.01` — measured ~8° steady innovation offset). Do NOT "fix"
+LED wobble by raising `KF_R_MAG` above ~0.05: the weakened anchor lets the accel
+bias walk the LED 50–100° off the field reference. `spin_freq_lp` is still used
+only to centre the band-pass (loop-independent).
 
 #### Step 4: Pass/fail check
 

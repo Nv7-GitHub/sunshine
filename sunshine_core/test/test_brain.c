@@ -43,6 +43,36 @@ int main(void) {
     sunshine_step(&in, &s, &v);
     ASSERT_EQ(v.mag_valid, true, "mag valid above threshold");
 
+    /* Regression (steel-arena bounce): an AC interference tone NEAR the spin
+     * frequency (in the band-pass) beats against the Earth line and wobbles
+     * mag_angle at |f_spin - f_tone|. The Kalman rate must come from the ACCEL,
+     * not from differentiating the mag angle — the v5 mag-rate path amplified
+     * the beat into ±10-20 rad/s of kf_omega wobble (LED bouncing). With the
+     * accel rate, kf_omega must stay near the true rate with small ripple. */
+    {
+        sunshine_state_init(&s);
+        memset(&in, 0, sizeof(in));
+        in.mode = SUNSHINE_MODE_MELTY;
+        float w  = 2.0f * 3.14159265f * 28.0f;      /* true spin 28 Hz */
+        float ac = w * w * IMU_RADIUS_M;
+        in.accel_x = (int16_t)(ac / ADXL_SCALE_MS2 * 0.7071f);
+        in.accel_y = (int16_t)(ac / ADXL_SCALE_MS2 * 0.7071f);
+        float wsum = 0.0f, wsq = 0.0f; int M = 0;
+        for (int i = 0; i < 8000; i++) {
+            float ti = i * 0.001f;
+            float ph = w * ti;                       /* Earth line, 22 µT   */
+            float pt = 2.0f * 3.14159265f * 29.3f * ti;  /* interferer, 7 µT */
+            in.mag_x = (int16_t)((-95.0f + 22.0f*cosf(ph) + 7.0f*cosf(pt)) / MAG_SCALE_UT);
+            in.mag_y = (int16_t)((103.0f - 22.0f*sinf(ph) - 7.0f*sinf(pt)) / MAG_SCALE_UT);
+            sunshine_step(&in, &s, &v);
+            if (i >= 5000) { wsum += s.kf_omega; wsq += s.kf_omega*s.kf_omega; M++; }
+        }
+        float mean = wsum / M, var = wsq / M - mean*mean;
+        float ripple = sqrtf(var > 0 ? var : 0);
+        ASSERT_NEAR(mean, w, 0.05f * w, "kf_omega tracks true rate under interference");
+        ASSERT(ripple < 2.0f, "kf_omega ripple < 2 rad/s with in-band mag interferer");
+    }
+
     /* Serialisation round-trip: SunshineInput */
     memset(&in, 0, sizeof(in));
     in.time_us = 12345; in.accel_x = -500; in.mag_y = 300;

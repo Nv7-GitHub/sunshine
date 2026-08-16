@@ -184,13 +184,14 @@
  * smoother heading but laggier centre. Loop-independent (uses only the accel rate),
  * so it does NOT reintroduce the kf_omega false-lock. Tunable at bringup Level 4. */
 #define MAG_BP_FC_LP_HZ   1.5f    /* band-pass centre LP cutoff, Hz (nav loop = 1 kHz) */
-/* LP cutoff for the SIGNED mag rotation rate (spin_rate_lp). Since schema v5 this is
- * the Kalman's rate measurement whenever the mag is valid (mag_heading.c / brain.c) —
- * it is unbiased by linear acceleration, so it fixes the translation heading swings
- * the accel magnitude caused. Trade-off knob: higher = snappier tracking of fast spin
- * changes (impact slowdown, spin-up) but a noisier steady heading; lower = smoother
- * but laggier on transients (the mag_angle update still re-anchors, so the lag is
- * momentary). 3.2 Hz preserves the pre-v5 coefficient (0.02 @ 1 kHz). Bringup Level 4. */
+/* LP cutoff for the SIGNED mag rotation rate (spin_rate_lp). Used ONLY for the
+ * spin-direction SIGN (schema v4). The v5 use as the Kalman's rate measurement was
+ * REVERTED 2026-08-15: in-band AC interference tones (WiFi-beacon comb + 50/100 Hz,
+ * present at every venue measured) beat against the Earth line, and the mag-rate
+ * path differentiates that wobble, amplifying it into kf_omega — the arena
+ * "bounces, locks, bounces". See brain.c rate-update comment for the measurements.
+ * 3.2 Hz keeps the sign robust to per-tick noise while flipping within ~50 ms of a
+ * true direction change (flip). */
 #define MAG_SPIN_RATE_LP_HZ 3.2f  /* SIGNED mag-rate LP cutoff, Hz */
 
 /* ── Control tuning ────────────────────────────────────────────────────── */

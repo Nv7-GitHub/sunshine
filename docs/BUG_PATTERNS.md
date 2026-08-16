@@ -90,6 +90,31 @@ The filter has structural behaviors at initialization and at low-speed edge case
 
 ---
 
+## 6. Trusting a Sensor Without a Health Check
+
+A gate that decides *when* a sensor is usable is not the same as a check that the
+sensor is *alive*. Data can be structurally present (fresh packets, plausible-range
+values) while carrying no information.
+
+**Examples found:**
+- 2026-08-15 steel-arena log: the LIS3MDL output froze at one constant (x,y,z)
+  from boot for ~160 s (recovered after a flip impact). `mag_valid` only gated on
+  spin rate, so the band-pass reduced the constant to ~0.1 µT of numerical noise
+  and the Kalman tracked `atan2(noise)` as an absolute heading at full `KF_R_MAG`
+  weight — the robot could not lock at all, and `kf_omega` was dragged ~60 rad/s
+  off the true rate. (No automated gate was added — kept simple by choice; the
+  check is manual: zero variance on `input.mag_x/y` = dead sensor.)
+
+**Where to look:**
+- Every sensor consumed by the filter: what does the pipeline output when the
+  sensor returns constants? Zeros? Full-scale rails? Would any downstream flag
+  actually drop?
+- Validity flags derived only from *other* quantities (speed, mode, time) rather
+  than from the sensor's own signal quality.
+- Drivers that return a struct with `.valid = true` hardcoded.
+
+---
+
 ## General Checklist for New Code
 
 1. **Physics**: Can you trace every sign, scale factor, and direction convention to a hardware spec or measured value?

@@ -105,9 +105,11 @@ SIMULATION: simulation.rs ticks at 1 kHz → SunshineInput
 2. `kalman_predict()` — dead-reckoning: θ += ω·dt, propagate covariance
 3. `mag_heading_step()` — open-loop spin-tracking band-pass + atan2 → mag_angle (absolute);
    also refreshes `spin_rate_lp` (signed mag rotation rate) and `spin_freq_lp` (band-pass centre)
-4. `kalman_update_omega()` — rate update. Source = the **mag rotation rate** (`spin_rate_lp`)
-   while the mag is valid (unbiased during translation); falls back to the accel magnitude
-   below the mag threshold (skip if accel saturated)
+4. `kalman_update_omega()` — rate update. Source = the **accel magnitude** with the
+   **mag's sign** (`spin_rate_lp` gives CW/CCW; skip if accel saturated). The v5
+   mag-rotation-rate source was reverted 2026-08-15 — in-band AC interference beats
+   wobble `mag_angle`, and differentiating that into a rate amplified the wobble
+   (see the brain.c rate-update comment and TUNING.md)
 5. `kalman_update_theta()` — mag measurement update (skip if ω < 16π rad/s ≈ 480 RPM)
 6. `control_step()` — DISABLED/TANK/MELTY → dshot_cmd_left/right, led_on
 

@@ -106,18 +106,15 @@ void mag_heading_step(const SunshineInput *in, SunshineState *s, SunshineVars *v
      * the declination offset are both constant, absorbed by theta_offset. */
     v->mag_angle = atan2f(-my_bp, mx_bp);
 
-    /* SIGNED mag rotation rate. The field vector's rotation SENSE reverses when the
-     * robot is inverted, so this both (a) gives the spin SIGN the accel can't sense,
-     * and (b) IS the Kalman's rate measurement while the mag is valid (brain.c) —
-     * it's unbiased by linear acceleration, unlike the accel magnitude. Low-passed at
-     * MAG_SPIN_RATE_LP_HZ: the raw per-tick mag-angle delta is quantisation/soft-iron
-     * noisy, so it must be smoothed, but the LP also LAGS a fast spin change (impact
-     * slowdown / spin-up) by ~1/(2π·fc). Measured: that lag is momentary (~0.1 s, the
-     * mag_angle update re-anchors) and no worse than the accel during transients.
-     * RAISE MAG_SPIN_RATE_LP_HZ for snappier impact/spin-up tracking (noisier steady
-     * heading); LOWER for a smoother rate (laggier transients). Only integrated while
-     * the mag is valid; mag_ang_prev still advances every tick so the first valid
-     * delta is a true one-tick step. */
+    /* SIGNED mag rotation rate — used ONLY for the spin SIGN the accel can't
+     * sense (schema v4; the sign reverses when the robot is inverted). It briefly
+     * (v5) also served as the Kalman's rate measurement, but that was reverted:
+     * in-band AC interference tones beat against the Earth line, and
+     * differentiating the resulting mag_angle wobble amplified it into large
+     * kf_omega wobble (see brain.c rate-update comment). Low-passed at
+     * MAG_SPIN_RATE_LP_HZ so the sign is robust to per-tick noise. Only
+     * integrated while the mag is valid; mag_ang_prev still advances every tick
+     * so the first valid delta is a true one-tick step. */
     float dma = v->mag_angle - s->mag_ang_prev;
     while (dma >  M_PI_F) dma -= 2.0f * M_PI_F;
     while (dma < -M_PI_F) dma += 2.0f * M_PI_F;

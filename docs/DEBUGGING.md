@@ -219,6 +219,38 @@ the spin SIGN is taken from the mag rotation sense (`state.spin_rate_lp`) and co
 winding opposite to the raw-mag field. Verify in replay that the LED heading rate matches
 the raw-mag winding for BOTH orientations (drive the robot inverted in a test log).
 
+**SECOND check the mag is ALIVE.** In the 2026-08-15 steel-arena (Nem) log the
+LIS3MDL froze at one constant raw (x,y,z) from boot for ~160 s (it resumed after a
+flip impact — suspected sensor hang or marginal power-up). A frozen sensor
+band-passes to ~0.1 µT, and `atan2` of that noise is a garbage absolute heading —
+zero lock, `kf_omega` dragged ~60 rad/s off truth. There is deliberately NO
+firmware health check (kept simple); diagnose it MANUALLY in one line:
+`input.mag_x/y` with zero variance over seconds = dead sensor (a live one has
+~6 counts RMS noise even at rest). Power-cycle / reflash to recover.
+
+**Steel arena note.** A steel floor/walls shunt and bend the local field: the
+recovered Earth amplitude drops (measured 5.4–34 µT across one arena vs a steady
+18–22 µT on open ground) and the field DIRECTION varies with position, so the
+locked heading slowly rotates as the robot moves around the arena. That is
+physics, not a filter bug — the mag can only lock to the local field. Expect the
+driver to re-trim heading with arrow keys as the robot changes position; verify
+health by checking `sqrt(mag_x_filt^2+mag_y_filt^2)` stays well above zero.
+
+**THIRD check for in-band AC interference (the "locks, bounces, locks" pattern).**
+FFT the raw `mag_x/z` over a stretch where the robot is DISABLED and stationary:
+every venue measured so far shows a harmonic comb at 19.5/29.3/39.1/48.8 Hz
+(multiples of 9.77 Hz = the 102.4 ms WiFi-beacon period — near-field TX current
+bursts, not RF) plus 50/100 Hz tones, at 2–7 µT. A tone inside the band-pass
+(±33% of the spin frequency) beats against the Earth line and wobbles `mag_angle`
+by ~atan(A_tone/A_earth) at |f_spin − f_tone| — up to ±30° at 3–13 Hz in the
+2026-08-15 arena, where the steel had also shunted the Earth line to 10–16 µT.
+This is why the Kalman rate comes from the ACCEL (immune) and only the SIGN from
+the mag — see TUNING.md "Angular-rate source". Residual LED wander scales with
+A_tone/A_earth, so it is worst where the arena field is weakest, which also makes
+the bounce position-dependent. Mitigation beyond the rate revert: spin at a rate
+whose ±33% band dodges the strongest tones, or increase spin so the fractional
+band clears the comb's strong low members.
+
 **What to look at:**
 1. `vars.mag_valid` — is it staying 1? If it drops, omega fell below the mag threshold (480 RPM).
 2. `vars.est_omega` vs `vars.omega_from_accel` — does omega track (same sign)? `state.spin_rate_lp` sign = mag-derived spin direction.

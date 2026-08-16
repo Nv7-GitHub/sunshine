@@ -51,28 +51,27 @@ void sunshine_step(const SunshineInput *in, SunshineState *state, SunshineVars *
     mag_heading_step(in, state, vars);
 
     /* -- Kalman update - angular rate ------------------------------------- */
-    /* Two rate sensors, each with a failure mode during TRANSLATION:
-     *   - accel: |ω| = √(a_c/r), but linear body acceleration adds a once-per-rev
-     *     term, so the magnitude both WOBBLES (→ ±30° heading swings once integrated,
-     *     the "fluctuates a lot" the driver sees) and is biased HIGH (Jensen, → slow
-     *     drift). It also can't sense CW/CCW.
-     *   - mag rotation rate (spin_rate_lp): the B-field's rotation is UNAFFECTED by
-     *     linear acceleration, so it is unbiased AND already low-passed — but it needs
-     *     enough spin to be valid.
-     * So above the mag-valid threshold, drive the rate from the MAGNETOMETER's own
-     * rotation rate (clean during translation); below it, fall back to the accel
-     * magnitude with the mag's sign (the accel is fine when not translating, and is
-     * the only rate source at low spin). This removes the accel corruption from the
-     * heading entirely while it matters, without the drift that smoothing the accel
-     * rate caused. The band-pass centre still uses the accel rate (spin_freq_lp),
-     * which is loop-independent. */
-    /* Use the mag rate only once spin_rate_lp itself has converged above the mag
-     * threshold — at the mag-valid boundary during spin-up it starts near zero (it
-     * only integrates while valid) and would briefly drag kf_omega down. Until then,
-     * the accel magnitude is the rate source (correct, since we're not yet fast). */
-    if (vars->mag_valid && fabsf(state->spin_rate_lp) > SUNSHINE_MAG_MIN_OMEGA) {
-        kalman_update_omega(state, state->spin_rate_lp, KF_R_ACCEL);
-    } else if (!vars->accel_saturated && vars->omega_from_accel > 0.0f) {
+    /* The rate measurement is the ACCEL magnitude √(a_c/r) with the mag's SIGN
+     * (spin_rate_lp — the accel can't sense CW vs CCW; schema v4).
+     *
+     * The v5 design drove the rate from the mag's own rotation rate
+     * (spin_rate_lp) while mag-valid, reasoning that it is unbiased by linear
+     * acceleration during translation. REVERTED (2026-08-15 steel-arena log):
+     * every venue measured so far has AC magnetic interference tones inside the
+     * spin band (a ~9.77 Hz harmonic comb at 19.5/29.3/39.1/48.8 Hz — the 102.4 ms
+     * WiFi-beacon period — plus 50/100 Hz, 2–7 µT). These beat against the Earth
+     * line and wobble mag_angle at |f_spin − f_tone| (3–13 Hz); DIFFERENTIATING
+     * that wobble into a rate multiplies it by the beat frequency, so the mag-rate
+     * path amplified it into ±10–20 rad/s of kf_omega wobble — the LED "bounces,
+     * locks, bounces" in the arena (25.7° median wander stationary). The accel
+     * rate is immune to magnetic interference; its once-per-rev translation wobble
+     * is at the spin frequency (KF-attenuated) and its +2–12% bias is cancelled by
+     * the strong mag angle anchor (KF_R_MAG=0.01 → measured 8° steady offset).
+     * Measured on real logs (tools/replay + bounce metric): arena stationary
+     * wander 25.7°→11.7° median (p90 143°→26°); home logs unchanged, translating
+     * windows unchanged or better in BOTH venues — the v5 benefit never
+     * materialised because the interference exists at home too. */
+    if (!vars->accel_saturated && vars->omega_from_accel > 0.0f) {
         float signed_omega = (state->spin_rate_lp < 0.0f)
                              ? -vars->omega_from_accel : vars->omega_from_accel;
         kalman_update_omega(state, signed_omega, KF_R_ACCEL);

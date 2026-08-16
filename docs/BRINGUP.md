@@ -351,7 +351,7 @@ Summary of what each parameter controls:
 | `KF_Q_THETA` | Higher → faster angle tracking, more drift |
 | `KF_R_MAG` | Higher → less influence from magnetometer |
 | `MAG_BP_FC_LP_HZ` | Band-pass centre LP (default 1.5 Hz). Lower = steadier `mag_angle` (less translation-induced wobble); higher = tracks spin-up faster. See TUNING.md. |
-| `MAG_SPIN_RATE_LP_HZ` | LP on the mag rotation rate that drives the Kalman rate during translation (default 3.2 Hz). Higher = snappier impact/spin-up response, noisier steady heading; lower = smoother, laggier on fast spin changes. See TUNING.md. |
+| `MAG_SPIN_RATE_LP_HZ` | LP on the signed mag rotation rate (default 3.2 Hz) — used ONLY for the spin-direction sign since the 2026-08-15 revert (see TUNING.md "Angular-rate source"). Higher = faster sign response after a flip; lower = more noise-robust sign. |
 
 **Check for `mag_angle` wobble during translation/impacts.** Plot `var.omega_from_accel`
 and `real.mag_angle` while driving in TANK and bumping the robot. If `mag_angle` gets
